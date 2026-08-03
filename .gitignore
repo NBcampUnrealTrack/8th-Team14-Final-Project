@@ -4,7 +4,11 @@ DerivedDataCache/
 Intermediate/
 Saved/
 
+# Plugins (locally installed)
+/Plugins/Monolith/
+
 *.sln
+*.slnx
 *.suo
 *.xcodeproj
 *.xcworkspace
@@ -22,3 +26,15 @@ Saved/
 # Visual Studio cache
 .vs/
 *.ipch
+.vsconfig
+
+# Jetbrain Rider
+*.DotSettings.user  
+
+# Local AI & MCP Settings
+.claude/
+.codex/
+.cursor/
+.gemini/
+.vscode/
+.mcp.json
