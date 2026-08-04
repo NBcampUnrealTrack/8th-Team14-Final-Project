@@ -18,13 +18,16 @@ public class ConvenienceStore : ModuleRules
 			"StateTreeModule",
 			"GameplayStateTreeModule",
 			"UMG",
-			"Slate"
+			"Slate",
+			"SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
 
+		// 기능별 폴더를 포함한 모듈 루트 기준의 include 경로를 사용합니다.
+		PublicIncludePaths.Add(ModuleDirectory);
+
 		PublicIncludePaths.AddRange(new string[] {
-			"ConvenienceStore",
 			"ConvenienceStore/Variant_Horror",
 			"ConvenienceStore/Variant_Horror/UI",
 			"ConvenienceStore/Variant_Shooter",
