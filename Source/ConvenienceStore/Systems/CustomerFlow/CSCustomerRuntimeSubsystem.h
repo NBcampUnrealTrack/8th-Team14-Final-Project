@@ -11,16 +11,15 @@
 //   - 편의점/통계 파트 → OnCheckoutCompleted / OnItemTaken 델리게이트 구독
 //
 // TODO(한길님 요청 파트):
-//   1. ProductId가 지금 protected인데 public으로 변경 요청
-//   2. 계산대 액터에 ICSCustomerCounterInterface 상속
+//   1. 계산대 액터에 ICSCustomerCounterInterface 상속
 //      (Features/Customers/Interface/CSCustomerCounterInterface.h)
 //      - 구현할 함수는 GetQueueSlotLocation(int32 Index) 하나뿐
 //      - Index번째 손님이 설 월드 좌표 반환. 줄의 시작점/방향/간격은 계산대가 자유롭게 결정
-//   3. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
+//   2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
 //      (이거 없으면 GetQueueSlotLocation이 ZeroVector 반환 → 손님이 원점으로 감)
-//   4. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
+//   3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
 //      (호출하면 줄 전진 + 손님 퇴장 + OnCheckoutCompleted 방송까지 자동)
-//   5. 진열대 슬롯 높이(상/중/하) 제공 방식 확정 필요
+//   4. 진열대 슬롯 높이(상/중/하) 제공 방식 확정 필요
 //
 // TODO(소비심리 파트 연동 시):
 //   1. "어디 갈지"는 현재 PickRandomUnvisitedShelf(랜덤)로 임시 구현되어 있음 → 교체 예정
@@ -37,9 +36,9 @@
 class ACSCustomerCharacter;
 class ACSShelfActor;
 
-// 계산 완료 시 방송. 손님의 SelectedItemIds(ProductId 목록)로 매출을 집계하면 됨
+// 계산 완료 시 방송. 손님의 SelectItemIds(DT_ProductMaster RowName 목록)로 매출을 집계하면 됨
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutCompleted, ACSCustomerCharacter*, Customer);
-// 손님이 진열대에서 상품을 집었을 때 방송 (판매 통계/재고 파트 구독용)
+// 손님이 진열대에서 상품을 집었을 때 방송. ProductId는 DT_ProductMaster의 RowName임.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnItemTaken, ACSCustomerCharacter*, Customer, FName, ProductId);
 
 UCLASS()

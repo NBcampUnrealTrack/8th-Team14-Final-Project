@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "CSProductPickupActor.generated.h"
@@ -19,13 +20,27 @@ public:
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
+	UFUNCTION(BlueprintPure, Category = "Product")
+	FName GetProductId() const
+	{
+		if (ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+		{
+			return NAME_None;
+		}
+
+		return ProductRow.RowName;
+	}
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ProductMesh;
 
-	// 이후 DT_Product의 행을 식별하는 키로 사용합니다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product")
-	FName ProductId = TEXT("TestProduct");
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Product",
+		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
+	FDataTableRowHandle ProductRow;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product")
 	FText DisplayName;
