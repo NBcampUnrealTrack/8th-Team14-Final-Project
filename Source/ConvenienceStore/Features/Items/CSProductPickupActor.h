@@ -19,6 +19,9 @@ public:
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
+	UFUNCTION(BlueprintPure, Category = "Product")
+	FName GetProductId() const { return ProductId; }
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ProductMesh;
