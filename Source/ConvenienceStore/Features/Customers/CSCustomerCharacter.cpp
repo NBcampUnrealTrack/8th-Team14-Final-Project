@@ -1,0 +1,46 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "Features/Customers/CSCustomerCharacter.h"
+#include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Customers/CSCustomerAIController.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
+// Sets default values
+ACSCustomerCharacter::ACSCustomerCharacter()
+{
+ 	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	PrimaryActorTick.bCanEverTick = false;
+
+	CustomerState = CreateDefaultSubobject<UCSCustomerStateComponent>(TEXT("CustomerState"));
+
+
+	AIControllerClass = ACSCustomerAIController::StaticClass();// 스폰될 때 어떤 클래스의 AI 컨트롤러가 빙의할지 지정
+	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned; // 레벨에 배치, 런타임에 SpawnActor로 생성과 상관없이 자동으로 AIController를 빙의하게 함.
+	//AIController의 "Start Logic Automatically" 때문에 빙의하자마자 바로 실행됨
+
+	// 이동할 때 자연스럽게 방향을 트는 물리 세팅
+	bUseControllerRotationYaw = false; //컨트롤러의 회전을 안받게 false로 설정
+	GetCharacterMovement()->bOrientRotationToMovement = true; // 이동하는 방향으로 몸을 자연스럽게 돌림 (걸어가는 방향을 보고 걷게)
+	GetCharacterMovement()->RotationRate = FRotator(0.0f, 360.0f, 0.0f); //방향 전환 속도
+	GetCharacterMovement()->MaxWalkSpeed = 250.0f; //기본 걷기 속도
+
+}
+
+UCSCustomerStateComponent* ACSCustomerCharacter::GetCustomerState() const
+{
+	return CustomerState;
+}
+
+void ACSCustomerCharacter::Destroyed()
+{
+	AController* MyController = GetController(); //현재 컨트롤러를 미리 변수에 저장
+
+	Super::Destroyed();
+
+	if (MyController != nullptr)
+	{
+		MyController->Destroy(); //폰이 사라져도 컨트롤러가 레벨에 혼자 남지 않게 정리
+	}
+}
+
