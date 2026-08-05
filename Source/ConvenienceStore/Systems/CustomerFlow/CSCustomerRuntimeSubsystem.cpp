@@ -164,13 +164,23 @@ bool UCSCustomerRuntimeSubsystem::HasShelfStock(const AActor* ShelfActor) const
 FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* ProductActor, ACSCustomerCharacter* Customer)
 {
 	ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
-	if (ShelfActor == nullptr || Product == nullptr)
+	if (ShelfActor == nullptr || Product == nullptr || Customer == nullptr)
 	{
 		return NAME_None;
 	}
 
-	//const FName ProductId = Product->ProductId;
-	const FName ProductId = NAME_None; //[한길님 필독!]현재 protected로 접근을 못해서 None으로 배정
+	// ProductId는 DT_ProductMaster에서 ProductRow가 가리키는 RowName입니다.
+	const FName ProductId = Product->GetProductId();
+	if (ProductId.IsNone())
+	{
+		return NAME_None;
+	}
+
+	UCSCustomerStateComponent* CustomerState = Customer->GetCustomerState();
+	if (CustomerState == nullptr)
+	{
+		return NAME_None;
+	}
 
 	// 진열대의 슬롯 점유를 해제합니다. (플레이어가 진열된 물건을 다시 집을 때와 동일한 규약 유지)
 	// 이 처리를 누락하면 물리적 상품 액터는 사라져도, 논리적으로 슬롯이 차 있다고 인식되어 재진열이 불가해집니다.
@@ -180,11 +190,13 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		ICSShelfPlaceable::Execute_RemovePlacedItem(ShelfActor, Product);
 	}
 
+	CustomerState->AddToSelectItem(ProductId);
+
 	// 손님이 가져간 상품 액터를 월드에서 물리적으로 완전히 제거합니다.
 	// (상품 판매 및 인벤토리 처리는 델리게이트를 통해 외부에서 처리하도록 분리)
 	Product->Destroy();
 
-	// 상품 획득 이벤트를 브로드캐스트하여 손님 인벤토리 추가 등 후속 처리를 유도합니다.
+	// 상품 획득 이벤트를 브로드캐스트하여 통계, 재고 등 외부 시스템에 알립니다.
 	OnItemTaken.Broadcast(Customer, ProductId);
 	return ProductId;
 }
