@@ -24,5 +24,5 @@ FText ACSProductPickupActor::GetInteractionText_Implementation() const
 {
 	return FText::Format(
 		NSLOCTEXT("Interaction", "PickUp", "{0} 집기"),
-		DisplayName.IsEmpty() ? FText::FromName(ProductId) : DisplayName);
+		DisplayName.IsEmpty() ? FText::FromName(GetProductId()) : DisplayName);
 }
