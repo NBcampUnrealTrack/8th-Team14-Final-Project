@@ -5,6 +5,7 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "CSShelfActor.generated.h"
 
+class UArrowComponent;
 class UStaticMeshComponent;
 
 USTRUCT(BlueprintType)
@@ -29,6 +30,7 @@ class CONVENIENCESTORE_API ACSShelfActor : public AActor, public ICSShelfPlaceab
 
 public:
 	ACSShelfActor();
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 	virtual bool CanPlaceItem_Implementation(AActor* ItemActor) const override;
 	virtual bool GetPlacementPreview_Implementation(
@@ -42,6 +44,10 @@ public:
 
 protected:
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
+	// Arrow Component 이름에서 Slot_00 형식의 슬롯 번호를 읽어옵니다.
+	bool TryGetSlotMarkerIndex(const UArrowComponent* SlotMarker, int32& OutSlotIndex) const;
+	// 블루프린트에서 배치한 슬롯 마커를 현재 슬롯 배열에 반영합니다.
+	void SyncSlotsFromMarkers();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
