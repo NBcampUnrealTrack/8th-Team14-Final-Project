@@ -24,6 +24,8 @@ void UCSStoreHUDWidget::NativeConstruct()
 		this, &UCSStoreHUDWidget::HandleGameTimeChanged);
 	StoreGameState->OnEndOfDayTaskChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleEndOfDayTaskChanged);
+	StoreGameState->OnDailySalesChanged.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleDailySalesChanged);
 
 	if (CompleteEndOfDayTaskButton != nullptr)
 	{
@@ -35,6 +37,7 @@ void UCSStoreHUDWidget::NativeConstruct()
 	HandleRemainingTimeChanged(StoreGameState->RemainingSeconds);
 	HandleGameTimeChanged(StoreGameState->CurrentGameMinutes);
 	HandleEndOfDayTaskChanged(StoreGameState->CurrentEndOfDayTask);
+	UpdateDailySalesDisplay();
 
 	if (ClockPanel != nullptr)
 	{
@@ -54,6 +57,8 @@ void UCSStoreHUDWidget::NativeDestruct()
 			this, &UCSStoreHUDWidget::HandleGameTimeChanged);
 		StoreGameState->OnEndOfDayTaskChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleEndOfDayTaskChanged);
+		StoreGameState->OnDailySalesChanged.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleDailySalesChanged);
 	}
 
 	if (CompleteEndOfDayTaskButton != nullptr)
@@ -109,6 +114,11 @@ void UCSStoreHUDWidget::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
 	UpdateEndOfDayPanel();
 }
 
+void UCSStoreHUDWidget::HandleDailySalesChanged()
+{
+	UpdateDailySalesDisplay();
+}
+
 void UCSStoreHUDWidget::UpdateEndOfDayPanel()
 {
 	if (StoreGameState == nullptr)
@@ -149,6 +159,36 @@ void UCSStoreHUDWidget::UpdateEndOfDayPanel()
 		CompleteEndOfDayTaskButtonText->SetText(bIsNextDayReady
 			? NSLOCTEXT("Store", "StartNextDay", "다음 날 시작")
 			: NSLOCTEXT("Store", "CompleteTask", "완료"));
+	}
+}
+
+void UCSStoreHUDWidget::UpdateDailySalesDisplay()
+{
+	if (StoreGameState == nullptr)
+	{
+		return;
+	}
+
+	// HUD 블루프린트에 해당 텍스트가 배치된 경우에만 오늘의 판매 요약을 표시합니다.
+	if (DailySalesText != nullptr)
+	{
+		DailySalesText->SetText(FText::Format(
+			NSLOCTEXT("Store", "DailySales", "오늘 매출: {0} 골드"),
+			FText::AsNumber(StoreGameState->DailySalesGold)));
+	}
+
+	if (DailyProfitText != nullptr)
+	{
+		DailyProfitText->SetText(FText::Format(
+			NSLOCTEXT("Store", "DailyProfit", "오늘 이익: {0} 골드"),
+			FText::AsNumber(StoreGameState->DailyProfitGold)));
+	}
+
+	if (DailySoldQuantityText != nullptr)
+	{
+		DailySoldQuantityText->SetText(FText::Format(
+			NSLOCTEXT("Store", "DailySoldQuantity", "판매 수량: {0}"),
+			FText::AsNumber(StoreGameState->DailySoldQuantity)));
 	}
 }
 

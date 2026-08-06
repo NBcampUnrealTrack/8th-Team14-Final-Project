@@ -234,6 +234,15 @@ void UCSCustomerRuntimeSubsystem::RegisterCounter(AActor* CounterActor)
 	Counter = CounterActor;
 }
 
+void UCSCustomerRuntimeSubsystem::UnregisterCounter(AActor* CounterActor)
+{
+	// 다른 계산대가 등록된 상태에서 잘못 해제되지 않도록 현재 등록된 액터와 일치하는지 확인합니다.
+	if (Counter == CounterActor)
+	{
+		Counter = nullptr;
+	}
+}
+
 int32 UCSCustomerRuntimeSubsystem::JoinQueue(ACSCustomerCharacter* Customer)
 {
 	if (Customer == nullptr)

@@ -30,8 +30,8 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> RemainingTimeText;
 
-	UPROPERTY(meta = (BindWidgetOptional))
 	// T 키로 표시와 숨김을 전환하는 시계 패널입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> ClockPanel;
 
 	// AM/PM 형식의 현재 게임 시각을 표시합니다.
@@ -52,6 +52,18 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CompleteEndOfDayTaskButtonText;
 
+	// 오늘 결제 완료된 거래의 총매출을 표시합니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DailySalesText;
+
+	// 오늘 판매로 발생한 이익을 표시합니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DailyProfitText;
+
+	// 오늘 결제 완료된 상품의 총수량을 표시합니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> DailySoldQuantityText;
+
 	UFUNCTION()
 	void HandlePhaseChanged(ECStorePhase NewPhase);
 
@@ -64,6 +76,10 @@ protected:
 	UFUNCTION()
 	void HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask);
 
+	// 결제 거래가 기록되거나 다음 날이 시작될 때 일일 판매 표시를 갱신합니다.
+	UFUNCTION()
+	void HandleDailySalesChanged();
+
 	UFUNCTION()
 	void CompleteEndOfDayTask();
 
@@ -72,6 +88,7 @@ private:
 	FText FormatGameClock(float GameMinutes) const;
 	FText GetEndOfDayButtonText(ECEndOfDayTask Task) const;
 	void UpdateEndOfDayPanel();
+	void UpdateDailySalesDisplay();
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	bool bIsClockVisible = false;
