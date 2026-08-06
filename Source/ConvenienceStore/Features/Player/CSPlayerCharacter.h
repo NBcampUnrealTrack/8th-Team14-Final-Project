@@ -56,6 +56,10 @@ protected:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> SprintAction;
+
+	// Ctrl 입력으로 웅크리기 상태를 시작하고 해제하는 액션입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> CrouchAction;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> InteractAction;
@@ -84,6 +88,8 @@ private:
 	void Look(const FInputActionValue& Value);
 	void StartSprint();
 	void StopSprint();
+	void StartCrouch();
+	void StopCrouch();
 	void TryInteract();
 	void DropHeldItem();
 	void ToggleClock();
@@ -96,4 +102,8 @@ public:
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float SprintSpeed = 600.0f;
+
+	// 웅크린 상태에서 적용할 이동 속도입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
+	float CrouchSpeed = 180.0f;
 };
