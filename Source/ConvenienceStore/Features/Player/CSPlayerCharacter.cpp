@@ -28,6 +28,9 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     GetCharacterMovement()->bOrientRotationToMovement = false;
     GetCharacterMovement()->MaxWalkSpeed = 350.0f;
 
+    // 기본 Character 웅크리기 기능이 충돌과 천장 공간을 안전하게 처리하도록 활성화합니다.
+    GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
+
     FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(
         TEXT("FirstPersonCamera"));
 
@@ -39,8 +42,10 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     HeldItemAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("HeldItemAnchor"));
     HeldItemAnchor->SetupAttachment(FirstPersonCamera);
     HeldItemAnchor->SetRelativeLocation(FVector(80.0f, 20.0f, -20.0f));
-    
+
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+    // 웅크린 상태에서는 일반 걷기보다 느린 이동 속도를 적용합니다.
+    GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchSpeed;
     // 점프 높이를 결정합니다.
     GetCharacterMovement()->JumpZVelocity = 420.0f;
     GetCharacterMovement()->AirControl = 0.35f;
@@ -78,7 +83,7 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 
     EnhancedInputComponent->BindAction(
         LookAction, ETriggerEvent::Triggered, this, &ACSPlayerCharacter::Look);
-    
+
     EnhancedInputComponent->BindAction(
     JumpAction, ETriggerEvent::Triggered, this, &ACSPlayerCharacter::Jump);
 
@@ -90,7 +95,14 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 
     EnhancedInputComponent->BindAction(
         SprintAction, ETriggerEvent::Completed, this, &ACSPlayerCharacter::StopSprint);
-    
+
+    // Ctrl을 누르는 동안만 웅크리고, 입력을 놓으면 일어서기를 시도합니다.
+    EnhancedInputComponent->BindAction(
+        CrouchAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::StartCrouch);
+
+    EnhancedInputComponent->BindAction(
+        CrouchAction, ETriggerEvent::Completed, this, &ACSPlayerCharacter::StopCrouch);
+
     EnhancedInputComponent->BindAction(
         InteractAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryInteract);
 
@@ -135,12 +147,33 @@ void ACSPlayerCharacter::Look(const FInputActionValue& Value)
 
 void ACSPlayerCharacter::StartSprint()
 {
+	// 웅크린 상태에서는 달리기를 시작하지 않도록 제한합니다.
+	if (bIsCrouched)
+	{
+		return;
+	}
+
     GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
 }
 
 void ACSPlayerCharacter::StopSprint()
 {
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+}
+
+void ACSPlayerCharacter::StartCrouch()
+{
+	// 웅크리기를 시작할 때는 현재 달리기를 즉시 해제합니다.
+	StopSprint();
+
+	// 기본 Crouch 함수가 Capsule 충돌과 카메라 기준 높이를 함께 처리합니다.
+	Crouch();
+}
+
+void ACSPlayerCharacter::StopCrouch()
+{
+	// 낮은 천장에 막힌 경우에는 Unreal 기본 UnCrouch 함수가 웅크린 상태를 유지합니다. (기본기능)
+	UnCrouch();
 }
 
 void ACSPlayerCharacter::ToggleClock()
@@ -315,22 +348,22 @@ void ACSPlayerCharacter::TryInteract()
     {
         return;
     }
-    
+
     const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
     const FVector TraceEnd = TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
-    
+
     FHitResult HitResult;
-    
+
     FCollisionQueryParams QueryParams;
     QueryParams.AddIgnoredActor(this);
-    
+
     const bool bHit = GetWorld()->LineTraceSingleByChannel(
         HitResult,
         TraceStart,
         TraceEnd,
         ECC_Visibility,
         QueryParams);
-    
+
     DrawDebugLine(
         GetWorld(),
         TraceStart,
@@ -340,14 +373,14 @@ void ACSPlayerCharacter::TryInteract()
         1.0f,
         0,
         1.0f);
-    
+
     if (!bHit)
     {
         return;
     }
-    
+
     AActor* HitActor = HitResult.GetActor();
-    
+
     if (IsValid(HitActor) && HitActor->Implements<UCSInteractable>())
     {
         ICSInteractable::Execute_Interact(HitActor, this);
