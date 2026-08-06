@@ -17,6 +17,10 @@ struct FCSShelfSlot
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf")
 	FTransform LocalTransform;
 
+	// 손님 AI가 진열 위치의 접근성과 상품 선택 규칙에 사용할 슬롯 높이입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf")
+	ECSShelfSlotLevel SlotLevel = ECSShelfSlotLevel::Middle;
+
 	// 현재 이 슬롯을 사용 중인 상품을 실행 중에만 저장합니다.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Shelf")
 	TObjectPtr<AActor> OccupyingItem = nullptr;
@@ -41,6 +45,9 @@ public:
 		AActor* ItemActor,
 		FVector PlacementHint) override;
 	virtual void RemovePlacedItem_Implementation(AActor* ItemActor) override;
+	virtual bool GetItemSlotLevel_Implementation(
+		AActor* ItemActor,
+		ECSShelfSlotLevel& OutSlotLevel) const override;
 
 protected:
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
