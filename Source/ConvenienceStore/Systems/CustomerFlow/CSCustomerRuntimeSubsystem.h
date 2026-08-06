@@ -99,6 +99,9 @@ public:
 	// Features/Customers/Interface/CSCustomerCounterInterface의 인터페이스를 무조건 상속받고 구현해야한다라는 안전장치
 	void RegisterCounter(AActor* CounterActor);
 
+	// 등록된 계산대가 제거될 때 Subsystem에 남은 참조를 정리합니다.
+	void UnregisterCounter(AActor* CounterActor);
+
 	// 대기열에 등록
 	// 이미 줄에 있으면 기존 순번 반환, 줄에 없으면 맨 뒤에 추가하고 새 순번 반환
 	int32 JoinQueue(ACSCustomerCharacter* Customer);

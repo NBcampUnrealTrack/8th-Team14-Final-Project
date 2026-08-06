@@ -187,6 +187,12 @@ void ACSStoreGameMode::CompleteCurrentEndOfDayTask()
 
 void ACSStoreGameMode::StartNextBusinessDay()
 {
+	if (StoreGameState != nullptr)
+	{
+		// 다음 날이 시작되기 전에 전날의 판매 요약값을 초기화합니다.
+		StoreGameState->BeginNextBusinessDay();
+	}
+
 	StartStoreFlow();
 }
 

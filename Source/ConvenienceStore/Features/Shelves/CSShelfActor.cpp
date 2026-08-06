@@ -212,3 +212,28 @@ void ACSShelfActor::RemovePlacedItem_Implementation(AActor* ItemActor)
 		}
 	}
 }
+
+bool ACSShelfActor::GetItemSlotLevel_Implementation(
+	AActor* ItemActor,
+	ECSShelfSlotLevel& OutSlotLevel) const
+{
+	// 슬롯을 찾지 못한 경우에도 호출 측에서 안전하게 사용할 수 있도록 중단을 기본값으로 설정합니다.
+	OutSlotLevel = ECSShelfSlotLevel::Middle;
+
+	if (!IsValid(ItemActor))
+	{
+		return false;
+	}
+
+	// 상품 액터와 일치하는 점유 슬롯을 찾아 해당 슬롯에 설정된 높이 정보를 반환합니다.
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (Slot.OccupyingItem == ItemActor)
+		{
+			OutSlotLevel = Slot.SlotLevel;
+			return true;
+		}
+	}
+
+	return false;
+}

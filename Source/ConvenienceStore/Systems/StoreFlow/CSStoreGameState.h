@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
+#include "Data/CSCheckoutTypes.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "CSStoreGameState.generated.h"
 
@@ -31,6 +32,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	EventId,
 	FText,
 	Message);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnStoreCheckoutRecorded,
+	const FCSCheckoutTransaction&,
+	Transaction);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnStoreDailySalesChanged);
 
 // 게임플레이 액터와 UI가 읽는 편의점의 현재 상태를 보관합니다.
 UCLASS()
@@ -75,6 +83,34 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Rules")
 	bool bCanSpawnCustomers = false;
 
+	// 현재 진행 중인 영업일입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 CurrentBusinessDay = 1;
+
+	// 오늘 결제 완료된 거래의 총매출입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailySalesGold = 0;
+
+	// 오늘 판매된 상품의 총매입가입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyCostGold = 0;
+
+	// 오늘 총매출에서 총매입가를 뺀 이익입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyProfitGold = 0;
+
+	// 오늘 결제 완료된 상품의 총수량입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailySoldQuantity = 0;
+
+	// 오늘 완료한 손님 결제 횟수입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 CompletedCheckoutCount = 0;
+
+	// 오늘 발생한 결제 거래를 정산과 판매 보고서에서 조회할 수 있도록 저장합니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	TArray<FCSCheckoutTransaction> DailyCheckoutTransactions;
+
 	// 단계가 변경되었을 때 UI와 게임플레이에 알립니다.
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FOnStorePhaseChanged OnStorePhaseChanged;
@@ -93,9 +129,27 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Schedule")
 	FOnStoreScheduleEventFired OnScheduleEventFired;
 
+	// 결제 거래가 정산 데이터에 기록된 직후 거래 상세를 방송합니다.
+	UPROPERTY(BlueprintAssignable, Category = "Store|Sales")
+	FOnStoreCheckoutRecorded OnCheckoutRecorded;
+
+	// 일일 매출 요약값이 변경되었을 때 HUD와 정산 UI에 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Store|Sales")
+	FOnStoreDailySalesChanged OnDailySalesChanged;
+
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
 	void SetCurrentGameMinutes(float NewGameMinutes);
 	void SetEndOfDayTask(ECEndOfDayTask NewTask);
+
+	// 스캔이 끝난 주문을 거래로 기록하고 오늘의 매출·원가·이익을 갱신합니다.
+	bool RecordCheckoutTransaction(const TArray<FCSCheckoutLineItem>& LineItems);
+
+	// 다음 영업일을 시작할 때 하루 단위 판매 기록과 요약값을 초기화합니다.
+	void BeginNextBusinessDay();
+
+private:
+	// 영업일 안에서 다음 거래에 사용할 순번입니다.
+	int32 NextTransactionId = 1;
 };

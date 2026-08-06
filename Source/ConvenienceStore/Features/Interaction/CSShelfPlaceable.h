@@ -4,6 +4,15 @@
 #include "UObject/Interface.h"
 #include "CSShelfPlaceable.generated.h"
 
+// 손님 AI와 진열 규칙에서 사용할 진열대 슬롯의 높이 구분입니다.
+UENUM(BlueprintType)
+enum class ECSShelfSlotLevel : uint8
+{
+	Lower UMETA(DisplayName = "하단"),
+	Middle UMETA(DisplayName = "중단"),
+	Upper UMETA(DisplayName = "상단")
+};
+
 UINTERFACE(BlueprintType)
 class CONVENIENCESTORE_API UCSShelfPlaceable : public UInterface
 {
@@ -34,4 +43,8 @@ public:
 	// 상품을 다시 집었을 때 해당 슬롯의 점유 상태를 해제합니다.
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Shelf")
 	void RemovePlacedItem(AActor* ItemActor);
+
+	// 지정한 상품이 놓여 있는 슬롯의 높이 정보를 반환합니다.
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Shelf")
+	bool GetItemSlotLevel(AActor* ItemActor, ECSShelfSlotLevel& OutSlotLevel) const;
 };
