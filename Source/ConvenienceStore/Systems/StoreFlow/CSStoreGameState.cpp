@@ -1,5 +1,13 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
+void ACSStoreGameState::BeginPlay()
+{
+	Super::BeginPlay();
+
+	CurrentFunds = FMath::Max(0, StartingFunds);
+	OnFundsChanged.Broadcast(CurrentFunds);
+}
+
 void ACSStoreGameState::SetStorePhase(const FCSStorePhaseData& PhaseData)
 {
 	CurrentPhase = PhaseData.Phase;
@@ -40,6 +48,56 @@ void ACSStoreGameState::SetRemainingSeconds(float NewRemainingSeconds)
 	OnRemainingTimeChanged.Broadcast(RemainingSeconds);
 }
 
+int32 ACSStoreGameState::GetCurrentFunds() const
+{
+	return CurrentFunds;
+}
+
+bool ACSStoreGameState::CanAfford(int32 Amount) const
+{
+	return Amount >= 0 && CurrentFunds >= Amount;
+}
+
+bool ACSStoreGameState::TrySpendFunds(int32 Amount)
+{
+	if (Amount < 0 || !CanAfford(Amount))
+	{
+		return false;
+	}
+
+	if (Amount == 0)
+	{
+		return true;
+	}
+
+	CurrentFunds -= Amount;
+	OnFundsChanged.Broadcast(CurrentFunds);
+	return true;
+}
+
+bool ACSStoreGameState::AddFunds(int32 Amount)
+{
+	if (Amount < 0)
+	{
+		return false;
+	}
+
+	if (Amount == 0)
+	{
+		return true;
+	}
+
+	const int64 NewFunds = static_cast<int64>(CurrentFunds) + Amount;
+	if (NewFunds > MAX_int32)
+	{
+		return false;
+	}
+
+	CurrentFunds = static_cast<int32>(NewFunds);
+	OnFundsChanged.Broadcast(CurrentFunds);
+	return true;
+}
+
 bool ACSStoreGameState::RecordCheckoutTransaction(
 	const TArray<FCSCheckoutLineItem>& LineItems)
 {
@@ -67,14 +125,32 @@ bool ACSStoreGameState::RecordCheckoutTransaction(
 		}
 
 		// UI에서 전달한 합계 대신 단가와 수량으로 다시 계산하여 정산값을 신뢰할 수 있게 합니다.
-		const int32 LineSalesGold = LineItem.UnitSalePrice * LineItem.Quantity;
-		const int32 LineCostGold = LineItem.UnitPurchasePrice * LineItem.Quantity;
-		Transaction.LineItems[LineIndex].LineTotalSalePrice = LineSalesGold;
-		Transaction.TotalSalesGold += LineSalesGold;
-		Transaction.TotalCostGold += LineCostGold;
+		const int64 LineSalesGold =
+			static_cast<int64>(LineItem.UnitSalePrice) * LineItem.Quantity;
+		const int64 LineCostGold =
+			static_cast<int64>(LineItem.UnitPurchasePrice) * LineItem.Quantity;
+		const int64 NewTotalSalesGold =
+			static_cast<int64>(Transaction.TotalSalesGold) + LineSalesGold;
+		const int64 NewTotalCostGold =
+			static_cast<int64>(Transaction.TotalCostGold) + LineCostGold;
+		if (NewTotalSalesGold > MAX_int32 || NewTotalCostGold > MAX_int32)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameState] 계산 금액이 int32 범위를 초과해 거래를 기록하지 않습니다."));
+			return false;
+		}
+
+		Transaction.LineItems[LineIndex].LineTotalSalePrice =
+			static_cast<int32>(LineSalesGold);
+		Transaction.TotalSalesGold = static_cast<int32>(NewTotalSalesGold);
+		Transaction.TotalCostGold = static_cast<int32>(NewTotalCostGold);
 	}
 
 	Transaction.TotalProfitGold = Transaction.TotalSalesGold - Transaction.TotalCostGold;
+	if (!AddFunds(Transaction.TotalSalesGold))
+	{
+		return false;
+	}
 
 	++NextTransactionId;
 	DailyCheckoutTransactions.Add(Transaction);
