@@ -40,6 +40,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnStoreDailySalesChanged);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnStoreFundsChanged,
+	int32,
+	NewFunds);
+
 // 게임플레이 액터와 UI가 읽는 편의점의 현재 상태를 보관합니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase
@@ -137,17 +142,42 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Sales")
 	FOnStoreDailySalesChanged OnDailySalesChanged;
 
+	UPROPERTY(BlueprintAssignable, Category = "Store|Funds")
+	FOnStoreFundsChanged OnFundsChanged;
+
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
 	void SetCurrentGameMinutes(float NewGameMinutes);
 	void SetEndOfDayTask(ECEndOfDayTask NewTask);
 
+	UFUNCTION(BlueprintPure, Category = "Store|Funds")
+	int32 GetCurrentFunds() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Funds")
+	bool CanAfford(int32 Amount) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Funds")
+	bool TrySpendFunds(int32 Amount);
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Funds")
+	bool AddFunds(int32 Amount);
+
 	// 스캔이 끝난 주문을 거래로 기록하고 오늘의 매출·원가·이익을 갱신합니다.
 	bool RecordCheckoutTransaction(const TArray<FCSCheckoutLineItem>& LineItems);
 
 	// 다음 영업일을 시작할 때 하루 단위 판매 기록과 요약값을 초기화합니다.
 	void BeginNextBusinessDay();
+
+protected:
+	virtual void BeginPlay() override;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Funds",
+		meta = (ClampMin = "0", UIMin = "0"))
+	int32 StartingFunds = 1000;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Funds")
+	int32 CurrentFunds = 0;
 
 private:
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.
