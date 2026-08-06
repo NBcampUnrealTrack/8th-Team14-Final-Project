@@ -7,6 +7,9 @@
 #include "CSProductPickupActor.generated.h"
 
 class UStaticMeshComponent;
+class USceneComponent;
+class UStaticMesh;
+class UCSProductVisualRegistry;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
@@ -17,6 +20,7 @@ class CONVENIENCESTORE_API ACSProductPickupActor : public AActor, public ICSInte
 public:
 	ACSProductPickupActor();
 
+	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
@@ -31,7 +35,16 @@ public:
 		return ProductRow.RowName;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "Product")
+	FText GetProductDisplayName() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Product")
+	bool InitializeProduct(FDataTableRowHandle InProductRow);
+
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> SceneRoot;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ProductMesh;
 
@@ -42,6 +55,14 @@ protected:
 		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
 	FDataTableRowHandle ProductRow;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product")
-	FText DisplayName;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Visual")
+	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Visual")
+	TObjectPtr<UStaticMesh> FallbackMesh;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Visual")
+	FTransform FallbackMeshRelativeTransform = FTransform::Identity;
+
+	void ApplyProductVisual();
 };
