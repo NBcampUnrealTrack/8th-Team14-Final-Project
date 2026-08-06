@@ -5,6 +5,7 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Features/Customers/CSCustomerAIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
 
 // Sets default values
 ACSCustomerCharacter::ACSCustomerCharacter()
@@ -25,6 +26,8 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 360.0f, 0.0f); //방향 전환 속도
 	GetCharacterMovement()->MaxWalkSpeed = 250.0f; //기본 걷기 속도
 
+	//일단 서로 겹치게 테스트용으로 잘 굴러가는지 확인용
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 }
 
 UCSCustomerStateComponent* ACSCustomerCharacter::GetCustomerState() const
