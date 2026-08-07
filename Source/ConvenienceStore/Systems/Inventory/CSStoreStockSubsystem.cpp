@@ -74,6 +74,7 @@ FCSProductStockInfo UCSStoreStockSubsystem::GetProductStock(FName ProductId) con
 		const ACSProductPickupActor* Product = *It;
 		if (!IsValid(Product) ||
 			Product->IsA<ACSProductPlacementPreviewActor>() ||
+			Product->IsExcludedFromStockCount() ||
 			Product->GetProductId() != ProductId)
 		{
 			continue;
@@ -130,7 +131,8 @@ TArray<FCSProductStockInfo> UCSStoreStockSubsystem::GetAllProductStock() const
 	{
 		const ACSProductPickupActor* Product = *It;
 		if (!IsValid(Product) ||
-			Product->IsA<ACSProductPlacementPreviewActor>())
+			Product->IsA<ACSProductPlacementPreviewActor>() ||
+			Product->IsExcludedFromStockCount())
 		{
 			continue;
 		}
