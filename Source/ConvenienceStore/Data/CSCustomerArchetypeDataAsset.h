@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Data/CSProductTypes.h"
 #include "CSCustomerArchetypeDataAsset.generated.h"
 
 // 손님의 연령대 (기획상 연령대 하나가 종족 하나에 1:1 대응)
@@ -91,6 +92,19 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float PromotionSensitivity = 0.55f;
+
+	// 카테고리 성향 -------
+
+	// 카테고리별 기본 선호도
+	// 0.5 = 전체 평균, 그보다 높으면 더 좋아함 / 낮으면 덜 좋아함
+	// 맵에 없는 카테고리는 0.5(평균)로 취급
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Category")
+	TMap<ECSProductCategory, float> CategoryPreference;
+
+	// 이 종족이 절대 사지 않는 카테고리
+	// 여기 포함되면 점수와 무관하게 무조건 미구매
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Category")
+	TSet<ECSProductCategory> BlockedCategories;
 
 	// 탐색 ---------
 
