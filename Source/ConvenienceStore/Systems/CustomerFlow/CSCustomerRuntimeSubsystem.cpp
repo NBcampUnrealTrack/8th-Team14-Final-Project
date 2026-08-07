@@ -190,7 +190,9 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		ICSShelfPlaceable::Execute_RemovePlacedItem(ShelfActor, Product);
 	}
 
-	CustomerState->AddToSelectItem(ProductId);
+	// ProductRow(테이블+행)와 클래스를 함께 남겨야 나중에 원본 그대로 되돌릴 수 있다.
+	// 액터를 파괴하기 전에 기록
+	CustomerState->AddSelectProduct(Product->GetProductRow(), Product->GetClass());
 
 	// 손님이 가져간 상품 액터를 월드에서 물리적으로 완전히 제거합니다.
 	// (상품 판매 및 인벤토리 처리는 델리게이트를 통해 외부에서 처리하도록 분리)
