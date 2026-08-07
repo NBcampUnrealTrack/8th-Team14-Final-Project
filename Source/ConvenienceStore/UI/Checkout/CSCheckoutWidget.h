@@ -16,6 +16,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnCheckoutPaymentRequested);
 // 계산을 취소하고 손님을 대기열에 유지할 때 계산대에 알리는 이벤트입니다.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnCheckoutCancelled);
 
+// 상품 한 개의 스캔이 끝났을 때 계산대의 표시용 상품을 갱신하도록 알리는 이벤트입니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutItemScanned, FName, ProductId);
+
 // 손님 주문을 표시하고 상품별 스캔 진행 상태를 관리하는 계산대 UI의 기본 클래스입니다.
 UCLASS(Abstract)
 class CONVENIENCESTORE_API UCSCheckoutWidget : public UUserWidget
@@ -72,6 +75,10 @@ public:
 	// 취소 버튼을 눌렀을 때 계산대가 UI를 닫도록 알립니다.
 	UPROPERTY(BlueprintAssignable, Category = "Checkout")
 	FCSOnCheckoutCancelled OnCheckoutCancelled;
+
+	// 상품 한 개를 성공적으로 스캔했을 때 해당 상품의 RowName을 전달합니다.
+	UPROPERTY(BlueprintAssignable, Category = "Checkout")
+	FCSOnCheckoutItemScanned OnItemScanned;
 
 protected:
 	virtual void NativeConstruct() override;
