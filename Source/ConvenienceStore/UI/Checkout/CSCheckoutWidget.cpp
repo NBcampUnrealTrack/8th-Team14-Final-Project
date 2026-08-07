@@ -82,6 +82,8 @@ bool UCSCheckoutWidget::ScanNextItem()
 	++ScannedQuantityInCurrentLine;
 	ScannedSalePrice += LineItem.UnitSalePrice;
 
+	// 계산대가 같은 상품의 표시용 액터를 제거하거나 연출할 수 있도록 스캔 대상을 알립니다.
+	OnItemScanned.Broadcast(LineItem.ProductId);
 	UpdateCheckoutDisplay();
 	return true;
 }
