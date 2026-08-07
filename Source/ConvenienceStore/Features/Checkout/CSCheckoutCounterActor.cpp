@@ -493,6 +493,8 @@ void ACSCheckoutCounterActor::SpawnCheckoutDisplayProducts()
 
 		// 표시 전용 액터는 플레이어가 다시 집거나 충돌에 밀리지 않도록 비상호작용 상태로 둡니다.
 		DisplayProduct->SetActorEnableCollision(false);
+		// 계산대 위 상품은 주문 연출용 복제본이므로 월드 재고 집계에서 제외합니다.
+		DisplayProduct->SetExcludedFromStockCount(true);
 		const float ProductHalfHeight =
 			DisplayProduct->GetComponentsBoundingBox(false).GetExtent().Z;
 		DisplayProduct->SetActorLocation(BaseLocation + UpDirection * ProductHalfHeight);
