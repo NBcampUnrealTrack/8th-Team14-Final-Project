@@ -73,6 +73,18 @@ public:
 	// 플레이어가 월드 바닥에 내려놓은 상품 메시의 물리를 활성화합니다.
 	void EnableWorldDropPhysics();
 
+	// 계산대 연출처럼 실제 재고로 취급하지 않을 표시용 상품을 재고 집계에서 제외합니다.
+	void SetExcludedFromStockCount(bool bShouldExclude)
+	{
+		bIsExcludedFromStockCount = bShouldExclude;
+	}
+
+	// 재고 서브시스템이 상품 수량을 집계해도 되는지 반환합니다.
+	bool IsExcludedFromStockCount() const
+	{
+		return bIsExcludedFromStockCount;
+	}
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -101,6 +113,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Physics",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float PawnPushImpulseStrength = 75.0f;
+
+	// 런타임 연출용 상품은 월드에 존재해도 실제 재고 수량에 포함하지 않습니다.
+	UPROPERTY(Transient)
+	bool bIsExcludedFromStockCount = false;
 
 	UFUNCTION()
 	void HandlePawnOverlap(

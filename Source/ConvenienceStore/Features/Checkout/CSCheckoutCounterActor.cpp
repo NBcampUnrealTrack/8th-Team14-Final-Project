@@ -6,6 +6,7 @@
 #include "Engine/World.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
@@ -29,6 +30,11 @@ ACSCheckoutCounterActor::ACSCheckoutCounterActor()
 	QueueStartPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("QueueStartPoint"));
 	QueueStartPoint->SetupAttachment(SceneRoot);
 	QueueStartPoint->SetHiddenInGame(true);
+
+	// 화살표 위치를 계산대 상판에 맞추면 상품 표시 위치와 배치 방향을 에디터에서 조정할 수 있습니다.
+	CheckoutDisplayOrigin = CreateDefaultSubobject<UArrowComponent>(TEXT("CheckoutDisplayOrigin"));
+	CheckoutDisplayOrigin->SetupAttachment(SceneRoot);
+	CheckoutDisplayOrigin->SetHiddenInGame(true);
 }
 
 void ACSCheckoutCounterActor::BeginPlay()
@@ -299,7 +305,12 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 		this, &ACSCheckoutCounterActor::HandleCheckoutPaymentRequested);
 	ActiveCheckoutWidget->OnCheckoutCancelled.AddDynamic(
 		this, &ACSCheckoutCounterActor::HandleCheckoutCancelled);
+	ActiveCheckoutWidget->OnItemScanned.AddDynamic(
+		this, &ACSCheckoutCounterActor::HandleCheckoutItemScanned);
 	ActiveCheckoutWidget->AddToViewport();
+
+	// UI가 열린 주문과 같은 손님의 상품을 계산대 위에 표시합니다.
+	SpawnCheckoutDisplayProducts();
 
 	// 스캔 버튼을 조작할 수 있도록 플레이어 입력을 UI 중심으로 전환합니다.
 	FInputModeUIOnly InputMode;
@@ -356,6 +367,33 @@ void ACSCheckoutCounterActor::HandleCheckoutCancelled()
 	CloseCheckoutWidget();
 }
 
+void ACSCheckoutCounterActor::HandleCheckoutItemScanned(FName ProductId)
+{
+	if (ProductId.IsNone())
+	{
+		return;
+	}
+
+	// 주문은 같은 상품을 묶어 스캔하므로, 아직 남아 있는 동일 상품 중 첫 번째 표시 액터를 제거합니다.
+	for (int32 ProductIndex = 0; ProductIndex < CheckoutDisplayProductIds.Num(); ++ProductIndex)
+	{
+		if (CheckoutDisplayProductIds[ProductIndex] != ProductId)
+		{
+			continue;
+		}
+
+		if (CheckoutDisplayProducts.IsValidIndex(ProductIndex) &&
+			IsValid(CheckoutDisplayProducts[ProductIndex]))
+		{
+			CheckoutDisplayProducts[ProductIndex]->Destroy();
+		}
+
+		CheckoutDisplayProducts.RemoveAt(ProductIndex);
+		CheckoutDisplayProductIds.RemoveAt(ProductIndex);
+		return;
+	}
+}
+
 void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
 	(void)NewPhase;
@@ -369,6 +407,9 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 
 void ACSCheckoutCounterActor::CloseCheckoutWidget()
 {
+	// UI가 어떤 이유로 닫히더라도 표시용 상품이 월드에 남지 않게 정리합니다.
+	ClearCheckoutDisplayProducts();
+
 	if (!IsValid(ActiveCheckoutWidget))
 	{
 		return;
@@ -385,4 +426,97 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 		PlayerController->SetInputMode(InputMode);
 		PlayerController->SetShowMouseCursor(false);
 	}
+}
+
+void ACSCheckoutCounterActor::SpawnCheckoutDisplayProducts()
+{
+	ClearCheckoutDisplayProducts();
+
+	if (!IsValid(CheckoutDisplayOrigin) || CheckoutDisplayProductsPerRow < 1)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	ACSCustomerCharacter* FrontCustomer =
+		IsValid(CustomerSubsystem) ? CustomerSubsystem->GetFrontCustomer() : nullptr;
+	const UCSCustomerStateComponent* CustomerState =
+		IsValid(FrontCustomer) ? FrontCustomer->GetCustomerState() : nullptr;
+	if (!IsValid(World) || !IsValid(CustomerState))
+	{
+		return;
+	}
+
+	const FVector OriginLocation = CheckoutDisplayOrigin->GetComponentLocation();
+	const FVector RightDirection = CheckoutDisplayOrigin->GetRightVector();
+	const FVector ForwardDirection = CheckoutDisplayOrigin->GetForwardVector();
+	const FVector UpDirection = CheckoutDisplayOrigin->GetUpVector();
+	const FQuat OriginRotation = CheckoutDisplayOrigin->GetComponentQuat();
+
+	for (int32 ProductIndex = 0; ProductIndex < CustomerState->SelectProducts.Num(); ++ProductIndex)
+	{
+		const FCSSelectProduct& SelectedProduct = CustomerState->SelectProducts[ProductIndex];
+		if (SelectedProduct.ProductClass == nullptr ||
+			SelectedProduct.ProductRow.DataTable == nullptr ||
+			SelectedProduct.ProductRow.RowName.IsNone())
+		{
+			continue;
+		}
+
+		const int32 RowIndex = ProductIndex / CheckoutDisplayProductsPerRow;
+		const int32 ColumnIndex = ProductIndex % CheckoutDisplayProductsPerRow;
+		const FVector BaseLocation = OriginLocation +
+			RightDirection * (CheckoutDisplayRightSpacing * static_cast<float>(ColumnIndex)) +
+			ForwardDirection * (CheckoutDisplayForwardSpacing * static_cast<float>(RowIndex));
+
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = this;
+		SpawnParameters.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AActor* SpawnedActor = World->SpawnActor<AActor>(
+			SelectedProduct.ProductClass,
+			BaseLocation,
+			OriginRotation.Rotator(),
+			SpawnParameters);
+		ACSProductPickupActor* DisplayProduct = Cast<ACSProductPickupActor>(SpawnedActor);
+		if (!IsValid(DisplayProduct) ||
+			!DisplayProduct->InitializeProduct(SelectedProduct.ProductRow))
+		{
+			if (IsValid(SpawnedActor))
+			{
+				SpawnedActor->Destroy();
+			}
+			continue;
+		}
+
+		// 표시 전용 액터는 플레이어가 다시 집거나 충돌에 밀리지 않도록 비상호작용 상태로 둡니다.
+		DisplayProduct->SetActorEnableCollision(false);
+		// 계산대 위 상품은 주문 연출용 복제본이므로 월드 재고 집계에서 제외합니다.
+		DisplayProduct->SetExcludedFromStockCount(true);
+		const float ProductHalfHeight =
+			DisplayProduct->GetComponentsBoundingBox(false).GetExtent().Z;
+		DisplayProduct->SetActorLocation(BaseLocation + UpDirection * ProductHalfHeight);
+		DisplayProduct->AttachToComponent(
+			CheckoutDisplayOrigin,
+			FAttachmentTransformRules::KeepWorldTransform);
+
+		CheckoutDisplayProducts.Add(DisplayProduct);
+		CheckoutDisplayProductIds.Add(SelectedProduct.ProductRow.RowName);
+	}
+}
+
+void ACSCheckoutCounterActor::ClearCheckoutDisplayProducts()
+{
+	for (ACSProductPickupActor* DisplayProduct : CheckoutDisplayProducts)
+	{
+		if (IsValid(DisplayProduct))
+		{
+			DisplayProduct->Destroy();
+		}
+	}
+
+	CheckoutDisplayProducts.Reset();
+	CheckoutDisplayProductIds.Reset();
 }
