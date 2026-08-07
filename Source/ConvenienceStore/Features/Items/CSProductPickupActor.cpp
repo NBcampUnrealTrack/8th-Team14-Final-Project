@@ -6,6 +6,7 @@
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/StaticMesh.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "GameFramework/Pawn.h"
 
 ACSProductPickupActor::ACSProductPickupActor()
 {
@@ -17,12 +18,28 @@ ACSProductPickupActor::ACSProductPickupActor()
 	ProductMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProductMesh"));
 	ProductMesh->SetupAttachment(SceneRoot);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ProductMesh->SetGenerateOverlapEvents(true);
+	ProductMesh->OnComponentBeginOverlap.AddDynamic(
+		this,
+		&ACSProductPickupActor::HandlePawnOverlap);
 }
 
 void ACSProductPickupActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	ApplyProductVisual();
+}
+
+void ACSProductPickupActor::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (IsValid(ProductMesh))
+	{
+		ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+		ProductMesh->SetGenerateOverlapEvents(true);
+	}
 }
 
 void ACSProductPickupActor::Interact_Implementation(AActor* Interactor)
@@ -76,6 +93,88 @@ bool ACSProductPickupActor::InitializeProduct(FDataTableRowHandle InProductRow)
 	ProductRow = InProductRow;
 	ApplyProductVisual();
 	return true;
+}
+
+void ACSProductPickupActor::PrepareForPickupPhysics()
+{
+	if (!IsValid(ProductMesh))
+	{
+		return;
+	}
+
+	if (ProductMesh->IsSimulatingPhysics())
+	{
+		ProductMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		ProductMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+	}
+	ProductMesh->SetSimulatePhysics(false);
+
+	if (!IsValid(SceneRoot))
+	{
+		return;
+	}
+
+	if (ProductMesh->GetAttachParent() != SceneRoot)
+	{
+		ProductMesh->AttachToComponent(
+			SceneRoot,
+			FAttachmentTransformRules::KeepWorldTransform);
+	}
+
+	ApplyProductVisual();
+}
+
+void ACSProductPickupActor::EnableWorldDropPhysics()
+{
+	if (!IsValid(ProductMesh) || ProductMesh->GetStaticMesh() == nullptr)
+	{
+		return;
+	}
+
+	ProductMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ProductMesh->SetGenerateOverlapEvents(true);
+	ProductMesh->SetSimulatePhysics(true);
+}
+
+void ACSProductPickupActor::HandlePawnOverlap(
+	UPrimitiveComponent*,
+	AActor* OtherActor,
+	UPrimitiveComponent*,
+	int32,
+	bool,
+	const FHitResult&)
+{
+	if (!IsValid(OtherActor) ||
+		OtherActor == this ||
+		Cast<APawn>(OtherActor) == nullptr ||
+		!IsValid(ProductMesh) ||
+		!ProductMesh->IsSimulatingPhysics() ||
+		PawnPushImpulseStrength <= 0.0f)
+	{
+		return;
+	}
+
+	FVector PushDirection = OtherActor->GetVelocity();
+	PushDirection.Z = 0.0f;
+	if (PushDirection.SizeSquared2D() <= FMath::Square(1.0f))
+	{
+		PushDirection = ProductMesh->GetComponentLocation() - OtherActor->GetActorLocation();
+		PushDirection.Z = 0.0f;
+		if (!PushDirection.Normalize())
+		{
+			return;
+		}
+	}
+	else
+	{
+		PushDirection.Normalize();
+	}
+
+	ProductMesh->AddImpulse(
+		PushDirection * PawnPushImpulseStrength,
+		NAME_None,
+		true);
 }
 
 void ACSProductPickupActor::ApplyProductVisual()

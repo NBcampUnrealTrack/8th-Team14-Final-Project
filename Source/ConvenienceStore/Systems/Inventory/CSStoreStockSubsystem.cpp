@@ -4,6 +4,7 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Features/Items/CSProductPlacementPreviewActor.h"
 
 namespace
 {
@@ -71,7 +72,9 @@ FCSProductStockInfo UCSStoreStockSubsystem::GetProductStock(FName ProductId) con
 	for (TActorIterator<ACSProductPickupActor> It(World); It; ++It)
 	{
 		const ACSProductPickupActor* Product = *It;
-		if (!IsValid(Product) || Product->GetProductId() != ProductId)
+		if (!IsValid(Product) ||
+			Product->IsA<ACSProductPlacementPreviewActor>() ||
+			Product->GetProductId() != ProductId)
 		{
 			continue;
 		}
@@ -126,7 +129,8 @@ TArray<FCSProductStockInfo> UCSStoreStockSubsystem::GetAllProductStock() const
 	for (TActorIterator<ACSProductPickupActor> It(World); It; ++It)
 	{
 		const ACSProductPickupActor* Product = *It;
-		if (!IsValid(Product))
+		if (!IsValid(Product) ||
+			Product->IsA<ACSProductPlacementPreviewActor>())
 		{
 			continue;
 		}

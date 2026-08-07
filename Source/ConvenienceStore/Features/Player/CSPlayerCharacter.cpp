@@ -1,6 +1,7 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
+#include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -209,21 +210,50 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
     }
 
     // 진열대에서 다시 집은 상품은 기존 슬롯 점유를 먼저 해제합니다.
-    if (AActor* PreviousParent = PickupActor->GetAttachParentActor();
-        IsValid(PreviousParent) && PreviousParent->Implements<UCSShelfPlaceable>())
-    {
-        ICSShelfPlaceable::Execute_RemovePlacedItem(PreviousParent, PickupActor);
-    }
+	if (AActor* PreviousParent = PickupActor->GetAttachParentActor();
+		IsValid(PreviousParent) && PreviousParent->Implements<UCSShelfPlaceable>())
+	{
+		ICSShelfPlaceable::Execute_RemovePlacedItem(PreviousParent, PickupActor);
+	}
 
-    PickupActor->SetActorEnableCollision(false);
-    PickupActor->AttachToComponent(
-        HeldItemAnchor,
-        FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	// 물리로 분리된 메시를 먼저 복원한 뒤 Actor 자체를 손 위치에 부착합니다.
+	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(PickupActor))
+	{
+		ProductActor->PrepareForPickupPhysics();
+	}
+	else if (ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(PickupActor))
+	{
+		DeliveryCrate->PrepareForPickupPhysics();
+	}
 
-    HeldActor = PickupActor;
+	PickupActor->SetActorEnableCollision(false);
+	PickupActor->AttachToComponent(
+		HeldItemAnchor,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	if (const ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(PickupActor))
+	{
+		PickupActor->SetActorRelativeLocation(
+			DeliveryCrate->GetHeldRelativeLocation());
+	}
 
-	// 공용 상품 액터인 경우에만 같은 ProductRow를 사용하는 고스트 프리뷰를 생성합니다.
-	CreatePlacementPreview(Cast<ACSProductPickupActor>(HeldActor));
+	HeldActor = PickupActor;
+
+	// 들고 있는 대상에 맞춰 실제 진열될 상품의 고스트 프리뷰를 생성합니다.
+	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(HeldActor))
+	{
+		CreatePlacementPreview(ProductActor);
+	}
+	else if (const ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(HeldActor))
+	{
+		CreatePlacementPreviewFromCrate(DeliveryCrate);
+	}
+	else
+	{
+		DestroyPlacementPreview();
+	}
     SetActorTickEnabled(true);
     return true;
 }
@@ -261,9 +291,20 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
         return;
     }
 
-    FTransform PreviewTransform;
-    if (!ICSShelfPlaceable::Execute_GetPlacementPreview(
-        TargetActor, HeldActor, HitResult.ImpactPoint, PreviewTransform))
+	AActor* PlacementItem = HeldActor;
+	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
+	{
+		// 배송 상자 자체가 아니라 실제 상품 타입인 프리뷰 액터로 슬롯 적합성을 검사합니다.
+		PlacementItem = PlacementPreviewActor;
+	}
+	if (!IsValid(PlacementItem))
+	{
+		return;
+	}
+
+	FTransform PreviewTransform;
+	if (!ICSShelfPlaceable::Execute_GetPlacementPreview(
+		TargetActor, PlacementItem, HitResult.ImpactPoint, PreviewTransform))
     {
         return;
     }
@@ -301,21 +342,33 @@ void ACSPlayerCharacter::DropHeldItem()
         ECC_Visibility,
         AimQueryParams);
 
-    if (bHitShelfTarget)
-    {
-        if (AActor* TargetActor = AimHitResult.GetActor();
-            IsValid(TargetActor) && TargetActor->Implements<UCSShelfPlaceable>() &&
-            ICSShelfPlaceable::Execute_TryPlaceItem(
-                TargetActor,
-                HeldActor,
-                AimHitResult.ImpactPoint))
-        {
-            HeldActor = nullptr;
-			DestroyPlacementPreview();
-            SetActorTickEnabled(false);
-            return;
-        }
-    }
+	if (bHitShelfTarget)
+	{
+		if (AActor* TargetActor = AimHitResult.GetActor();
+			IsValid(TargetActor) && TargetActor->Implements<UCSShelfPlaceable>())
+		{
+			if (ACSDeliveryCrateActor* DeliveryCrate =
+				Cast<ACSDeliveryCrateActor>(HeldActor))
+			{
+				TryPlaceProductFromCrate(
+					DeliveryCrate,
+					TargetActor,
+					AimHitResult.ImpactPoint);
+				return;
+			}
+
+			if (ICSShelfPlaceable::Execute_TryPlaceItem(
+				TargetActor,
+				HeldActor,
+				AimHitResult.ImpactPoint))
+			{
+				HeldActor = nullptr;
+				DestroyPlacementPreview();
+				SetActorTickEnabled(false);
+				return;
+			}
+		}
+	}
 
     // 카메라 앞쪽에서 아래로 추적하여 바닥이나 선반 표면을 찾습니다.
     const FVector ForwardDropPoint =
@@ -342,19 +395,60 @@ void ACSPlayerCharacter::DropHeldItem()
         return;
     }
 
-    AActor* ActorToDrop = HeldActor;
-    HeldActor = nullptr;
+	AActor* ActorToDrop = HeldActor;
+	ACSProductPickupActor* ProductToDrop = Cast<ACSProductPickupActor>(ActorToDrop);
+	ACSDeliveryCrateActor* CrateToDrop = Cast<ACSDeliveryCrateActor>(ActorToDrop);
+
+	// Bounds 계산 전에 물리를 끄고 메시를 정상 SceneRoot/상대 Transform 상태로 맞춥니다.
+	if (IsValid(ProductToDrop))
+	{
+		ProductToDrop->PrepareForPickupPhysics();
+	}
+	else if (IsValid(CrateToDrop))
+	{
+		CrateToDrop->PrepareForPickupPhysics();
+	}
+
+	const FBox Bounds = ActorToDrop->GetComponentsBoundingBox(true);
+	const float ActorLocationZ = ActorToDrop->GetActorLocation().Z;
+	if (!Bounds.IsValid ||
+		!FMath::IsFinite(Bounds.Min.Z) ||
+		!FMath::IsFinite(ActorLocationZ))
+	{
+		return;
+	}
+
+	const float BottomOffset = ActorLocationZ - Bounds.Min.Z;
+	if (!FMath::IsFinite(BottomOffset))
+	{
+		return;
+	}
+
+	FVector DropLocation = HitResult.ImpactPoint;
+	DropLocation.Z = HitResult.ImpactPoint.Z + BottomOffset + 10.0f;
+	if (!FMath::IsFinite(DropLocation.Z))
+	{
+		return;
+	}
+
+	HeldActor = nullptr;
 	DestroyPlacementPreview();
 
-    ActorToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	ActorToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	ActorToDrop->SetActorLocation(DropLocation);
+	ActorToDrop->SetActorEnableCollision(true);
 
-    // 액터 중심이 아닌 바닥면이 표면에 닿도록 높이를 보정합니다.
-    FVector DropLocation = HitResult.ImpactPoint;
-    DropLocation.Z += ActorToDrop->GetComponentsBoundingBox(false).GetExtent().Z;
+	// 최종 안전 위치로 이동한 뒤 실제 월드 Drop 대상의 메시 물리만 활성화합니다.
+	if (IsValid(ProductToDrop))
+	{
+		ProductToDrop->EnableWorldDropPhysics();
+	}
+	else if (IsValid(CrateToDrop))
+	{
+		CrateToDrop->EnableWorldDropPhysics();
+	}
 
-    ActorToDrop->SetActorLocation(DropLocation);
-    ActorToDrop->SetActorEnableCollision(true);
-    SetActorTickEnabled(false);
+	SetActorTickEnabled(false);
 }
 
 void ACSPlayerCharacter::CreatePlacementPreview(ACSProductPickupActor* ProductActor)
@@ -387,6 +481,88 @@ void ACSPlayerCharacter::CreatePlacementPreview(ACSProductPickupActor* ProductAc
 	{
 		DestroyPlacementPreview();
 	}
+}
+
+void ACSPlayerCharacter::CreatePlacementPreviewFromCrate(
+	const ACSDeliveryCrateActor* DeliveryCrate)
+{
+	DestroyPlacementPreview();
+
+	if (!IsValid(DeliveryCrate) ||
+		PlacementPreviewActorClass == nullptr ||
+		DeliveryCrate->GetRemainingQuantity() < 1)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	PlacementPreviewActor = GetWorld()->SpawnActor<ACSProductPlacementPreviewActor>(
+		PlacementPreviewActorClass,
+		FTransform::Identity,
+		SpawnParameters);
+	if (!IsValid(PlacementPreviewActor))
+	{
+		return;
+	}
+
+	PlacementPreviewActor->SetActorHiddenInGame(true);
+	if (!PlacementPreviewActor->InitializePreviewFromProductClass(
+		DeliveryCrate->GetProductRow(),
+		DeliveryCrate->GetProductActorClass()))
+	{
+		DestroyPlacementPreview();
+	}
+}
+
+bool ACSPlayerCharacter::TryPlaceProductFromCrate(
+	ACSDeliveryCrateActor* DeliveryCrate,
+	AActor* ShelfActor,
+	FVector PlacementHint)
+{
+	if (!IsValid(DeliveryCrate) ||
+		DeliveryCrate != HeldActor ||
+		DeliveryCrate->GetRemainingQuantity() < 1 ||
+		!IsValid(ShelfActor) ||
+		!ShelfActor->Implements<UCSShelfPlaceable>())
+	{
+		return false;
+	}
+
+	ACSProductPickupActor* ProductActor = DeliveryCrate->SpawnProductActor();
+	if (!IsValid(ProductActor))
+	{
+		return false;
+	}
+
+	if (!ICSShelfPlaceable::Execute_TryPlaceItem(
+		ShelfActor,
+		ProductActor,
+		PlacementHint))
+	{
+		ProductActor->Destroy();
+		return false;
+	}
+
+	const bool bWillDepleteCrate = DeliveryCrate->GetRemainingQuantity() == 1;
+	if (!DeliveryCrate->ConsumeOne())
+	{
+		ICSShelfPlaceable::Execute_RemovePlacedItem(ShelfActor, ProductActor);
+		ProductActor->Destroy();
+		return false;
+	}
+
+	if (bWillDepleteCrate || !IsValid(DeliveryCrate))
+	{
+		HeldActor = nullptr;
+		DestroyPlacementPreview();
+		SetActorTickEnabled(false);
+	}
+
+	return true;
 }
 
 void ACSPlayerCharacter::DestroyPlacementPreview()
