@@ -8,6 +8,8 @@ class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 class USceneComponent;
+class ACSProductPickupActor;
+class ACSProductPlacementPreviewActor;
 struct FInputActionValue;
 
 UCLASS()
@@ -24,6 +26,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -40,6 +43,14 @@ protected:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Interaction")
 	TObjectPtr<AActor> HeldActor;
+
+	// 들고 있는 상품의 외형을 진열대 슬롯에 표시할 프리뷰 액터 클래스입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction|Placement Preview")
+	TSubclassOf<ACSProductPlacementPreviewActor> PlacementPreviewActorClass;
+
+	// 현재 생성되어 있는 표시 전용 프리뷰 액터입니다.
+	UPROPERTY(Transient)
+	TObjectPtr<ACSProductPlacementPreviewActor> PlacementPreviewActor;
 	
 	// 에디터에서 만든 입력 에셋을 연결합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -94,6 +105,9 @@ private:
 	void DropHeldItem();
 	void ToggleClock();
 	void UpdatePlacementPreview();
+	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
+	void DestroyPlacementPreview();
+	void SetPlacementPreviewVisible(bool bIsVisible);
 	
 	
 public:

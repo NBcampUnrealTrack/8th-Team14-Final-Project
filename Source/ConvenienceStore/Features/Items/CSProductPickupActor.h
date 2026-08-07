@@ -35,6 +35,31 @@ public:
 		return ProductRow.RowName;
 	}
 
+	// 현재 상품에 설정된 데이터 테이블 행 정보를 프리뷰 등 다른 표시 객체에 전달합니다.
+	UFUNCTION(BlueprintPure, Category = "Product")
+	FDataTableRowHandle GetProductRow() const
+	{
+		return ProductRow;
+	}
+
+	// 현재 상품 외형을 적용하는 DataAsset을 프리뷰 액터에 전달합니다.
+	UCSProductVisualRegistry* GetVisualRegistry() const
+	{
+		return VisualRegistry;
+	}
+
+	// DataAsset에 외형이 없을 때 사용할 기본 메시를 프리뷰에도 동일하게 적용합니다.
+	UStaticMesh* GetFallbackMesh() const
+	{
+		return FallbackMesh;
+	}
+
+	// 기본 메시의 상대 트랜스폼을 프리뷰에도 동일하게 적용합니다.
+	FTransform GetFallbackMeshRelativeTransform() const
+	{
+		return FallbackMeshRelativeTransform;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "Product")
 	FText GetProductDisplayName() const;
 
