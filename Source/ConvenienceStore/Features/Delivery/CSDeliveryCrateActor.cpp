@@ -4,6 +4,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
+#include "Engine/World.h"
+#include "Features/Items/CSProductPickupActor.h"
+#include "Features/Player/CSPlayerCharacter.h"
+#include "GameFramework/Pawn.h"
 
 ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 {
@@ -15,6 +19,37 @@ ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 	CrateMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CrateMesh"));
 	CrateMesh->SetupAttachment(SceneRoot);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CrateMesh->SetGenerateOverlapEvents(true);
+	CrateMesh->OnComponentBeginOverlap.AddDynamic(
+		this,
+		&ACSDeliveryCrateActor::HandlePawnOverlap);
+}
+
+void ACSDeliveryCrateActor::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (IsValid(CrateMesh))
+	{
+		CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+		CrateMesh->SetGenerateOverlapEvents(true);
+	}
+}
+
+void ACSDeliveryCrateActor::Interact_Implementation(AActor* Interactor)
+{
+	if (ACSPlayerCharacter* PlayerCharacter = Cast<ACSPlayerCharacter>(Interactor))
+	{
+		PlayerCharacter->TryPickUp(this);
+	}
+}
+
+FText ACSDeliveryCrateActor::GetInteractionText_Implementation() const
+{
+	return FText::Format(
+		NSLOCTEXT("Interaction", "PickUpDeliveryCrate", "{0} 배송 상자 집기"),
+		GetProductDisplayName());
 }
 
 bool ACSDeliveryCrateActor::InitializeCrate(
@@ -68,6 +103,16 @@ FText ACSDeliveryCrateActor::GetProductDisplayName() const
 	return FText::FromName(ProductId);
 }
 
+FDataTableRowHandle ACSDeliveryCrateActor::GetProductRow() const
+{
+	return ProductRow;
+}
+
+TSubclassOf<ACSProductPickupActor> ACSDeliveryCrateActor::GetProductActorClass() const
+{
+	return ProductActorClass;
+}
+
 int32 ACSDeliveryCrateActor::GetRemainingQuantity() const
 {
 	return RemainingQuantity;
@@ -104,4 +149,141 @@ bool ACSDeliveryCrateActor::ConsumeOne()
 	}
 
 	return true;
+}
+
+ACSProductPickupActor* ACSDeliveryCrateActor::SpawnProductActor() const
+{
+	if (ProductActorClass == nullptr ||
+		RemainingQuantity < 1 ||
+		ProductRow.DataTable == nullptr ||
+		ProductRow.RowName.IsNone() ||
+		GetWorld() == nullptr)
+	{
+		return nullptr;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::SpawnProductActor"));
+	if (ProductData == nullptr)
+	{
+		return nullptr;
+	}
+
+	const FTransform SpawnTransform = GetActorTransform();
+	ACSProductPickupActor* SpawnedProduct =
+		GetWorld()->SpawnActorDeferred<ACSProductPickupActor>(
+			ProductActorClass,
+			SpawnTransform,
+			nullptr,
+			nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(SpawnedProduct) ||
+		!SpawnedProduct->InitializeProduct(ProductRow))
+	{
+		if (IsValid(SpawnedProduct))
+		{
+			SpawnedProduct->Destroy();
+		}
+
+		return nullptr;
+	}
+
+	SpawnedProduct->FinishSpawning(SpawnTransform);
+	if (!IsValid(SpawnedProduct))
+	{
+		return nullptr;
+	}
+
+	return SpawnedProduct;
+}
+
+void ACSDeliveryCrateActor::PrepareForPickupPhysics()
+{
+	if (!IsValid(CrateMesh))
+	{
+		return;
+	}
+
+	FTransform DefaultRelativeTransform = CrateMesh->GetRelativeTransform();
+	const ACSDeliveryCrateActor* ClassDefaults =
+		GetClass()->GetDefaultObject<ACSDeliveryCrateActor>();
+	if (IsValid(ClassDefaults) &&
+		ClassDefaults != this &&
+		IsValid(ClassDefaults->CrateMesh))
+	{
+		DefaultRelativeTransform = ClassDefaults->CrateMesh->GetRelativeTransform();
+	}
+
+	if (CrateMesh->IsSimulatingPhysics())
+	{
+		CrateMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		CrateMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+	}
+	CrateMesh->SetSimulatePhysics(false);
+
+	if (!IsValid(SceneRoot))
+	{
+		return;
+	}
+
+	if (CrateMesh->GetAttachParent() != SceneRoot)
+	{
+		CrateMesh->AttachToComponent(
+			SceneRoot,
+			FAttachmentTransformRules::KeepWorldTransform);
+	}
+	CrateMesh->SetRelativeTransform(DefaultRelativeTransform);
+}
+
+void ACSDeliveryCrateActor::EnableWorldDropPhysics()
+{
+	if (!IsValid(CrateMesh) || CrateMesh->GetStaticMesh() == nullptr)
+	{
+		return;
+	}
+
+	CrateMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CrateMesh->SetGenerateOverlapEvents(true);
+	CrateMesh->SetSimulatePhysics(true);
+}
+
+void ACSDeliveryCrateActor::HandlePawnOverlap(
+	UPrimitiveComponent*,
+	AActor* OtherActor,
+	UPrimitiveComponent*,
+	int32,
+	bool,
+	const FHitResult&)
+{
+	if (!IsValid(OtherActor) ||
+		OtherActor == this ||
+		Cast<APawn>(OtherActor) == nullptr ||
+		!IsValid(CrateMesh) ||
+		!CrateMesh->IsSimulatingPhysics() ||
+		PawnPushImpulseStrength <= 0.0f)
+	{
+		return;
+	}
+
+	FVector PushDirection = OtherActor->GetVelocity();
+	PushDirection.Z = 0.0f;
+	if (PushDirection.SizeSquared2D() <= FMath::Square(1.0f))
+	{
+		PushDirection = CrateMesh->GetComponentLocation() - OtherActor->GetActorLocation();
+		PushDirection.Z = 0.0f;
+		if (!PushDirection.Normalize())
+		{
+			return;
+		}
+	}
+	else
+	{
+		PushDirection.Normalize();
+	}
+
+	CrateMesh->AddImpulse(
+		PushDirection * PawnPushImpulseStrength,
+		NAME_None,
+		true);
 }

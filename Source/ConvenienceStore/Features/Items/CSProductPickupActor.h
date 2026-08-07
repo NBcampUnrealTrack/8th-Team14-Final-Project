@@ -10,6 +10,7 @@ class UStaticMeshComponent;
 class USceneComponent;
 class UStaticMesh;
 class UCSProductVisualRegistry;
+class UPrimitiveComponent;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
@@ -66,7 +67,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Product")
 	bool InitializeProduct(FDataTableRowHandle InProductRow);
 
+	// 바닥 물리를 중지하고 메시를 상품별 정상 상대 Transform으로 복원합니다.
+	void PrepareForPickupPhysics();
+
+	// 플레이어가 월드 바닥에 내려놓은 상품 메시의 물리를 활성화합니다.
+	void EnableWorldDropPhysics();
+
 protected:
+	virtual void BeginPlay() override;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
 
@@ -88,6 +97,19 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Visual")
 	FTransform FallbackMeshRelativeTransform = FTransform::Identity;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Physics",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float PawnPushImpulseStrength = 75.0f;
+
+	UFUNCTION()
+	void HandlePawnOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex,
+		bool bFromSweep,
+		const FHitResult& SweepResult);
 
 	void ApplyProductVisual();
 };

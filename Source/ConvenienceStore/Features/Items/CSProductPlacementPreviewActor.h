@@ -18,6 +18,11 @@ public:
 	// 실제 상품의 DataAsset 설정과 ProductRow를 복사한 뒤 프리뷰 머티리얼을 설정합니다.
 	bool InitializePreviewFromProduct(const ACSProductPickupActor* SourceProduct);
 
+	// 아직 생성되지 않은 배송 상품의 클래스 기본 설정과 ProductRow로 프리뷰를 초기화합니다.
+	bool InitializePreviewFromProductClass(
+		FDataTableRowHandle InProductRow,
+		TSubclassOf<ACSProductPickupActor> InProductActorClass);
+
 	// 배치 가능 여부에 맞춰 프리뷰의 색상 머티리얼을 변경합니다.
 	void SetPlacementValid(bool bIsPlacementValid);
 
