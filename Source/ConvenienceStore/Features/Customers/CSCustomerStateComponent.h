@@ -6,6 +6,27 @@
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
 
+class UDataTable;
+
+// 손님이 고른 상품 하나의 정보.
+// ProductId(RowName)만으로는 상품 액터를 다시 만들 수 없어서
+// (어느 데이터 테이블인지, 어떤 BP였는지를 알 수 없음)
+// 집는 시점에 원본 정보를 기록
+USTRUCT(BlueprintType)
+struct FCSSelectProduct
+{
+	GENERATED_BODY()
+
+	// 상품의 데이터 테이블 행 (DataTable + RowName 쌍).
+	// ProductRow.RowName이 ProductId다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	FDataTableRowHandle ProductRow;
+
+	// 집었던 상품 액터의 클래스.
+	// 같은 BP로 생성해야 DataAsset 기반 외형이 동일하게 적용된다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	TSubclassOf<AActor> ProductClass;
+};
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class CONVENIENCESTORE_API UCSCustomerStateComponent : public UActorComponent
@@ -13,9 +34,9 @@ class CONVENIENCESTORE_API UCSCustomerStateComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-	// 손님이 선택한 상품의 ID를 모아둔 배열
+	// 손님이 고른 상품 목록. 계산대 주문 생성과 포기 시 반환에 모두 사용된다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
-	TArray<FName> SelectItemIds;
+	TArray<FCSSelectProduct> SelectProducts;
 
 	// 이번 방문에서 이미 구경한 진열대 액터 목록 (또 다시 안가게 막을려고)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
@@ -29,8 +50,16 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector ExitLocation = FVector::ZeroVector;
 
-	void AddToSelectItem(const FName ItemId);
+	// 고른 상품을 기록한다. 상품 액터를 파괴하기 전에 호출할 것.
+	void AddSelectProduct(const FDataTableRowHandle& InProductRow, TSubclassOf<AActor> InProductClass);
 	bool HasSelectedItems() const;
+
+	// 고른 상품 목록을 비운다. 상품을 월드에 반환하거나 계산이 끝난 뒤 호출
+	void ClearSelectItems();
+
+	// 고른 상품의 ID(RowName) 목록. 계산대 주문 생성 등 Getter용
+	UFUNCTION(BlueprintPure, Category = "Customer")
+	TArray<FName> GetSelectProductIds() const;
 
 	void MarkVisited(AActor* ShelfActor);
 	bool HasVisited(const AActor* ShelfActor) const;

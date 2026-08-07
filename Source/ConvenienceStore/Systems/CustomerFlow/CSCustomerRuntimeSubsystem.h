@@ -36,7 +36,7 @@
 class ACSCustomerCharacter;
 class ACSShelfActor;
 
-// 계산 완료 시 방송. 손님의 SelectItemIds(DT_ProductMaster RowName 목록)로 매출을 집계하면 됨
+// 계산 완료 시 방송. 손님의 SelectProducts(상품 행 정보 목록)로 매출을 집계하면 됨
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutCompleted, ACSCustomerCharacter*, Customer);
 // 손님이 진열대에서 상품을 집었을 때 방송. ProductId는 DT_ProductMaster의 RowName임.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnItemTaken, ACSCustomerCharacter*, Customer, FName, ProductId);

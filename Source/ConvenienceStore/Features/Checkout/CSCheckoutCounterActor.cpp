@@ -191,14 +191,15 @@ bool ACSCheckoutCounterActor::BuildFrontCustomerOrder(
 	}
 
 	const UCSCustomerStateComponent* CustomerState = FrontCustomer->GetCustomerState();
-	if (!IsValid(CustomerState) || CustomerState->SelectItemIds.IsEmpty())
+	if (!IsValid(CustomerState) || !CustomerState->HasSelectedItems()) //[무송]이 부분 CustomerState->SelectItemIds.IsEmpty()에서 변경해서 State에서 함수를 만들어서 사용했습니다.
 	{
 		return false;
 	}
 
+
 	TArray<FName> OrderedProductIds;
 	TMap<FName, int32> ProductQuantities;
-	for (const FName ProductId : CustomerState->SelectItemIds)
+	for (const FName ProductId : CustomerState->GetSelectProductIds()) //[무송] (const FName ProductId : CustomerState->SelectItemIds)에서 변경
 	{
 		// 비어 있는 상품 ID는 데이터 오류이므로 결제를 진행하지 않습니다.
 		if (ProductId.IsNone())

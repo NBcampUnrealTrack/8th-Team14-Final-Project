@@ -2,27 +2,45 @@
 
 
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Engine/DataTable.h"
 
-void UCSCustomerStateComponent::AddToSelectItem(const FName ItemId)
+void UCSCustomerStateComponent::AddSelectProduct(const FDataTableRowHandle& InProductRow,
+	TSubclassOf<AActor> InProductClass)
 {
-	if (ItemId != NAME_None)
+	// 행 정보가 없으면 나중에 상품을 되돌릴 수도, 가격을 조회할 수도 없으므로 기록하지 않는다.
+	if (InProductRow.DataTable == nullptr || InProductRow.RowName.IsNone())
 	{
-		// NAME_None이 아니면 선택한 아이템 배열에 추가
-		SelectItemIds.Add(ItemId);
+		return;
 	}
+
+	FCSSelectProduct Selected;
+	Selected.ProductRow = InProductRow;
+	Selected.ProductClass = InProductClass;
+	SelectProducts.Add(Selected);
 }
 
 bool UCSCustomerStateComponent::HasSelectedItems() const
 {
-	//	CartItemIds가 비어있지 않은지 bool로 반환
-	if (SelectItemIds.Num() > 0)
+	// 고른 상품이 하나라도 있으면 true
+	return SelectProducts.Num() > 0;
+}
+
+void UCSCustomerStateComponent::ClearSelectItems()
+{
+	SelectProducts.Reset();
+}
+
+TArray<FName> UCSCustomerStateComponent::GetSelectProductIds() const
+{
+	TArray<FName> Result;
+	Result.Reserve(SelectProducts.Num());
+
+	for (int32 i = 0; i < SelectProducts.Num(); i++)
 	{
-		return true;
+		Result.Add(SelectProducts[i].ProductRow.RowName);
 	}
-	else
-	{
-		return false;
-	}
+
+	return Result;
 }
 
 void UCSCustomerStateComponent::MarkVisited(AActor* ShelfActor)
