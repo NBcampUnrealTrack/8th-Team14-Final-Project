@@ -218,7 +218,12 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
-	UCSCustomerStateComponent* State = (Data.Actor != nullptr) ? Data.Actor->GetCustomerState() : nullptr;
+	UCSCustomerStateComponent* State = nullptr;
+	if (Data.Actor != nullptr)
+	{
+		State = Data.Actor->GetCustomerState();
+	}
+
 	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 
 	if (State == nullptr || Subsystem == nullptr || Data.AIController == nullptr)
@@ -250,7 +255,12 @@ void FCSTask_WaitInQueue::ExitState(FStateTreeExecutionContext& Context,
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
 	// 계산 없이 상태를 떠나는 경우(중도 이탈) 대기열 정리 - 안전장치
-	UCSCustomerStateComponent* State = (Data.Actor != nullptr) ? Data.Actor->GetCustomerState() : nullptr;
+	UCSCustomerStateComponent* State = nullptr;
+	if (Data.Actor != nullptr)
+	{
+		State = Data.Actor->GetCustomerState();
+	}
+
 	if (State != nullptr && State->bCheckoutDone == false)
 	{
 		UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();

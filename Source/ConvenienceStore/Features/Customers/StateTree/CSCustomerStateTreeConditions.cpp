@@ -24,7 +24,14 @@ bool FCSCond_HasUnvisitedShelf::TestCondition(FStateTreeExecutionContext& Contex
 		}
 	}
 	// bInvert가 true면 결과를 뒤집어서 반환
-	return Data.bInvert ? (bResult == false) : bResult;
+	if (Data.bInvert)
+	{
+		return (bResult == false);
+	}
+	else
+	{
+		return bResult;
+	}
 }
 
 bool FCSCond_HasItemsInCart::TestCondition(FStateTreeExecutionContext& Context) const
@@ -43,5 +50,12 @@ bool FCSCond_HasItemsInCart::TestCondition(FStateTreeExecutionContext& Context) 
 		}
 	}
 
-	return Data.bInvert ? (bResult == false) : bResult;
+	if (Data.bInvert)
+	{
+		return (bResult == false);
+	}
+	else
+	{
+		return bResult;
+	}
 }
