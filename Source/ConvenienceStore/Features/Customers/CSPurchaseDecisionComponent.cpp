@@ -1,4 +1,5 @@
 ﻿#include "Features/Customers/CSPurchaseDecisionComponent.h"
+#include "Data/CSProductTypes.h"
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
@@ -6,9 +7,53 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+const FCSProductDataRow* UCSPurchaseDecisionComponent::GetProductRow(const FCSPurchaseCandidate& Candidate) const
+{
+	return Candidate.ProductRowHandle.GetRow<FCSProductDataRow>(TEXT("CSPurchaseDecisionComponent::GetProductRow"));
+}
+
+float UCSPurchaseDecisionComponent::ComputePriceScore(float ActualPrice, float ReferencePrice) const
+{
+	// 준거가격이 0 이하인 비정상 데이터는 판단 불가 -> 중립값으로 안전 처리
+	if (ReferencePrice <= 0.f)
+	{
+		return 0.5f;
+	}
+
+	// 준거가격 대비 얼마나 벗어났는지를 비율로 계산 (부호 있음: + 비쌈 / - 쌈)
+	const float DeviationRatio = (ActualPrice - ReferencePrice) / ReferencePrice;
+
+	// 대칭 판단이므로 부호는 버리고 얼마나 벗어났는지 크기만 봄
+	const float AbsDeviation = FMath::Abs(DeviationRatio);
+
+	// 데드존 이내: 손님이 차이를 못 느낌 -> 만점
+	if (AbsDeviation <= PriceDeadZoneRatio)
+	{
+		return 1.0f;
+	}
+
+	// 데드존을 벗어난 만큼만 시그모이드에 넣음
+	const float ExceedAmount = AbsDeviation - PriceDeadZoneRatio;
+	return 2.0f / (1.0f + FMath::Exp(PriceSteepness * ExceedAmount));
+}
+
 float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& Candidate) const
 {
-	return 0.5f;
+	const FCSProductDataRow* ProductRow = GetProductRow(Candidate);
+	if (!ProductRow)
+	{
+		// 상품 데이터를 못 찾으면 이 후보는 아예 고려하지 않음
+		return 0.f;
+	}
+
+	// 1) 가격 효용 점수
+	// 지금은 실제 판매가와 손님이 기대하는 준거가격을 따로 설정하지 않아서 필요없지만 추후 수정 예정
+	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
+	const float ActualPrice = static_cast<float>(ProductRow->RecommendedSalePrice);
+	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice);
+
+	const float Weighted = W_Price * PriceScore;
+	return FMath::Clamp(Weighted, 0.f, 1.f);
 }
 
 TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const

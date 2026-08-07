@@ -5,6 +5,8 @@
 #include "Data/CSPurchaseDecisionTypes.h"
 #include "CSPurchaseDecisionComponent.generated.h"
 
+struct FCSProductDataRow;
+
 // 손님이 무엇을 살지 판단하는 로직을 담는 컴포넌트
 
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
@@ -21,6 +23,8 @@ public:
 	bool DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected) const;
 
 protected:
+	// ---- 선택(softmax) 관련 파라미터 ----
+
 	// 점수 계산 후 상위 몇 개까지만 구매 후보로 남길지
 	// 값이 클수록 손님이 덜 인기 있는 물건도 종종 고르게 됨
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Selection")
@@ -35,10 +39,32 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Selection")
 	float MinPurchaseUtility = 0.35f;
 
+	// ---- 가격 효용 점수 관련 파라미터 ----
+
+	// 준거가격 대비 이 비율 이내는 손님이 차이를 못 느낀 것으로 취급 (무감각 구간)
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Price")
+	float PriceDeadZoneRatio = 0.04f;
+
+	// 데드존을 벗어난 뒤 점수가 얼마나 가파르게 떨어지는지
+	// 값이 클수록 조금만 벗어나도 점수가 빠르게 0에 가까워짐
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Price")
+	float PriceSteepness = 8.0f;
+
+	// 가격 점수가 전체 점수에서 차지하는 가중치
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_Price = 1.0f;
+
 	// 후보 하나에 점수를 매기는 함수
 	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate) const;
 
+	// 실제 판매가와 준거가격을 비교해 0~1 가격 효용 점수를 계산
+	// 데드존 안이면 1.0, 벗어나면 대칭 시그모이드로 감점
+	float ComputePriceScore(float ActualPrice, float ReferencePrice) const;
+
 private:
+	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
+	const FCSProductDataRow* GetProductRow(const FCSPurchaseCandidate& Candidate) const;
+
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const;
 
