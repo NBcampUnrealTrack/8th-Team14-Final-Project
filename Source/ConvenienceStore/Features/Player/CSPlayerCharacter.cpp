@@ -1,6 +1,8 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
+#include "Features/Items/CSProductPickupActor.h"
+#include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 
 #include "Camera/CameraComponent.h"
@@ -68,6 +70,14 @@ void ACSPlayerCharacter::BeginPlay()
             }
         }
     }
+}
+
+void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// 플레이어가 제거될 때 프리뷰 액터도 함께 정리하여 월드에 남지 않게 합니다.
+	DestroyPlacementPreview();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACSPlayerCharacter::SetupPlayerInputComponent(
@@ -211,6 +221,9 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
         FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 
     HeldActor = PickupActor;
+
+	// 공용 상품 액터인 경우에만 같은 ProductRow를 사용하는 고스트 프리뷰를 생성합니다.
+	CreatePlacementPreview(Cast<ACSProductPickupActor>(HeldActor));
     SetActorTickEnabled(true);
     return true;
 }
@@ -219,9 +232,13 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 {
     if (!IsValid(HeldActor) || FirstPersonCamera == nullptr)
     {
+		SetPlacementPreviewVisible(false);
         SetActorTickEnabled(false);
         return;
     }
+
+	// 진열대에 조준하지 않는 동안에는 이전 위치의 고스트가 남지 않도록 숨깁니다.
+	SetPlacementPreviewVisible(false);
 
     const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
     const FVector TraceEnd =
@@ -251,17 +268,13 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
         return;
     }
 
-    const FVector ItemExtent = HeldActor->GetComponentsBoundingBox(false).GetExtent();
-    DrawDebugBox(
-        GetWorld(),
-        PreviewTransform.GetLocation(),
-        ItemExtent.ComponentMax(FVector(5.0f)),
-        PreviewTransform.GetRotation(),
-        FColor::Green,
-        false,
-        0.0f,
-        0,
-        2.0f);
+    if (IsValid(PlacementPreviewActor))
+    {
+		// 진열대가 반환한 슬롯 Transform을 그대로 적용하여 실제 배치 위치와 일치시킵니다.
+		PlacementPreviewActor->SetActorTransform(PreviewTransform);
+		PlacementPreviewActor->SetPlacementValid(true);
+		SetPlacementPreviewVisible(true);
+	}
 }
 
 void ACSPlayerCharacter::DropHeldItem()
@@ -298,6 +311,7 @@ void ACSPlayerCharacter::DropHeldItem()
                 AimHitResult.ImpactPoint))
         {
             HeldActor = nullptr;
+			DestroyPlacementPreview();
             SetActorTickEnabled(false);
             return;
         }
@@ -330,6 +344,7 @@ void ACSPlayerCharacter::DropHeldItem()
 
     AActor* ActorToDrop = HeldActor;
     HeldActor = nullptr;
+	DestroyPlacementPreview();
 
     ActorToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 
@@ -340,6 +355,56 @@ void ACSPlayerCharacter::DropHeldItem()
     ActorToDrop->SetActorLocation(DropLocation);
     ActorToDrop->SetActorEnableCollision(true);
     SetActorTickEnabled(false);
+}
+
+void ACSPlayerCharacter::CreatePlacementPreview(ACSProductPickupActor* ProductActor)
+{
+	DestroyPlacementPreview();
+
+	// 상품 프리뷰 클래스 또는 상품 데이터가 없으면 기존 배치 기능만 유지합니다.
+	if (!IsValid(ProductActor) || PlacementPreviewActorClass == nullptr)
+	{
+		return;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	PlacementPreviewActor = GetWorld()->SpawnActor<ACSProductPlacementPreviewActor>(
+		PlacementPreviewActorClass,
+		FTransform::Identity,
+		SpawnParameters);
+	if (!IsValid(PlacementPreviewActor))
+	{
+		return;
+	}
+
+	// 생성 직후에는 숨겨 두고, 유효한 진열 슬롯을 조준할 때만 표시합니다.
+	PlacementPreviewActor->SetActorHiddenInGame(true);
+	if (!PlacementPreviewActor->InitializePreviewFromProduct(ProductActor))
+	{
+		DestroyPlacementPreview();
+	}
+}
+
+void ACSPlayerCharacter::DestroyPlacementPreview()
+{
+	if (IsValid(PlacementPreviewActor))
+	{
+		PlacementPreviewActor->Destroy();
+	}
+
+	PlacementPreviewActor = nullptr;
+}
+
+void ACSPlayerCharacter::SetPlacementPreviewVisible(bool bIsVisible)
+{
+	if (IsValid(PlacementPreviewActor))
+	{
+		PlacementPreviewActor->SetActorHiddenInGame(!bIsVisible);
+	}
 }
 
 void ACSPlayerCharacter::TryInteract()
