@@ -39,6 +39,34 @@ bool ACSProductPlacementPreviewActor::InitializePreviewFromProduct(
 	return true;
 }
 
+bool ACSProductPlacementPreviewActor::InitializePreviewFromProductClass(
+	FDataTableRowHandle InProductRow,
+	TSubclassOf<ACSProductPickupActor> InProductActorClass)
+{
+	if (InProductActorClass == nullptr)
+	{
+		return false;
+	}
+
+	const ACSProductPickupActor* ProductDefaults = InProductActorClass.GetDefaultObject();
+	if (!IsValid(ProductDefaults))
+	{
+		return false;
+	}
+
+	VisualRegistry = ProductDefaults->GetVisualRegistry();
+	FallbackMesh = ProductDefaults->GetFallbackMesh();
+	FallbackMeshRelativeTransform = ProductDefaults->GetFallbackMeshRelativeTransform();
+
+	if (!InitializeProduct(InProductRow))
+	{
+		return false;
+	}
+
+	SetPlacementValid(true);
+	return true;
+}
+
 void ACSProductPlacementPreviewActor::SetPlacementValid(bool bIsPlacementValid)
 {
 	ApplyPreviewMaterial(bIsPlacementValid);

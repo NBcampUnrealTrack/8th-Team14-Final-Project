@@ -8,6 +8,7 @@ class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
 class USceneComponent;
+class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
 struct FInputActionValue;
@@ -106,8 +107,13 @@ private:
 	void ToggleClock();
 	void UpdatePlacementPreview();
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
+	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);
 	void DestroyPlacementPreview();
 	void SetPlacementPreviewVisible(bool bIsVisible);
+	bool TryPlaceProductFromCrate(
+		ACSDeliveryCrateActor* DeliveryCrate,
+		AActor* ShelfActor,
+		FVector PlacementHint);
 	
 	
 public:

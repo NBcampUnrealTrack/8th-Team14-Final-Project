@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "Features/Interaction/CSInteractable.h"
 #include "GameFramework/Actor.h"
 #include "CSDeliveryCrateActor.generated.h"
 
@@ -9,6 +10,8 @@ class USceneComponent;
 class UStaticMeshComponent;
 class UTexture2D;
 class UCSProductVisualRegistry;
+class ACSProductPickupActor;
+class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnCrateQuantityChanged,
@@ -16,12 +19,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	NewQuantity);
 
 UCLASS()
-class CONVENIENCESTORE_API ACSDeliveryCrateActor : public AActor
+class CONVENIENCESTORE_API ACSDeliveryCrateActor : public AActor, public ICSInteractable
 {
 	GENERATED_BODY()
 
 public:
 	ACSDeliveryCrateActor();
+	virtual void Interact_Implementation(AActor* Interactor) override;
+	virtual FText GetInteractionText_Implementation() const override;
 
 	UFUNCTION(BlueprintCallable, Category = "Delivery")
 	bool InitializeCrate(FDataTableRowHandle InProductRow, int32 InQuantity);
@@ -33,6 +38,12 @@ public:
 	FText GetProductDisplayName() const;
 
 	UFUNCTION(BlueprintPure, Category = "Delivery")
+	FDataTableRowHandle GetProductRow() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery|Product")
+	TSubclassOf<ACSProductPickupActor> GetProductActorClass() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery")
 	int32 GetRemainingQuantity() const;
 
 	UFUNCTION(BlueprintPure, Category = "Delivery")
@@ -41,6 +52,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Delivery")
 	bool ConsumeOne();
 
+	ACSProductPickupActor* SpawnProductActor() const;
+
+	// 물리를 중지하고 CrateMesh를 Blueprint 기본 상대 Transform으로 복원합니다.
+	void PrepareForPickupPhysics();
+
+	// 플레이어가 월드 바닥에 내려놓은 배송 상자의 물리를 활성화합니다.
+	void EnableWorldDropPhysics();
+
+	FVector GetHeldRelativeLocation() const
+	{
+		return HeldRelativeLocation;
+	}
+
 	UPROPERTY(BlueprintAssignable, Category = "Delivery")
 	FCSOnCrateQuantityChanged OnQuantityChanged;
 
@@ -48,6 +72,8 @@ public:
 	void OnCrateDepleted();
 
 protected:
+	virtual void BeginPlay() override;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
 
@@ -60,6 +86,25 @@ protected:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery")
 	int32 RemainingQuantity = 0;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Holding")
+	FVector HeldRelativeLocation = FVector::ZeroVector;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Physics",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float PawnPushImpulseStrength = 50.0f;
+
+	UFUNCTION()
+	void HandlePawnOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex,
+		bool bFromSweep,
+		const FHitResult& SweepResult);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Product")
+	TSubclassOf<ACSProductPickupActor> ProductActorClass;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Visual")
 	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
