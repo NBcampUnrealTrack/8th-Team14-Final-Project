@@ -208,6 +208,7 @@ EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& 
 	}
 
 	Data.CachedQueueIndex = MyIndex;
+	Data.ElapsedWaitTime = 0.0f; //손님이 대기열 상태에 새로 진입할 때마다 타이머를 0초부터 다시 시작하도록 초기화하는 역할 (혹시 모를 재진입시)
 	Data.AIController->MoveToLocation(Subsystem->GetQueueSlotLocation(MyIndex), 30.0f);
 
 	return EStateTreeRunStatus::Running;
@@ -236,6 +237,27 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 	{
 		return EStateTreeRunStatus::Succeeded;
 	}
+
+	// 인내심 판정 (시간 오버되면 포기하고 Leave)
+	Data.ElapsedWaitTime += DeltaTime;
+
+	float Patience = Data.PatienceOverride;
+	if (Patience <= 0.0f)
+	{
+		// 태스크에서 따로 지정하지 않았으면 Subsystem이 주는 값을 쓴다.
+		// 소비심리 파트가 붙으면 그 함수 내부만 바뀌므로 여기는 그대로 둔다.
+		Patience = Subsystem->GetPatienceSeconds(Data.Actor);
+	}
+
+	if (Patience > 0.0f && Data.ElapsedWaitTime >= Patience)
+	{
+		// 대기열 이탈, 상품 반환, 방송까지 Subsystem이 한 번에 처리한다.
+		Subsystem->AbandonCheckout(Data.Actor, Data.ElapsedWaitTime);
+
+		// 실패로 종료 → Checkout 상태의 On Failed 전이가 Leave로 보낸다.
+		return EStateTreeRunStatus::Failed;
+	}
+	//
 
 	// 줄이 줄어들어 내 순번이 바뀌었으면 앞자리로 이동
 	const int32 CurrentIndex = Subsystem->GetQueueIndex(Data.Actor);

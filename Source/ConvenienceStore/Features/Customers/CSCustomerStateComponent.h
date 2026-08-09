@@ -3,10 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
-
-class UDataTable;
 
 // 손님이 고른 상품 하나의 정보.
 // ProductId(RowName)만으로는 상품 액터를 다시 만들 수 없어서
@@ -45,6 +44,10 @@ public:
 	// 계산이 완료됬는지 알려주는 상태 변수
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	bool bCheckoutDone = false;
+
+	// 이번 방문에서 계산을 포기했는지, 포기한 손님이 다시 줄을 서지 않도록 막는 용도 (진열대 반환 기능에서 조건으로 사용)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	bool bCheckoutAbandoned = false;
 
 	// 손님이 나갈 때 걸어갈 목표 좌표
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")

@@ -6,6 +6,7 @@
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "EngineUtils.h"
+#include "Components/ArrowComponent.h"
 // 아래 3개는 팀원 파일에 따라 수정해야함
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -330,4 +331,188 @@ void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
 		OnCheckoutCompleted.Broadcast(Front);
 	}
 }
+
+float UCSCustomerRuntimeSubsystem::GetPatienceSeconds(const ACSCustomerCharacter* Customer) const
+{
+	// ["백록담"] (소비심리 파트): 손님 따라 다른 값을 반환하도록 교체. 호출하는 WaitInQueue 태스크는 수정할 필요가 없음
+	return DefaultPatienceSeconds;
+}
+
+void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer, const float WaitedSeconds)
+{
+
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	// 대기열에서 먼저 제거
+	LeaveQueue(Customer);
+
+	//  들고 있던 상품을 떨어뜨린다. (진열대에 되돌려놓는 기능이 들어오면 이 호출은 그쪽 Task로 이동)
+	DropCustomerItems(Customer);
+
+	// 다시 줄 서지 않도록 true로 지정
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State != nullptr)
+	{
+		State->bCheckoutAbandoned = true;
+	}
+
+	//계산을 포기했다고 방송을 전파
+	OnCheckoutAbandoned.Broadcast(Customer, WaitedSeconds);
+
+	UE_LOG(LogTemp, Log,TEXT("[CSCustomerRuntimeSubsystem] %s 가 %.1f초 대기 후 계산을 포기했습니다."),*Customer->GetName(), WaitedSeconds);
+}
+
+int32 UCSCustomerRuntimeSubsystem::DropCustomerItems(ACSCustomerCharacter* Customer)
+{
+		if (Customer == nullptr)
+	{
+		return 0;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return 0;
+	}
+
+	const int32 ItemCount = State->SelectProducts.Num();
+	if (ItemCount == 0)
+	{
+		return 0;
+	}
+
+	// 좌우 두 갈래로 나눠 쌓는다. 인덱스 0 = 왼쪽, 1 = 오른쪽.
+	// 각 갈래는 자기 화살표를 기준으로 독립적으로 열을 늘려간다.
+	float ColumnTopZ[2] = { 0.0f, 0.0f };        // 그 열에서 다음 상품을 놓을 높이 (기준점 기준)
+	int32 ColumnIndex[2] = { 0, 0 };             // 그 갈래에서 지금 몇 번째 열인지
+	float MaxItemRadius[2] = { 0.0f, 0.0f };     // 그 갈래에서 본 가장 큰 상품 반경
+
+	int32 SpawnedCount = 0;
+
+	for (int32 i = 0; i < ItemCount; i++)
+	{
+		// 좌우 번갈아 배정해서 양쪽이 고르게 쌓이게 한다.
+		const int32 SideIndex = i % 2;
+
+		// 시작 위치는 BP에서 지정한 화살표가 알려준다.
+		// 종족마다 키와 팔 위치가 달라서 코드에 숫자로 박지 않는다.
+		const UArrowComponent* Origin = Customer->GetDropOrigin(SideIndex);
+		if (Origin == nullptr)
+		{
+			continue;
+		}
+
+		// 열 간격은 그 갈래에서 본 가장 큰 상품 지름 기준으로 잡는다.
+		// 고정값을 쓰면 큰 상품이 섞였을 때 옆 열과 겹친다.
+		const float ColumnSpacing = FMath::Max(
+			DropMinColumnSpacing,
+			MaxItemRadius[SideIndex] * 2.0f + DropColumnGap);
+
+		// 열이 넘치면 화살표 정면 방향으로 새 열을 만든다.
+		const FVector ColumnBase =
+			Origin->GetComponentLocation() +
+			Origin->GetForwardVector() * (ColumnSpacing * static_cast<float>(ColumnIndex[SideIndex]));
+
+		// 완전히 정렬돼 보이지 않게 아주 살짝 흔들어준다.
+		const FVector Jitter(
+			FMath::FRandRange(-DropJitterRadius, DropJitterRadius),
+			FMath::FRandRange(-DropJitterRadius, DropJitterRadius),
+			0.0f);
+
+		const FVector SpawnLocation =
+			ColumnBase + Jitter + FVector(0.0f, 0.0f, ColumnTopZ[SideIndex]);
+
+		// 전부 같은 방향을 보고 있으면 인위적으로 보이므로 Yaw만 랜덤하게 준다.
+		const FRotator RandomRotation(0.0f, FMath::FRandRange(0.0f, 360.0f), 0.0f);
+
+		const FTransform SpawnTransform(RandomRotation, SpawnLocation);
+
+		AActor* Spawned = RespawnSelectProduct(State->SelectProducts[i], SpawnTransform);
+		if (Spawned == nullptr)
+		{
+			continue;
+		}
+
+		SpawnedCount++;
+
+		// 실제 크기를 재서 다음 상품의 높이와 열 간격을 정한다.
+		// 상품마다 크기가 달라 고정값으로는 겹치거나 공중에 뜬다.
+		const FVector Extent = Spawned->GetComponentsBoundingBox(false).GetExtent();
+		const float ItemHeight = Extent.Z * 2.0f;
+		const float ItemRadius = FMath::Max(Extent.X, Extent.Y);
+
+		if (ItemRadius > MaxItemRadius[SideIndex])
+		{
+			MaxItemRadius[SideIndex] = ItemRadius;
+		}
+
+		ColumnTopZ[SideIndex] += ItemHeight + DropStackGap;
+
+		// 팔 높이를 넘으면 같은 쪽에 새 열을 만들고 다시 아래부터 쌓는다.
+		if (ColumnTopZ[SideIndex] >= DropMaxStackHeight)
+		{
+			ColumnIndex[SideIndex]++;
+			ColumnTopZ[SideIndex] = 0.0f;
+		}
+	}
+
+	// 일부 생성에 실패해도 목록은 비운다.
+	// 남겨두면 손님이 계속 "상품을 들고 있는" 상태가 되어 이후 판정이 꼬인다.
+	State->ClearSelectItems();
+
+	return SpawnedCount;
+
+}
+
+ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const FCSSelectProduct& Selected,
+	const FTransform& SpawnTransform)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || Selected.ProductClass == nullptr)
+	{
+		return nullptr;
+	}
+
+	// 배송 상자(ACSDeliveryCrateActor::SpawnProductActor)와 동일한 패턴을 쓴다.
+	// SpawnActorDeferred는 BeginPlay 전에 데이터를 세팅할 수 있어서,
+	// 상품이 초기화 전 상태로 한 프레임 존재하는 상황을 막는다.
+	ACSProductPickupActor* Product = World->SpawnActorDeferred<ACSProductPickupActor>(
+		Selected.ProductClass,
+		SpawnTransform,
+		nullptr,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
+
+	if (!IsValid(Product))
+	{
+		return nullptr;
+	}
+
+	// 기록해둔 ProductRow로 초기화하면 내부에서 DataAsset 기반 메시와 스케일까지 적용된다.
+	if (!Product->InitializeProduct(Selected.ProductRow))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSCustomerRuntimeSubsystem] 상품 초기화 실패로 되돌리지 못했습니다: %s"),
+			*Selected.ProductRow.RowName.ToString());
+		Product->Destroy();
+		return nullptr;
+	}
+
+	Product->FinishSpawning(SpawnTransform);
+	if (!IsValid(Product))
+	{
+		return nullptr;
+	}
+
+	// 플레이어가 바닥에 내려놓을 때와 동일하게 처리한다.
+	// 콜리전을 켜야 다시 집을 수 있고, 물리를 켜야 자연스럽게 안착한다.
+	Product->SetActorEnableCollision(true);
+	Product->EnableWorldDropPhysics();
+
+	return Product;
+}
+
 

@@ -186,6 +186,14 @@ struct FCSTask_WaitInQueueInstanceData
 	// 틱마다 불필요한 이동 명령 재발급을 막기 위해 마지막으로 이동한 순번 기록
 	UPROPERTY()
 	int32 CachedQueueIndex = -1;
+
+	// 인내심 시간
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float PatienceOverride = 0.0f;
+
+	// 줄에 선 뒤 경과 시간
+	UPROPERTY()
+	float ElapsedWaitTime = 0.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Wait In Queue"))
