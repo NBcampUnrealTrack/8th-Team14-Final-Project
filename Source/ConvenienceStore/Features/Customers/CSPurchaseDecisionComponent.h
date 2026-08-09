@@ -29,6 +29,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Purchase|Archetype")
 	TObjectPtr<UCSCustomerArchetypeDataAsset> Archetype;
 
+	// 지금까지 담은 개수를 보고 하나 더 담을지를 0~1 확률로 계산
+	UFUNCTION(BlueprintCallable, Category = "Purchase")
+	float ContinueShoppingProbability(int32 ItemsInBasket) const;
+
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
@@ -72,6 +76,12 @@ protected:
 	// 예산 점수가 전체 점수에서 차지하는 가중치
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_Budget = 1.0f;
+
+	// 장바구니 종료 조건 관련 파라미터
+	// 담은 개수가 0(또는 1)일 때의 기본 하나 더 담을 확률
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Basket")
+	float BaseContinueProbability = 0.63f;
+
 
 	// 후보 하나에 점수를 매기는 함수
 	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate) const;
