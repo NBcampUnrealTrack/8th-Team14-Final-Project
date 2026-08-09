@@ -50,6 +50,34 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector ExitLocation = FVector::ZeroVector;
 
+	// 예산 -------
+
+	// 이번 방문에서 쓸 생각이었던 돈 (소프트 예산)
+	// 실제 값을 뽑는 계산은 CSPurchaseDecisionComponent가 담당
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Budget")
+	int32 SoftBudgetGold = 0;
+
+	// 물리적으로 낼 수 있는 최대 금액 (하드 지갑) 이걸 넘으면 무조건 구매 불가
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Budget")
+	int32 HardWalletLimitGold = 0;
+
+	// 지금까지 실제로 쓴 금액 상품을 집을 때마다 늘어남
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Budget")
+	int32 SpentGold = 0;
+
+	// false면 아직 소프트/하드 예산이 안 정해진 상태
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Budget")
+	bool bBudgetInitialized = false;
+
+	// 상품을 실제로 구매(집기)했을 때 지출을 기록
+	void RecordSpending(int32 Amount);
+
+	// 남은 소프트 예산 (0 밑으로는 안 내려감)
+	int32 GetRemainingSoftBudget() const;
+
+	// 남은 하드 지갑 한도 (0 밑으로는 안 내려감)
+	int32 GetRemainingHardWallet() const;
+
 	// 고른 상품을 기록한다. 상품 액터를 파괴하기 전에 호출할 것.
 	void AddSelectProduct(const FDataTableRowHandle& InProductRow, TSubclassOf<AActor> InProductClass);
 	bool HasSelectedItems() const;
