@@ -66,3 +66,18 @@ bool UCSCustomerStateComponent::HasVisited(const AActor* ShelfActor) const
 	// 없으면 false를 반환
 	return false;
 }
+
+void UCSCustomerStateComponent::RecordSpending(int32 Amount)
+{
+	SpentGold += Amount;
+}
+
+int32 UCSCustomerStateComponent::GetRemainingSoftBudget() const
+{
+	return FMath::Max(SoftBudgetGold - SpentGold, 0);
+}
+
+int32 UCSCustomerStateComponent::GetRemainingHardWallet() const
+{
+	return FMath::Max(HardWalletLimitGold - SpentGold, 0);
+}

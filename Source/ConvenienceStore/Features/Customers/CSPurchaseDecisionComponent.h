@@ -7,6 +7,7 @@
 
 struct FCSProductDataRow;
 class UCSCustomerArchetypeDataAsset;
+class UCSCustomerStateComponent;
 
 // 손님이 무엇을 살지 판단하는 로직을 담는 컴포넌트
 
@@ -45,6 +46,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackPriceElasticity = 2.62f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	int32 FallbackBudgetMedianGold = 380;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackBudgetLogSigma = 0.6f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackHardWalletRatio = 1.6f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackBudgetOverrunPenalty = 2.0f;
 
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
@@ -57,6 +69,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_Category = 1.0f;
 
+	// 예산 점수가 전체 점수에서 차지하는 가중치
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_Budget = 1.0f;
+
 	// 후보 하나에 점수를 매기는 함수
 	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate) const;
 
@@ -65,6 +81,10 @@ protected:
 
 	// 이 종족이 이 상품 카테고리를 좋아하는가를 점수로 바꿔주는 함수
 	float ComputeCategoryScore(const FCSProductDataRow& ProductRow) const;
+
+	// 남은 예산 대비 이 가격이 감당 가능한가를 0~1 점수로 계산
+	// 하드 지갑을 넘으면 -1.0(무조건 구매 불가 신호)을 반환
+	float ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const;
 
 private:
 	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
@@ -82,4 +102,14 @@ private:
 
 	// 상위 후보들 중 softmax 확률로 하나의 인덱스 뽑기
 	int32 SoftmaxSelectIndex(const TArray<FCSPurchaseCandidate>& TopCandidates) const;
+
+	// 이 컴포넌트가 붙어있는 액터에서 CSCustomerStateComponent를 찾아옴
+	UCSCustomerStateComponent* GetCustomerState() const;
+
+	// 아직 예산이 안 뽑힌 손님이면 Archetype(또는 폴백값)을 참조해 예산을 한 번 뽑아 채움
+	// 이미 초기화된 손님이면 아무것도 하지 않음
+	void EnsureBudgetInitialized(UCSCustomerStateComponent& State) const;
+
+	// 표준정규분포(평균 0, 표준편차 1) 난수 하나를 뽑음 (Box-Muller 변환)
+	static float SampleStandardNormal();
 };

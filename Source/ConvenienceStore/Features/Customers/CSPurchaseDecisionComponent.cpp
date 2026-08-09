@@ -1,6 +1,8 @@
 ﻿#include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
+#include "Features/Customers/CSCustomerStateComponent.h"
+#include "GameFramework/Actor.h"
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
@@ -107,11 +109,27 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		return 0.f;
 	}
 
+	// 예산 점수 계산
+	float BudgetScore = 1.0f; // 손님 상태를 못 찾으면 예산 판단 없이 통과시킴 (안전 폴백)
+	if (UCSCustomerStateComponent* State = GetCustomerState())
+	{
+		EnsureBudgetInitialized(*State);
+
+		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
+		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->GetRemainingHardWallet(), OverrunPenalty);
+
+		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 즉시 0점 처리
+		if (BudgetScore < 0.f)
+		{
+			return 0.f;
+		}
+	}
+
 	// 가중합을 가중치 합계로 나눠 정규화
 	// 이렇게 해두면 나중에 예산 점수 항(W_Budget 등)이 추가되어도
 	// 항상 0~1 범위를 벗어나지 않게 자동으로 맞춰짐
-	const float Weighted = (W_Price * PriceScore) + (W_Category * CategoryScore);
-	const float WeightSum = W_Price + W_Category;
+	const float Weighted = (W_Price * PriceScore) + (W_Category * CategoryScore) + (W_Budget * BudgetScore);
+	const float WeightSum = W_Price + W_Category + W_Budget;
 	const float Normalized = (WeightSum > 0.f) ? (Weighted / WeightSum) : 0.f;
 
 	return FMath::Clamp(Normalized, 0.f, 1.f);
@@ -210,4 +228,70 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	const int32 SelectedIndex = SoftmaxSelectIndex(TopCandidates);
 	OutSelected = TopCandidates[SelectedIndex];
 	return true;
+}
+
+UCSCustomerStateComponent* UCSPurchaseDecisionComponent::GetCustomerState() const
+{
+	AActor* Owner = GetOwner();
+	return Owner ? Owner->FindComponentByClass<UCSCustomerStateComponent>() : nullptr;
+}
+
+float UCSPurchaseDecisionComponent::SampleStandardNormal()
+{
+	// Box-Muller 변환: 0~1 사이 균등분포 난수 2개로 표준정규분포 난수 1개를 만들기
+	// U1이 정확히 0이면 로그 계산이 깨지므로 아주 작은 양수부터 뽑음
+	const float U1 = FMath::FRandRange(KINDA_SMALL_NUMBER, 1.0f);
+	const float U2 = FMath::FRandRange(0.0f, 1.0f);
+	return FMath::Sqrt(-2.0f * FMath::Loge(U1)) * FMath::Cos(2.0f * PI * U2);
+}
+
+void UCSPurchaseDecisionComponent::EnsureBudgetInitialized(UCSCustomerStateComponent& State) const
+{
+	// 이미 뽑아둔 예산이 있으면 다시 뽑지 않음
+	if (State.bBudgetInitialized)
+	{
+		return;
+	}
+
+	const int32 MedianGold = Archetype ? Archetype->BudgetMedianGold : FallbackBudgetMedianGold;
+	const float LogSigma = Archetype ? Archetype->BudgetLogSigma : FallbackBudgetLogSigma;
+
+	// 로그정규분포: ln(예산)이 정규분포를 따르게 만들어서 결과값(예산)은 항상 양수만 나오게
+	// 중간값(Median)을 중심으로 SampleStandardNormal()이 위아래로 흔들어줌
+	const float LogMedian = FMath::Loge(static_cast<float>(FMath::Max(MedianGold, 1)));
+	const float SampledLogBudget = LogMedian + (LogSigma * SampleStandardNormal());
+	const int32 SoftBudget = FMath::Max(FMath::RoundToInt(FMath::Exp(SampledLogBudget)), 1);
+
+	// 하드 지갑 한도는 Archetype이 이미 갖고 있는 계산 함수(GetHardWalletLimitGold)로 구함
+	// Archetype이 없으면 폴백 배율로 직접 계산
+	const int32 HardWallet = Archetype
+		? Archetype->GetHardWalletLimitGold(SoftBudget)
+		: FMath::RoundToInt(SoftBudget * FallbackHardWalletRatio);
+
+	State.SoftBudgetGold = SoftBudget;
+	State.HardWalletLimitGold = HardWallet;
+	State.SpentGold = 0;
+	State.bBudgetInitialized = true;
+}
+
+float UCSPurchaseDecisionComponent::ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const
+{
+	// 하드 지갑조차 넘으면 취향과 무관하게 물리적으로 살 수 없는 상황
+	// -1.0은 ComputeCategoryScore와 동일한 규칙의 무조건 구매 불가 신호값
+	if (ActualPrice > static_cast<float>(RemainingHardWallet))
+	{
+		return -1.0f;
+	}
+
+	// 소프트 예산 이내면 아직 여유가 있는 상태이므로 만점
+	if (ActualPrice <= static_cast<float>(RemainingSoftBudget))
+	{
+		return 1.0f;
+	}
+
+	// 소프트 예산을 넘은 비율만큼 지수적으로 감점
+	// (예산이 0에 가까울 때 나눗셈이 폭주하지 않도록 최소 1로 보정)
+	const float SafeSoftBudget = FMath::Max(static_cast<float>(RemainingSoftBudget), 1.0f);
+	const float OverrunRatio = (ActualPrice - RemainingSoftBudget) / SafeSoftBudget;
+	return FMath::Exp(-OverrunPenalty * OverrunRatio);
 }
