@@ -116,7 +116,7 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		EnsureBudgetInitialized(*State);
 
 		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
-		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->GetRemainingHardWallet(), OverrunPenalty);
+		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
 
 		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 즉시 0점 처리
 		if (BudgetScore < 0.f)
@@ -274,7 +274,7 @@ void UCSPurchaseDecisionComponent::EnsureBudgetInitialized(UCSCustomerStateCompo
 	State.bBudgetInitialized = true;
 }
 
-float UCSPurchaseDecisionComponent::ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const
+float UCSPurchaseDecisionComponent::ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 OriginalSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const
 {
 	// 하드 지갑조차 넘으면 취향과 무관하게 물리적으로 살 수 없는 상황
 	// -1.0은 ComputeCategoryScore와 동일한 규칙의 무조건 구매 불가 신호값
@@ -290,9 +290,8 @@ float UCSPurchaseDecisionComponent::ComputeBudgetScore(float ActualPrice, int32 
 	}
 
 	// 소프트 예산을 넘은 비율만큼 지수적으로 감점
-	// (예산이 0에 가까울 때 나눗셈이 폭주하지 않도록 최소 1로 보정)
-	const float SafeSoftBudget = FMath::Max(static_cast<float>(RemainingSoftBudget), 1.0f);
-	const float OverrunRatio = (ActualPrice - RemainingSoftBudget) / SafeSoftBudget;
+	const float SafeOriginalSoftBudget = FMath::Max(static_cast<float>(OriginalSoftBudget), 1.0f);
+	const float OverrunRatio = (ActualPrice - RemainingSoftBudget) / SafeOriginalSoftBudget;
 	return FMath::Exp(-OverrunPenalty * OverrunRatio);
 }
 

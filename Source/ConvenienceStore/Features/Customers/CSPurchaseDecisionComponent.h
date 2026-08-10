@@ -94,7 +94,7 @@ protected:
 
 	// 남은 예산 대비 이 가격이 감당 가능한가를 0~1 점수로 계산
 	// 하드 지갑을 넘으면 -1.0(무조건 구매 불가 신호)을 반환
-	float ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const;
+	float ComputeBudgetScore(float ActualPrice, int32 RemainingSoftBudget, int32 OriginalSoftBudget, int32 RemainingHardWallet, float OverrunPenalty) const;
 
 private:
 	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
