@@ -5,6 +5,7 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Features/Customers/CSCustomerAIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
 
 // Sets default values
@@ -26,13 +27,40 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 360.0f, 0.0f); //방향 전환 속도
 	GetCharacterMovement()->MaxWalkSpeed = 250.0f; //기본 걷기 속도
 
-	//일단 서로 겹치게 테스트용으로 잘 굴러가는지 확인용
+	//일단 서로 겹치게 테스트용으로 잘 굴러가는지 확인용 [나중에 처리 예정]
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+
+	// 상품을 내려놓기 시작할 기준점. BP에서 메시에 맞게 조정한다.
+	DropOriginLeft = CreateDefaultSubobject<UArrowComponent>(TEXT("DropOriginLeft"));
+	DropOriginLeft->SetupAttachment(GetCapsuleComponent());
+	DropOriginLeft->SetRelativeLocation(FVector(0.0f, -35.0f, -83.0f));
+	// 정면 = 열이 넘칠 때 새 열이 생길 방향. 기본은 바깥쪽(왼쪽)
+	DropOriginLeft->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+	DropOriginLeft->SetHiddenInGame(true);
+
+	DropOriginRight = CreateDefaultSubobject<UArrowComponent>(TEXT("DropOriginRight"));
+	DropOriginRight->SetupAttachment(GetCapsuleComponent());
+	DropOriginRight->SetRelativeLocation(FVector(0.0f, 35.0f, -83.0f));
+	DropOriginRight->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
+	DropOriginRight->SetHiddenInGame(true);
+
 }
 
 UCSCustomerStateComponent* ACSCustomerCharacter::GetCustomerState() const
 {
 	return CustomerState;
+}
+
+const UArrowComponent* ACSCustomerCharacter::GetDropOrigin(const int32 SideIndex) const
+{
+	if (SideIndex == 0)
+	{
+		return DropOriginLeft;
+	}
+	else
+	{
+		return DropOriginRight;
+	}
 }
 
 void ACSCustomerCharacter::Destroyed()
