@@ -5,6 +5,8 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "TimerManager.h"
+#include "Features/Customers/CSPurchaseDecisionComponent.h"
+#include "Data/CSCustomerArchetypeDataAsset.h"
 
 ACSCustomerSpawner::ACSCustomerSpawner()
 {
@@ -22,6 +24,30 @@ void ACSCustomerSpawner::BeginPlay()
 		SpawnInterval, //반복 주기
 		true,   // 반복
 		1.0f);  // 첫 스폰까지 1초 대기
+}
+
+UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() const
+{
+	if (Archetypes.Num() == 0) return nullptr;
+
+	// 등록된 종족들의 스폰 가중치 합을 구함
+	float TotalWeight = 0.f;
+	for (const auto& Candidate : Archetypes)
+	{
+		if (Candidate != nullptr) TotalWeight += Candidate->SpawnWeightBase;
+	}
+	if (TotalWeight <= 0.f) return Archetypes[0]; // 가중치가 전부 0이면 첫 종족으로 폴백
+
+	// 0~TotalWeight 사이 난수를 뽑아 가중치를 누적하며 그 난수를 처음 넘는 종족을 선택
+	const float Roll = FMath::FRandRange(0.f, TotalWeight);
+	float Cumulative = 0.f;
+	for (const auto& Candidate : Archetypes)
+	{
+		if (Candidate == nullptr) continue;
+		Cumulative += Candidate->SpawnWeightBase;
+		if (Roll <= Cumulative) return Candidate;
+	}
+	return Archetypes.Last(); // 부동소수점 오차로 못 걸렸을 때 대비한 폴백
 }
 
 void ACSCustomerSpawner::TrySpawnCustomer()
@@ -98,6 +124,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		{
 			State->ExitLocation = SpawnLocation;
 		}
+	}
+
+	// 스폰된 손님에게 종족(Archetype)을 확률적으로 배정
+	// 여기부터 예산 + 가격 + 카테고리 판단이 실제 종족 데이터를 참조하게 됨
+	UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+	if (Decision != nullptr)
+	{
+		Decision->Archetype = PickArchetypeBySpawnWeight();
 	}
 
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열에 추가

@@ -139,10 +139,6 @@ struct FCSTask_BrowseShelfInstanceData
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float BrowseTime = 1.5f;
 
-	// [임시/테스트용] 구매 확률. 소비심리 파트의 판단 로직이 붙으면 제거될 값
-	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float TestPurchaseChance = 0.5f;
-
 	// 내부용 경과 시간
 	UPROPERTY()
 	float ElapsedTime = 0.0f;
