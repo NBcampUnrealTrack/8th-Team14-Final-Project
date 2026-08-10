@@ -45,6 +45,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	int32,
 	NewFunds);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnStoreBusinessDayStarted,
+	int32,
+	NewBusinessDay);
+
 // 게임플레이 액터와 UI가 읽는 편의점의 현재 상태를 보관합니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase
@@ -144,6 +149,10 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Store|Funds")
 	FOnStoreFundsChanged OnFundsChanged;
+
+	// 다음 영업일이 시작되어 상품의 유통기한과 보관 상태를 갱신할 때 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
+	FOnStoreBusinessDayStarted OnBusinessDayStarted;
 
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);

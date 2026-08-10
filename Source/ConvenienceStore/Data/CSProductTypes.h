@@ -80,6 +80,16 @@ struct CONVENIENCESTORE_API FCSProductDataRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife")
 	bool bPerishable = false;
 
+	// 권장 보관 환경이 아닌 곳에 놓였을 때 하루에 누적할 변질 일수입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife",
+		meta = (ClampMin = "1", UIMin = "1"))
+	int32 ImproperStorageAgePerDay = 3;
+
+	// 유통기한이 없는 냉장·냉동 상품이 부적절한 환경에서 버틸 수 있는 일수입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife",
+		meta = (ClampMin = "1", UIMin = "1"))
+	int32 MishandledStorageShelfLifeDays = 1;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|Shelf")
 	ECSProductShelfType ShelfType = ECSProductShelfType::ChilledShelf;
 

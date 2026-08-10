@@ -7,6 +7,7 @@
 #include "Engine/StaticMesh.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 
 ACSProductPickupActor::ACSProductPickupActor()
 {
@@ -40,6 +41,25 @@ void ACSProductPickupActor::BeginPlay()
 		ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 		ProductMesh->SetGenerateOverlapEvents(true);
 	}
+
+	StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (IsValid(StoreGameState))
+	{
+		// 다음 영업일이 시작될 때만 변질 상태를 계산해 매 프레임 비용을 만들지 않습니다.
+		StoreGameState->OnBusinessDayStarted.AddDynamic(
+			this, &ACSProductPickupActor::HandleBusinessDayStarted);
+	}
+}
+
+void ACSProductPickupActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsValid(StoreGameState))
+	{
+		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
+			this, &ACSProductPickupActor::HandleBusinessDayStarted);
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACSProductPickupActor::Interact_Implementation(AActor* Interactor)
@@ -135,6 +155,79 @@ void ACSProductPickupActor::EnableWorldDropPhysics()
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	ProductMesh->SetGenerateOverlapEvents(true);
 	ProductMesh->SetSimulatePhysics(true);
+}
+
+void ACSProductPickupActor::SetStorageShelfType(ECSProductShelfType InStorageShelfType)
+{
+	StorageShelfType = InStorageShelfType;
+}
+
+void ACSProductPickupActor::HandleBusinessDayStarted(int32 NewBusinessDay)
+{
+	UpdateSpoilageForNewBusinessDay(NewBusinessDay);
+}
+
+void ACSProductPickupActor::UpdateSpoilageForNewBusinessDay(int32 NewBusinessDay)
+{
+	if (bIsSpoiled || ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::UpdateSpoilageForNewBusinessDay"));
+	if (ProductData == nullptr)
+	{
+		return;
+	}
+
+	const bool bRequiresSpecialStorage =
+		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+	if (!ProductData->bPerishable && !bRequiresSpecialStorage)
+	{
+		return;
+	}
+
+	const bool bProperStorage = IsStorageEnvironmentProper(*ProductData);
+	if (ProductData->bPerishable)
+	{
+		// 일반 유통기한 상품은 정상 보관 시 하루, 부적절한 보관 시 설정한 만큼 빠르게 경과합니다.
+		StorageAgeDays += bProperStorage
+			? 1
+			: FMath::Max(1, ProductData->ImproperStorageAgePerDay);
+		if (StorageAgeDays >= FMath::Max(1, ProductData->ShelfLifeDays))
+		{
+			bIsSpoiled = true;
+		}
+		return;
+	}
+
+	if (!bProperStorage)
+	{
+		// 유통기한이 없는 냉장·냉동 상품도 일반 매대에 방치하면 별도 기준으로 변질됩니다.
+		++StorageAgeDays;
+		if (StorageAgeDays >= FMath::Max(1, ProductData->MishandledStorageShelfLifeDays))
+		{
+			bIsSpoiled = true;
+		}
+	}
+}
+
+bool ACSProductPickupActor::IsStorageEnvironmentProper(
+	const FCSProductDataRow& ProductData) const
+{
+	if (ProductData.ShelfType == ECSProductShelfType::ChilledShelf)
+	{
+		return StorageShelfType == ECSProductShelfType::ChilledShelf;
+	}
+
+	if (ProductData.ShelfType == ECSProductShelfType::FreezerShelf)
+	{
+		return StorageShelfType == ECSProductShelfType::FreezerShelf;
+	}
+
+	return true;
 }
 
 void ACSProductPickupActor::HandlePawnOverlap(

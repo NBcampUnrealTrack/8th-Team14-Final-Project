@@ -2,6 +2,8 @@
 
 #include "Components/ArrowComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Data/CSProductTypes.h"
+#include "Features/Items/CSProductPickupActor.h"
 
 ACSShelfActor::ACSShelfActor()
 {
@@ -16,8 +18,25 @@ void ACSShelfActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
+	// 시설 행을 먼저 읽어 두면 에디터 프리뷰와 실제 배치가 같은 보관 환경을 사용합니다.
+	SyncFacilityData();
 	// 블루프린트에서 배치한 슬롯 마커의 위치를 슬롯 데이터에 반영합니다.
 	SyncSlotsFromMarkers();
+}
+
+void ACSShelfActor::SyncFacilityData()
+{
+	if (FacilityRow.DataTable == nullptr || FacilityRow.RowName.IsNone())
+	{
+		return;
+	}
+
+	const FCSFacilityDataRow* FacilityData =
+		FacilityRow.GetRow<FCSFacilityDataRow>(TEXT("ACSShelfActor::SyncFacilityData"));
+	if (FacilityData != nullptr && FacilityData->FacilityType == ECSFacilityType::Shelf)
+	{
+		ShelfType = FacilityData->ShelfType;
+	}
 }
 
 bool ACSShelfActor::TryGetSlotMarkerIndex(
@@ -169,6 +188,22 @@ bool ACSShelfActor::GetPlacementPreview_Implementation(
 	return true;
 }
 
+ECSShelfPlacementPreviewState ACSShelfActor::GetPlacementPreviewState_Implementation(
+	AActor* ItemActor,
+	FVector PlacementHint,
+	FTransform& OutSlotWorldTransform) const
+{
+	if (!GetPlacementPreview_Implementation(ItemActor, PlacementHint, OutSlotWorldTransform))
+	{
+		return ECSShelfPlacementPreviewState::Invalid;
+	}
+
+	// 모든 상품은 진열할 수 있으므로 보관 조건이 맞지 않아도 배치를 막지 않고 경고만 반환합니다.
+	return ShouldWarnStorage(ItemActor)
+		? ECSShelfPlacementPreviewState::Warning
+		: ECSShelfPlacementPreviewState::Valid;
+}
+
 bool ACSShelfActor::TryPlaceItem_Implementation(
 	AActor* ItemActor,
 	FVector PlacementHint)
@@ -197,6 +232,12 @@ bool ACSShelfActor::TryPlaceItem_Implementation(
 		FAttachmentTransformRules::KeepWorldTransform);
 	ItemActor->SetActorEnableCollision(true);
 
+	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(ItemActor))
+	{
+		// 배치된 시설의 보관 환경을 상품에 기록하여 날짜가 바뀔 때 변질 속도를 계산합니다.
+		ProductActor->SetStorageShelfType(ShelfType);
+	}
+
 	SelectedSlot.OccupyingItem = ItemActor;
 	return true;
 }
@@ -207,10 +248,44 @@ void ACSShelfActor::RemovePlacedItem_Implementation(AActor* ItemActor)
 	{
 		if (Slot.OccupyingItem == ItemActor)
 		{
+			if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(ItemActor))
+			{
+				// 진열대에서 꺼낸 상품은 일반 환경으로 간주해 부적절한 보관 여부를 다시 계산합니다.
+				ProductActor->SetStorageShelfType(ECSProductShelfType::UtilityShelf);
+			}
 			Slot.OccupyingItem = nullptr;
 			return;
 		}
 	}
+}
+
+bool ACSShelfActor::ShouldWarnStorage(AActor* ItemActor) const
+{
+	const ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(ItemActor);
+	if (!IsValid(ProductActor))
+	{
+		return false;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductActor->GetProductRow().GetRow<FCSProductDataRow>(TEXT("ACSShelfActor::ShouldWarnStorage"));
+	if (ProductData == nullptr)
+	{
+		return false;
+	}
+
+	// 회의 규칙에 따라 냉장·냉동 상품만 경고 대상으로 두고, 나머지 상품은 모든 진열대에 정상 배치합니다.
+	if (ProductData->ShelfType == ECSProductShelfType::ChilledShelf)
+	{
+		return ShelfType != ECSProductShelfType::ChilledShelf;
+	}
+
+	if (ProductData->ShelfType == ECSProductShelfType::FreezerShelf)
+	{
+		return ShelfType != ECSProductShelfType::FreezerShelf;
+	}
+
+	return false;
 }
 
 bool ACSShelfActor::GetItemSlotLevel_Implementation(

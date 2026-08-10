@@ -182,4 +182,6 @@ void ACSStoreGameState::BeginNextBusinessDay()
 
 	// 다음 날 HUD와 정산 화면이 이전 날의 값을 유지하지 않도록 갱신을 알립니다.
 	OnDailySalesChanged.Broadcast();
+	// 월드에 남아 있는 상품이 하루 경과에 따른 변질 상태를 갱신할 수 있도록 알립니다.
+	OnBusinessDayStarted.Broadcast(CurrentBusinessDay);
 }
