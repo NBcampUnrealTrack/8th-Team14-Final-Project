@@ -2,7 +2,6 @@
 
 
 #include "Features/Customers/CSCustomerStateComponent.h"
-#include "Engine/DataTable.h"
 
 void UCSCustomerStateComponent::AddSelectProduct(const FDataTableRowHandle& InProductRow,
 	TSubclassOf<AActor> InProductClass)

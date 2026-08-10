@@ -22,10 +22,10 @@ class AAIController;
 class ACSCustomerCharacter;
 
 // =====================================================================
-// 1) PickNextShelf : 아직 안 본 진열대를 랜덤으로 골라 Output으로 내보냄
-//    - 부모 상태(Shopping)에 붙여서 "데이터 홀더" 역할을 함
-//    - 자식 상태(MoveToShelf, Browse)가 이 값을 읽을 수 있도록 상주
-//    - 그래서 EnterState에서 Running을 반환하고 완료되지 않음
+//  PickNextShelf : 아직 안 본 진열대를 랜덤으로 골라 Output으로 내보냄
+//  부모 상태(Shopping)에 붙여서 "데이터 홀더" 역할을 함
+//  자식 상태(MoveToShelf, Browse)가 이 값을 읽을 수 있도록 상주
+//  그래서 EnterState에서 Running을 반환하고 완료되지 않음
 // =====================================================================
 
 USTRUCT()
@@ -74,7 +74,7 @@ struct FCSTask_PickNextShelf : public FStateTreeTaskCommonBase
 };
 
 // =====================================================================
-// 2) MoveToLocation : NavMesh 기반 이동 (범용)
+// MoveToLocation : NavMesh 기반 이동 (범용)
 // 이동이 완료될 때까지 기다렸다가 성공 여부를 반환합니다.
 // =====================================================================
 
@@ -119,8 +119,8 @@ struct FCSTask_MoveToLocation : public FStateTreeTaskCommonBase
 };
 
 // =====================================================================
-// 3) BrowseShelf : 진열대 앞에서 구경 → 구매 판단 → 담기or패스
-//    진열대 앞에서 BrowseTime만큼 머물다, 방문 기록을 남기고, 확률적으로 상품을 집습니다
+// BrowseShelf : 진열대 앞에서 구경 → 구매 판단 → 담기or패스
+// 진열대 앞에서 BrowseTime만큼 머물다, 방문 기록을 남기고, 확률적으로 상품을 집습니다
 // =====================================================================
 
 USTRUCT()
@@ -168,7 +168,7 @@ struct FCSTask_BrowseShelf : public FStateTreeTaskCommonBase
 };
 
 // =====================================================================
-// 4) WaitInQueue : 줄서기
+//  WaitInQueue : 줄서기
 // 대기열에 등록하고 자기 자리로 이동, 순번이 바뀌면 앞으로 이동, 계산 완료 시 성공
 // =====================================================================
 
@@ -186,6 +186,14 @@ struct FCSTask_WaitInQueueInstanceData
 	// 틱마다 불필요한 이동 명령 재발급을 막기 위해 마지막으로 이동한 순번 기록
 	UPROPERTY()
 	int32 CachedQueueIndex = -1;
+
+	// 인내심 시간
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float PatienceOverride = 0.0f;
+
+	// 줄에 선 뒤 경과 시간
+	UPROPERTY()
+	float ElapsedWaitTime = 0.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Wait In Queue"))
@@ -211,7 +219,7 @@ struct FCSTask_WaitInQueue : public FStateTreeTaskCommonBase
 };
 
 // =====================================================================
-// 5) LeaveAndDespawn : 퇴장 지점으로 이동 후 파괴
+//  LeaveAndDespawn : 퇴장 지점으로 이동 후 파괴
 // =====================================================================
 
 USTRUCT()
@@ -246,4 +254,53 @@ struct FCSTask_LeaveAndDespawn : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
 		const float DeltaTime) const override;
+};
+
+// =====================================================================
+// ReturnProducts : 빈 슬롯이 있는 진열대로 가서 상품을 되돌려놓음
+// =====================================================================
+
+USTRUCT()
+struct FCSTask_ReturnProductsInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	// 진열대 정면에서 얼마나 떨어져 설지. PickNextShelf와 같은 의미 (수정예정)
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float BrowseDistance = 120.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float AcceptanceRadius = 60.0f;
+
+	// 되돌려놓으러 가는 진열대
+	UPROPERTY()
+	TObjectPtr<AActor> TargetShelf = nullptr;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Return Products"))
+struct FCSTask_ReturnProducts : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSTask_ReturnProductsInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
+		const float DeltaTime) const override;
+
+	virtual void ExitState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
 };

@@ -59,3 +59,28 @@ bool FCSCond_HasItemsInCart::TestCondition(FStateTreeExecutionContext& Context) 
 		return bResult;
 	}
 }
+
+bool FCSCond_HasAbandonedCheckout::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	bool bResult = false;
+
+	if (Data.Actor != nullptr)
+	{
+		const UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+		if (State != nullptr)
+		{
+			bResult = State->bCheckoutAbandoned;
+		}
+	}
+
+	if (Data.bInvert)
+	{
+		return (bResult == false);
+	}
+	else
+	{
+		return bResult;
+	}
+}

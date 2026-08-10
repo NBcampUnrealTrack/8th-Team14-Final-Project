@@ -14,7 +14,7 @@ class ACSCustomerCharacter;
 // =====================================================================
 // Customer: Has Unvisited Shelf
 // 손님이 아직 안 가본 진열대가 하나라도 남았는지 판정
-// 이 조건이 false가 되는 순간이 Goal "쇼핑 끝" 신호가 됩니다. 별도 코드 없이 이 조건 하나로 Shopping 상태를 건너뛰고 다음 상태로 넘어가게 만듭니다
+// 이 조건이 false가 되는 순간이 Goal "쇼핑 끝" 신호가 됩니다. 별도 코드 없이 이 조건 하나로 Shopping 상태를 건너뛰고 다음 상태로 넘어가게 만듬
 // =====================================================================
 
 USTRUCT()
@@ -50,7 +50,7 @@ struct FCSCond_HasUnvisitedShelf : public FStateTreeConditionCommonBase
 // =====================================================================
 // Customer: Has Items In Cart
 // 손님이 산 게 하나라도 있는지 판정 (State->HasSelectedItems() 호출)
-// 아무것도 안 산 손님이 계산대 줄에 서는 걸 막기 위함입니다. 장바구니가 비어있으면(false) Checkout을 건너뛰고 Leave로 직행합니다.
+// 아무것도 안 산 손님이 계산대 줄에 서는 걸 막기 위함입니다. 장바구니가 비어있으면(false) Checkout을 건너뛰고 Leave로 직행
 // =====================================================================
 
 USTRUCT()
@@ -72,6 +72,38 @@ struct FCSCond_HasItemsInCart : public FStateTreeConditionCommonBase
 	GENERATED_BODY()
 
 	using FInstanceDataType = FCSCond_HasItemsInCartInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+// =====================================================================
+// Customer: Has Abandoned Checkout
+// 이번 방문에서 계산을 포기했는지 판정.
+// Checkout 상태에 Invert로 걸어서 포기한 손님이 다시 줄 서는 것을 막고, ReturnItems 포기했고 상품이 있는 손님만 보냄
+// =====================================================================
+USTRUCT()
+struct FCSCond_HasAbandonedCheckoutInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bInvert = false;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Has Abandoned Checkout"))
+struct FCSCond_HasAbandonedCheckout : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_HasAbandonedCheckoutInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override
 	{
