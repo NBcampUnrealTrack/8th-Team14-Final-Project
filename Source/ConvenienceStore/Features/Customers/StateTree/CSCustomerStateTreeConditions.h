@@ -1,6 +1,6 @@
 // 손님 AI용 StateTree 조건 모음.
 // Root의 자식 상태 선택(Selector)에 사용:
-//   Shopping  ← HasUnvisitedShelf
+//   Shopping  ← HasUnvisitedShelf + WantsMoreItems
 //   Checkout  ← HasItemsInCart
 
 #pragma once
@@ -104,6 +104,41 @@ struct FCSCond_HasAbandonedCheckout : public FStateTreeConditionCommonBase
 	GENERATED_BODY()
 
 	using FInstanceDataType = FCSCond_HasAbandonedCheckoutInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+// Customer: Wants More Items
+// 지금까지 담은 개수를 보고 하나 더 담을 의욕이 있는지 확률적으로 판정
+// CSPurchaseDecisionComponent::ContinueShoppingProbability()를 그대로 사용
+// HasUnvisitedShelf와 AND로 묶여서 안 가본 진열대가 있어도 이제 그만 사고 싶어지면 멈추는 역할을 함
+
+USTRUCT()
+struct FCSCond_WantsMoreItemsInstanceData
+{
+	GENERATED_BODY()
+
+	// 장바구니 개수(개인 데이터)와 판단 컴포넌트 둘 다 Actor에서 꺼내 써야 하므로
+	// Actor를 Context로 받음
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	// true면 결과 반전
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bInvert = false;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Wants More Items"))
+struct FCSCond_WantsMoreItems : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_WantsMoreItemsInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override
 	{

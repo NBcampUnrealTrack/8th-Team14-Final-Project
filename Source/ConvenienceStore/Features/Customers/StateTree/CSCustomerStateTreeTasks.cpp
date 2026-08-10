@@ -5,6 +5,9 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "AIController.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Features/Customers/CSPurchaseDecisionComponent.h"
+#include "Data/CSPurchaseDecisionTypes.h"
+#include "Data/CSCustomerArchetypeDataAsset.h" // 로그 삭제시 같이 삭제
 
 // =====================================================================
 // PickNextShelf
@@ -161,19 +164,32 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 구매를 하든 안하든 방문 처리는 해야 같은 진열대를 무한히 맴돌지 않으므로 항상 기록
 	State->MarkVisited(ShelfActor);
 
-	// [임시/테스트용] 구매 판단은 소비심리 파트 담당이라 여기서는 하지 않는다.
-	// 지금은 동선/집기 동작 확인을 위해 "재고 있으면 확률로 아무거나 하나 집기"만 수행.
-	//
-	// ※ 장바구니 담기(AddToSelectItem)는 Subsystem::TakeProduct 내부에서 처리한다.
-	//    여기서 또 담으면 같은 상품이 두 번 들어가므로 호출하지 않는다.
-	//    (재고 차감과 장바구니 기록이 한 덩어리로 묶여 있어야 불일치가 안 생김)
-	//
-	// 소비심리 파트가 완성되면:
-	//   1) 그쪽에서 매장 현황을 받아 살 상품(ProductActor)을 결정하고
-	//   2) Subsystem->TakeProduct(진열대, 그 상품, 손님) 호출로 교체하면 된다.
-	if (Subsystem->HasShelfStock(ShelfActor) && FMath::FRand() < Data.TestPurchaseChance)
+	if (Subsystem->HasShelfStock(ShelfActor))
 	{
-		Subsystem->TakeRandomProduct(ShelfActor, Customer);
+		// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 구매 판단 자체를 건너뛰고 지나감
+		UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+		if (Decision != nullptr)
+		{
+			// 진열대 위 상품들을 판단용 후보 목록으로 변환
+			const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+
+			// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
+			FCSPurchaseCandidate Selected;
+			if (Decision->DecidePurchase(Candidates, Selected))
+			{
+				// 결정된 상품을 실제로 집음 (재고 차감 + 장바구니 기록은 TakeProduct 내부 처리)
+				Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
+
+				UE_LOG(LogTemp, Warning, TEXT("[구매판단] %s | 종족=%s | 결과=구매"), *Customer->GetName(),
+					Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"));
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[구매판단] %s | 종족=%s | 결과=미구매(패스)"),
+					*Customer->GetName(),
+					Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"));
+			}
+		}
 	}
 
 	// 사든 말든 현재 진열대 확인 완료 → 다음 행동 결정

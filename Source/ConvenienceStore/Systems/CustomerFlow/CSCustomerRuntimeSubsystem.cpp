@@ -157,6 +157,26 @@ TArray<AActor*> UCSCustomerRuntimeSubsystem::GetProductsOnShelf(const AActor* Sh
 	return Result;
 }
 
+TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidates(const AActor* ShelfActor) const
+{
+	TArray<FCSPurchaseCandidate> Candidates;
+	// 기존 GetProductsOnShelf()를 그대로 재사용해서 진열된 상품 액터들을 가져옴
+	TArray<AActor*> Products = GetProductsOnShelf(ShelfActor);
+
+	for (AActor* ProductActor : Products)
+	{
+		ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+		if (Product == nullptr) continue;  // 상품이 아닌 액터 방어
+
+		// TakeProduct()가 쓰는 것과 동일한 GetProductRow()로 상품 마스터 데이터 참조를 가져옴
+		FCSPurchaseCandidate Candidate;
+		Candidate.ProductRowHandle = Product->GetProductRow();
+		Candidate.ProductActor = ProductActor;
+		Candidates.Add(Candidate);
+	}
+	return Candidates;
+}
+
 bool UCSCustomerRuntimeSubsystem::HasShelfStock(const AActor* ShelfActor) const
 {
 	return GetProductsOnShelf(ShelfActor).Num() > 0;
@@ -202,24 +222,6 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 	// 상품 획득 이벤트를 브로드캐스트하여 통계, 재고 등 외부 시스템에 알립니다.
 	OnItemTaken.Broadcast(Customer, ProductId);
 	return ProductId;
-}
-
-// [임시/테스트용]
-FName UCSCustomerRuntimeSubsystem::TakeRandomProduct(AActor* ShelfActor, ACSCustomerCharacter* Customer)
-{
-	// 현재 진열대에 있는 모든 상품 목록을 가져옵니다.
-	TArray<AActor*> Products = GetProductsOnShelf(ShelfActor);
-
-	if (Products.Num() == 0)
-	{
-		return NAME_None; // 재고가 없으면 아무것도 하지 않음
-	}
-
-	// 목록 중 무작위 인덱스를 뽑아 상품 획득(TakeProduct) 로직으로 넘깁니다.
-	// Task에서 확률적으로 TakeRandomProduct가 부르게 할 예정
-	const int32 PickIndex = FMath::RandRange(0, Products.Num() - 1);
-	return TakeProduct(ShelfActor, Products[PickIndex], Customer);
-
 }
 
 void UCSCustomerRuntimeSubsystem::RegisterCounter(AActor* CounterActor)
