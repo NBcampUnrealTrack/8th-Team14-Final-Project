@@ -5,6 +5,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Data/CSProductTypes.h"
 
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
@@ -20,7 +21,8 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 {
     // 진열 프리뷰는 물체를 들고 있을 때만 갱신합니다.
     PrimaryActorTick.bCanEverTick = true;
-    PrimaryActorTick.bStartWithTickEnabled = false;
+	// 상호작용 안내는 물체를 들지 않은 상태에서도 갱신해야 하므로 항상 Tick을 유지합니다.
+    PrimaryActorTick.bStartWithTickEnabled = true;
 
     // 캐릭터 몸체는 회전하지 않고, 카메라 시점만 회전시킵니다.
     bUseControllerRotationPitch = false;
@@ -199,7 +201,15 @@ void ACSPlayerCharacter::ToggleClock()
 void ACSPlayerCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-    UpdatePlacementPreview();
+
+	if (IsValid(HeldActor))
+	{
+		UpdatePlacementPreview();
+	}
+	else
+	{
+		UpdateInteractionHUD();
+	}
 }
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
@@ -254,16 +264,76 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		DestroyPlacementPreview();
 	}
-    SetActorTickEnabled(true);
     return true;
+}
+
+void ACSPlayerCharacter::UpdateInteractionHUD()
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	if (!IsValid(StorePlayerController) || FirstPersonCamera == nullptr)
+	{
+		return;
+	}
+
+	// 매 프레임 조준 대상을 새로 확인하므로 이전 대상의 안내가 남지 않게 먼저 숨깁니다.
+	StorePlayerController->ClearInteractionContext();
+
+	const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
+	const FVector TraceEnd =
+		TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	if (!GetWorld()->LineTraceSingleByChannel(
+		HitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+	{
+		return;
+	}
+
+	AActor* TargetActor = HitResult.GetActor();
+	if (!IsValid(TargetActor) || !TargetActor->Implements<UCSInteractable>())
+	{
+		return;
+	}
+
+	const FText InteractionText = ICSInteractable::Execute_GetInteractionText(TargetActor);
+	if (InteractionText.IsEmpty())
+	{
+		return;
+	}
+
+	StorePlayerController->SetInteractionPrompt(
+		FText::Format(
+			NSLOCTEXT("Interaction", "UsePrompt", "[E] {0}"),
+			InteractionText),
+		FLinearColor::White);
+
+	FDataTableRowHandle ProductRow;
+	if (TryGetProductRowFromActor(TargetActor, ProductRow))
+	{
+		const ACSDeliveryCrateActor* DeliveryCrate =
+			Cast<ACSDeliveryCrateActor>(TargetActor);
+		ShowProductPrice(
+			ProductRow,
+			IsValid(DeliveryCrate) ? DeliveryCrate->GetRemainingQuantity() : INDEX_NONE);
+	}
 }
 
 void ACSPlayerCharacter::UpdatePlacementPreview()
 {
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	if (IsValid(StorePlayerController))
+	{
+		// 조준 위치가 바뀌었을 때 이전 안내가 남지 않도록 먼저 숨깁니다.
+		StorePlayerController->ClearInteractionContext();
+	}
+
     if (!IsValid(HeldActor) || FirstPersonCamera == nullptr)
     {
 		SetPlacementPreviewVisible(false);
-        SetActorTickEnabled(false);
         return;
     }
 
@@ -308,6 +378,11 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 			TargetActor, PlacementItem, HitResult.ImpactPoint, PreviewTransform);
 	if (PreviewState == ECSShelfPlacementPreviewState::Invalid)
     {
+		// 진열대는 조준했지만 빈 슬롯이 없을 때만 가격과 보관 경고 없이 빨간 안내를 표시합니다.
+		if (IsValid(StorePlayerController))
+		{
+			StorePlayerController->ShowPlacementUnavailablePrompt();
+		}
         return;
     }
 
@@ -316,6 +391,22 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		// 진열대가 반환한 슬롯 Transform을 그대로 적용하여 실제 배치 위치와 일치시킵니다.
 		PlacementPreviewActor->SetActorTransform(PreviewTransform);
 		PlacementPreviewActor->SetPlacementPreviewState(PreviewState);
+		if (IsValid(StorePlayerController))
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"),
+				FLinearColor::White);
+		}
+
+		FDataTableRowHandle ProductRow;
+		if (TryGetProductRowFromActor(PlacementItem, ProductRow))
+		{
+			ShowProductPrice(ProductRow);
+			if (PreviewState == ECSShelfPlacementPreviewState::Warning)
+			{
+				ShowStorageWarning(ProductRow);
+			}
+		}
 		SetPlacementPreviewVisible(true);
 	}
 }
@@ -364,10 +455,9 @@ void ACSPlayerCharacter::DropHeldItem()
 				HeldActor,
 				AimHitResult.ImpactPoint))
 			{
-				HeldActor = nullptr;
-				DestroyPlacementPreview();
-				SetActorTickEnabled(false);
-				return;
+            HeldActor = nullptr;
+			DestroyPlacementPreview();
+            return;
 			}
 		}
 	}
@@ -450,7 +540,6 @@ void ACSPlayerCharacter::DropHeldItem()
 		CrateToDrop->EnableWorldDropPhysics();
 	}
 
-	SetActorTickEnabled(false);
 }
 
 void ACSPlayerCharacter::CreatePlacementPreview(ACSProductPickupActor* ProductActor)
@@ -561,7 +650,6 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 	{
 		HeldActor = nullptr;
 		DestroyPlacementPreview();
-		SetActorTickEnabled(false);
 	}
 
 	return true;
@@ -569,6 +657,13 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 
 void ACSPlayerCharacter::DestroyPlacementPreview()
 {
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController()))
+	{
+		// 상품을 내려놓거나 프리뷰를 교체할 때 배치 관련 안내도 함께 제거합니다.
+		StorePlayerController->ClearInteractionContext();
+	}
+
 	if (IsValid(PlacementPreviewActor))
 	{
 		PlacementPreviewActor->Destroy();
@@ -582,6 +677,75 @@ void ACSPlayerCharacter::SetPlacementPreviewVisible(bool bIsVisible)
 	if (IsValid(PlacementPreviewActor))
 	{
 		PlacementPreviewActor->SetActorHiddenInGame(!bIsVisible);
+	}
+}
+
+bool ACSPlayerCharacter::TryGetProductRowFromActor(
+	const AActor* TargetActor,
+	FDataTableRowHandle& OutProductRow) const
+{
+	OutProductRow = FDataTableRowHandle();
+	if (const ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(TargetActor))
+	{
+		OutProductRow = ProductActor->GetProductRow();
+	}
+	else if (const ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(TargetActor))
+	{
+		OutProductRow = DeliveryCrate->GetProductRow();
+	}
+
+	return OutProductRow.DataTable != nullptr && !OutProductRow.RowName.IsNone();
+}
+
+void ACSPlayerCharacter::ShowProductPrice(
+	const FDataTableRowHandle& ProductRow,
+	int32 RemainingQuantity) const
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSPlayerCharacter::ShowProductPrice"));
+	if (!IsValid(StorePlayerController) || ProductData == nullptr)
+	{
+		return;
+	}
+
+	if (RemainingQuantity != INDEX_NONE)
+	{
+		// 배송 상자는 상품 가격과 함께 상자에 남은 수량을 표시합니다.
+		StorePlayerController->SetProductPrice(FText::Format(
+			NSLOCTEXT("Interaction", "CrateProductPrice", "판매가: {0} 골드 / 남은 수량: {1}개"),
+			FText::AsNumber(ProductData->RecommendedSalePrice),
+			FText::AsNumber(FMath::Max(0, RemainingQuantity))));
+		return;
+	}
+
+	StorePlayerController->SetProductPrice(FText::Format(
+		NSLOCTEXT("Interaction", "ProductPrice", "판매가: {0} 골드"),
+		FText::AsNumber(ProductData->RecommendedSalePrice)));
+}
+
+void ACSPlayerCharacter::ShowStorageWarning(const FDataTableRowHandle& ProductRow) const
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSPlayerCharacter::ShowStorageWarning"));
+	if (!IsValid(StorePlayerController) || ProductData == nullptr)
+	{
+		return;
+	}
+
+	if (ProductData->ShelfType == ECSProductShelfType::ChilledShelf)
+	{
+		StorePlayerController->SetStorageWarning(
+			NSLOCTEXT("Interaction", "ChilledStorageWarning", "냉장 보관이 필요한 상품입니다."));
+	}
+	else if (ProductData->ShelfType == ECSProductShelfType::FreezerShelf)
+	{
+		StorePlayerController->SetStorageWarning(
+			NSLOCTEXT("Interaction", "FrozenStorageWarning", "냉동 보관이 필요한 상품입니다."));
 	}
 }
 

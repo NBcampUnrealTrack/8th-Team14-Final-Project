@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/Character.h"
 #include "CSPlayerCharacter.generated.h"
 
@@ -105,7 +106,15 @@ private:
 	void TryInteract();
 	void DropHeldItem();
 	void ToggleClock();
+	void UpdateInteractionHUD();
 	void UpdatePlacementPreview();
+	bool TryGetProductRowFromActor(
+		const AActor* TargetActor,
+		FDataTableRowHandle& OutProductRow) const;
+	void ShowProductPrice(
+		const FDataTableRowHandle& ProductRow,
+		int32 RemainingQuantity = INDEX_NONE) const;
+	void ShowStorageWarning(const FDataTableRowHandle& ProductRow) const;
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
 	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);
 	void DestroyPlacementPreview();
