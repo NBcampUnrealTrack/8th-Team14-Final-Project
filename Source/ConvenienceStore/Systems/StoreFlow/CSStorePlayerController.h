@@ -7,6 +7,7 @@
 
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
+class UUserWidget;
 
 // 로컬 플레이어의 편의점 HUD와 마감 UI 입력 상태를 관리합니다.
 UCLASS()
@@ -17,6 +18,10 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 public:
 	UFUNCTION(BlueprintCallable, Category = "UI")
 	void ToggleClock();
+
+	// 발주·계산처럼 게임 조작을 막아야 하는 UI가 열리고 닫힐 때 입력 잠금을 갱신합니다.
+	UFUNCTION(BlueprintCallable, Category = "UI|Input")
+	void SetGameplayUIInputLock(UUserWidget* RequestingWidget, bool bShouldLock);
 
 	// 진열할 빈 슬롯이 없을 때 HUD에 빨간 배치 불가 안내를 표시합니다.
 	void ShowPlacementUnavailablePrompt();
@@ -44,12 +49,18 @@ protected:
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
 
 	void UpdateClosingInputMode();
+	bool HasGameplayUIInputLock() const;
+	UUserWidget* GetFocusedGameplayUIWidget() const;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
+
+	// 현재 게임 조작을 막아야 하는 발주·계산 UI 목록입니다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UUserWidget>> GameplayUIInputLockWidgets;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 };
