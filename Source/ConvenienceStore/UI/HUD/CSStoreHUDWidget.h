@@ -20,6 +20,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|UI")
 	void ToggleClockVisibility();
 
+	// 조준점 아래의 상호작용 안내를 지정한 색상으로 표시합니다.
+	void SetInteractionPrompt(const FText& Message, const FLinearColor& TextColor);
+
+	// 상품 가격과 보관 경고를 숨긴 뒤, 빈 슬롯 안내만 빨간색으로 표시합니다.
+	void ShowPlacementUnavailablePrompt();
+
+	// 조준한 상품의 권장 판매가를 표시합니다.
+	void SetProductPrice(const FText& Message);
+
+	// 현재 진열 환경이 상품 보관 조건과 맞지 않을 때 노란 경고를 표시합니다.
+	void SetStorageWarning(const FText& Message);
+
+	// 조준 대상이 바뀌거나 상품을 내려놓았을 때 조준점 주변 안내를 모두 숨깁니다.
+	void ClearInteractionContext();
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
@@ -63,6 +78,18 @@ protected:
 	// 오늘 결제 완료된 상품의 총수량을 표시합니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> DailySoldQuantityText;
+
+	// 조준한 대상에 대해 E 또는 Q로 실행할 행동을 안내합니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> InteractionPromptText;
+
+	// 이후 상품 조준 시 판매가를 표시할 영역입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ProductPriceText;
+
+	// 냉장·냉동 보관 경고를 표시할 영역입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> StorageWarningText;
 
 	UFUNCTION()
 	void HandlePhaseChanged(ECStorePhase NewPhase);
