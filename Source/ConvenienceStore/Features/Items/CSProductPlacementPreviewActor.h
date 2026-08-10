@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "CSProductPlacementPreviewActor.generated.h"
 
@@ -26,6 +27,9 @@ public:
 	// 배치 가능 여부에 맞춰 프리뷰의 색상 머티리얼을 변경합니다.
 	void SetPlacementValid(bool bIsPlacementValid);
 
+	// 정상·경고·불가 상태에 맞춰 프리뷰 머티리얼을 변경합니다.
+	void SetPlacementPreviewState(ECSShelfPlacementPreviewState NewState);
+
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
@@ -38,7 +42,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Placement Preview")
 	TObjectPtr<UMaterialInterface> InvalidPlacementMaterial;
 
+	// 보관 환경이 맞지 않지만 배치는 가능한 위치에서 사용할 노란색 머티리얼입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Placement Preview")
+	TObjectPtr<UMaterialInterface> WarningPlacementMaterial;
+
 private:
 	// 현재 프리뷰 상태에 맞는 머티리얼을 모든 메시 슬롯에 적용합니다.
-	void ApplyPreviewMaterial(bool bIsPlacementValid);
+	void ApplyPreviewMaterial(ECSShelfPlacementPreviewState NewState);
 };
