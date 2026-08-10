@@ -7,7 +7,7 @@
 #include "Navigation/PathFollowingComponent.h"
 
 // =====================================================================
-// 1) PickNextShelf
+// PickNextShelf
 // =====================================================================
 
 EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext& Context,
@@ -44,7 +44,7 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 }
 
 // =====================================================================
-// 2) MoveToLocation
+// MoveToLocation
 // =====================================================================
 
 EStateTreeRunStatus FCSTask_MoveToLocation::EnterState(FStateTreeExecutionContext& Context,
@@ -118,7 +118,7 @@ void FCSTask_MoveToLocation::ExitState(FStateTreeExecutionContext& Context,
 }
 
 // =====================================================================
-// 3) BrowseShelf
+// BrowseShelf
 // =====================================================================
 
 EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& Context,
@@ -181,7 +181,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 }
 
 // =====================================================================
-// 4) WaitInQueue
+// WaitInQueue
 // =====================================================================
 
 EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& Context,
@@ -299,7 +299,7 @@ void FCSTask_WaitInQueue::ExitState(FStateTreeExecutionContext& Context,
 }
 
 // =====================================================================
-// 5) LeaveAndDespawn
+// LeaveAndDespawn
 // =====================================================================
 
 EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionContext& Context,
@@ -353,4 +353,111 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::Tick(FStateTreeExecutionContext& Co
 	}
 
 	return EStateTreeRunStatus::Running;
+}
+
+// =====================================================================
+// ReturnProducts
+// =====================================================================
+
+EStateTreeRunStatus FCSTask_ReturnProducts::EnterState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (Subsystem == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 빈자리 여부와 무관하게 진열대 하나를 선택
+	Data.TargetShelf = Subsystem->PickRandomShelf();
+
+	// 예외처리) 레벨에 진열대가 하나도 없으면 갈 곳이 없다. 그 자리에 떨구고 끝낸다.
+	if (Data.TargetShelf == nullptr)
+	{
+		Subsystem->DropCustomerItems(Data.Actor);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	const FVector TargetLocation =
+		Subsystem->GetShelfBrowseLocation(Data.TargetShelf, Data.BrowseDistance);
+
+	const EPathFollowingRequestResult::Type Result =
+		Data.AIController->MoveToLocation(TargetLocation, Data.AcceptanceRadius);
+
+	if (Result == EPathFollowingRequestResult::AlreadyAtGoal)
+	{
+		Subsystem->ReturnCustomerItemsToShelf(Data.Actor, Data.TargetShelf);
+		return EStateTreeRunStatus::Succeeded;
+	}
+	if (Result == EPathFollowingRequestResult::Failed)
+	{
+		// 예외처리) 경로를 못 찾으면 붙잡아두지 말고 그 자리에 떨어뜨림
+		Subsystem->DropCustomerItems(Data.Actor);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FCSTask_ReturnProducts::Tick(FStateTreeExecutionContext& Context,
+	const float DeltaTime) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (Subsystem == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 이동이 끝날 때까지 대기
+	if (Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 길을 막혀서 정확히 도착하지 못하고 멈춰버리는 경우에 일단 되돌리기 기능을 시도는 함
+	Subsystem->ReturnCustomerItemsToShelf(Data.Actor, Data.TargetShelf);
+
+	return EStateTreeRunStatus::Succeeded;
+}
+
+void FCSTask_ReturnProducts::ExitState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.AIController != nullptr)
+	{
+		Data.AIController->StopMovement();
+	}
+
+	// 어떤 경로로든 상품이 남은 채 이 상태를 떠나면 그 자리에 떨군다.
+	// 남겨두면 손님이 상품을 든 채로 소멸해 재고가 증발. (나중에 손님유형따라 든 채로 가는것도 컨텐츠 가능)
+	if (Data.Actor == nullptr)
+	{
+		return;
+	}
+
+	const UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+	if (State != nullptr && State->HasSelectedItems())
+	{
+		UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+		if (Subsystem != nullptr)
+		{
+			Subsystem->DropCustomerItems(Data.Actor);
+		}
+	}
 }

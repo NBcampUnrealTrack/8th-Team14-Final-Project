@@ -350,13 +350,22 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	LeaveQueue(Customer);
 
 	//  들고 있던 상품을 떨어뜨린다. (진열대에 되돌려놓는 기능이 들어오면 이 호출은 그쪽 Task로 이동)
-	DropCustomerItems(Customer);
+	//DropCustomerItems(Customer);
 
 	// 다시 줄 서지 않도록 true로 지정
 	UCSCustomerStateComponent* State = Customer->GetCustomerState();
 	if (State != nullptr)
 	{
 		State->bCheckoutAbandoned = true;
+	}
+
+	//    진열대에 되돌려놓을지, 그 자리에 버릴지 결정
+	//    되돌려놓기로 하면 상품 목록을 그대로 두고, ReturnItems 상태가 처리한다.
+	//    [임시] 확률은 나중에 소비심리 성향값으로 교체 가능한 자리.
+	const bool bWillReturnToShelf = (FMath::FRand() < GetReturnToShelfChance(Customer));
+	if (bWillReturnToShelf == false)
+	{
+		DropCustomerItems(Customer);
 	}
 
 	//계산을 포기했다고 방송을 전파
@@ -467,8 +476,7 @@ int32 UCSCustomerRuntimeSubsystem::DropCustomerItems(ACSCustomerCharacter* Custo
 
 }
 
-ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const FCSSelectProduct& Selected,
-	const FTransform& SpawnTransform)
+ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const FCSSelectProduct& Selected,const FTransform& SpawnTransform, const bool bEnableDropPhysics)
 {
 	UWorld* World = GetWorld();
 	if (World == nullptr || Selected.ProductClass == nullptr)
@@ -510,9 +518,111 @@ ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const F
 	// 플레이어가 바닥에 내려놓을 때와 동일하게 처리한다.
 	// 콜리전을 켜야 다시 집을 수 있고, 물리를 켜야 자연스럽게 안착한다.
 	Product->SetActorEnableCollision(true);
-	Product->EnableWorldDropPhysics();
+
+	// 진열대에 놓을 상품은 물리 기능 X
+	if (bEnableDropPhysics)
+	{
+		Product->EnableWorldDropPhysics();
+	}
 
 	return Product;
+}
+
+float UCSCustomerRuntimeSubsystem::GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const
+{
+	// TODO(소비심리 파트): 손님 소비심리에 따라 다른 값을 반환하도록 교체
+	return DefaultReturnToShelfChance;
+}
+
+AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
+{
+	TArray<AActor*> Candidates;
+
+	for (int32 i = 0; i < Shelves.Num(); i++)
+	{
+		AActor* Shelf = Shelves[i];
+		if (Shelf == nullptr)
+		{
+			continue;
+		}
+		//만약 빈진열대나 원하는 진열대를 선택하고 싶으면 여기서 조건을 달아주면 된다.
+		Candidates.Add(Shelf);
+	}
+
+	if (Candidates.Num() == 0)
+	{
+		return nullptr;
+	}
+
+	const int32 PickIndex = FMath::RandRange(0, Candidates.Num() - 1);
+	return Candidates[PickIndex];
+}
+
+int32 UCSCustomerRuntimeSubsystem::ReturnCustomerItemsToShelf(ACSCustomerCharacter* Customer, AActor* ShelfActor)
+{
+	if (Customer == nullptr || ShelfActor == nullptr)
+	{
+		return 0;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr || State->SelectProducts.Num() == 0)
+	{
+		return 0;
+	}
+
+	if (ShelfActor->Implements<UCSShelfPlaceable>() == false)
+	{
+		// 진열대가 아니면 그냥 그 자리에 떨군다.
+		DropCustomerItems(Customer);
+		return 0;
+	}
+
+	const FVector ShelfLocation = ShelfActor->GetActorLocation();
+	int32 PlacedCount = 0;
+
+	// 슬롯에 못 들어간 상품은 따로 모아뒀다가 마지막에 떨어뜨림
+	TArray<FCSSelectProduct> LeftoverProducts;
+
+	for (int32 i = 0; i < State->SelectProducts.Num(); i++)
+	{
+		// 진열대에 놓을 상품은 물리를 끈 상태로 생성
+		ACSProductPickupActor* Product =
+			RespawnSelectProduct(State->SelectProducts[i], FTransform(ShelfLocation), false);
+
+		if (Product == nullptr)
+		{
+			continue;
+		}
+
+		// 진열대가 빈 슬롯을 찾아 Attach하고 슬롯 점유까지 처리한다.
+		// 빈 슬롯이 없으면 false를 반환하므로 슬롯 초과 배치는 구조적으로 불가능
+		if (ICSShelfPlaceable::Execute_TryPlaceItem(ShelfActor, Product, ShelfLocation)) //손님 AI가 반환하는 물건들은 진열대의 원점과 가까운 빈 슬롯부터 채움
+		{
+			PlacedCount++;
+			continue;
+		}
+
+		// 슬롯이 꽉 찼다. 방금 만든 액터는 지우고 나중에 떨어뜨릴 목록에 추가
+		LeftoverProducts.Add(State->SelectProducts[i]);
+		Product->Destroy();
+	}
+
+	// 슬롯에 들어간 상품은 목록에서 지우고, 남은 것만 다시 채워 넣음
+	State->ClearSelectItems();
+	for (int32 i = 0; i < LeftoverProducts.Num(); i++)
+	{
+		State->SelectProducts.Add(LeftoverProducts[i]);
+	}
+
+	// 남은 상품이 있으면 그 자리에 떨어뜨린다. (내부에서 목록을 다시 비운다)
+	if (State->SelectProducts.Num() > 0)
+	{
+		DropCustomerItems(Customer);
+	}
+
+	return PlacedCount;
+
 }
 
 

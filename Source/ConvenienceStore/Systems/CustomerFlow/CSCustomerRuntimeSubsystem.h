@@ -131,7 +131,7 @@ public:
 	// 인내심 / 계산 포기
 	// =====================================================================
 
-	// 인내심 시간. 소비심리 로직이 붙기 전까지 모든 손님이 이 값을 사용
+	// [임시] 인내심 시간. 소비심리 로직이 붙기 전까지 모든 손님이 이 값을 사용
 	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0"))
 	float DefaultPatienceSeconds = 30.0f;
 
@@ -147,7 +147,7 @@ public:
 	int32 DropCustomerItems(ACSCustomerCharacter* Customer);
 
 	// 기록해둔 원본 정보로 상품 액터를 다시 생성, 실패 시 nullptr.
-	ACSProductPickupActor* RespawnSelectProduct(const FCSSelectProduct& Selected, const FTransform& SpawnTransform);
+	ACSProductPickupActor* RespawnSelectProduct(const FCSSelectProduct& Selected, const FTransform& SpawnTransform, const bool bEnableDropPhysics = true);
 
 	// 상품 떨어트리는 열의 최대 높이
 	UPROPERTY(EditAnywhere, Category = "Store|Customer|Drop", meta = (ClampMin = "1.0"))
@@ -168,6 +168,23 @@ public:
 	// 정렬된 배치를 하지 않게 위해 오차 변수 값
 	UPROPERTY(EditAnywhere, Category = "Store|Customer|Drop", meta = (ClampMin = "0.0"))
 	float DropJitterRadius = 3.0f;
+
+	// 이 손님이 계산을 포기했을 때 진열대에 되돌려놓으러 갈 확률 (0~1)
+	// [임시] ["백록담"]님 파트 연동 시 이 함수 내부만 교체
+	float GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const;
+
+	// [임시] 되돌려놓기 확률 기본값. 소비심리 로직이 붙기 전까지  이 값을 사용, 두 행동이 다 보여야 검증이 되므로 0.5로 설정
+	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultReturnToShelfChance = 0.5f;
+
+	// 레벨의 진열대 중 하나를 랜덤으로 반환. 진열대가 하나도 없으면 nullptr.
+	// [임시] 동선을 어떻게 될지 확정되면 교체 예정.
+	AActor* PickRandomShelf() const;
+
+	// 손님이 들고 있던 상품을 진열대 슬롯에 되돌려놓는다, 슬롯이 부족하면 남은 상품은 진열대 앞에 떨어뜨린다.
+	// 처리 후 손님의 구매 목록은 비워진다. 반환값 = 슬롯에 실제로 들어간 개수
+	int32 ReturnCustomerItemsToShelf(ACSCustomerCharacter* Customer, AActor* ShelfActor);
+
 
 	// =====================================================================
 	// 이벤트
