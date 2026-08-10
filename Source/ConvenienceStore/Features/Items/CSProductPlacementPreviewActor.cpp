@@ -69,7 +69,15 @@ bool ACSProductPlacementPreviewActor::InitializePreviewFromProductClass(
 
 void ACSProductPlacementPreviewActor::SetPlacementValid(bool bIsPlacementValid)
 {
-	ApplyPreviewMaterial(bIsPlacementValid);
+	SetPlacementPreviewState(bIsPlacementValid
+		? ECSShelfPlacementPreviewState::Valid
+		: ECSShelfPlacementPreviewState::Invalid);
+}
+
+void ACSProductPlacementPreviewActor::SetPlacementPreviewState(
+	ECSShelfPlacementPreviewState NewState)
+{
+	ApplyPreviewMaterial(NewState);
 }
 
 void ACSProductPlacementPreviewActor::Interact_Implementation(AActor* Interactor)
@@ -83,16 +91,28 @@ FText ACSProductPlacementPreviewActor::GetInteractionText_Implementation() const
 	return FText::GetEmpty();
 }
 
-void ACSProductPlacementPreviewActor::ApplyPreviewMaterial(bool bIsPlacementValid)
+void ACSProductPlacementPreviewActor::ApplyPreviewMaterial(
+	ECSShelfPlacementPreviewState NewState)
 {
 	if (!IsValid(ProductMesh))
 	{
 		return;
 	}
 
-	UMaterialInterface* PreviewMaterial = bIsPlacementValid
-		? ValidPlacementMaterial.Get()
-		: InvalidPlacementMaterial.Get();
+	UMaterialInterface* PreviewMaterial = nullptr;
+	switch (NewState)
+	{
+	case ECSShelfPlacementPreviewState::Valid:
+		PreviewMaterial = ValidPlacementMaterial.Get();
+		break;
+	case ECSShelfPlacementPreviewState::Warning:
+		PreviewMaterial = WarningPlacementMaterial.Get();
+		break;
+	case ECSShelfPlacementPreviewState::Invalid:
+	default:
+		PreviewMaterial = InvalidPlacementMaterial.Get();
+		break;
+	}
 	if (!IsValid(PreviewMaterial))
 	{
 		return;

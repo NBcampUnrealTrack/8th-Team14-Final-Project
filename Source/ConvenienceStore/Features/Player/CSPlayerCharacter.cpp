@@ -303,8 +303,10 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 	}
 
 	FTransform PreviewTransform;
-	if (!ICSShelfPlaceable::Execute_GetPlacementPreview(
-		TargetActor, PlacementItem, HitResult.ImpactPoint, PreviewTransform))
+	const ECSShelfPlacementPreviewState PreviewState =
+		ICSShelfPlaceable::Execute_GetPlacementPreviewState(
+			TargetActor, PlacementItem, HitResult.ImpactPoint, PreviewTransform);
+	if (PreviewState == ECSShelfPlacementPreviewState::Invalid)
     {
         return;
     }
@@ -313,7 +315,7 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
     {
 		// 진열대가 반환한 슬롯 Transform을 그대로 적용하여 실제 배치 위치와 일치시킵니다.
 		PlacementPreviewActor->SetActorTransform(PreviewTransform);
-		PlacementPreviewActor->SetPlacementValid(true);
+		PlacementPreviewActor->SetPlacementPreviewState(PreviewState);
 		SetPlacementPreviewVisible(true);
 	}
 }

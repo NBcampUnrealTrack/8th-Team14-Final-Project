@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
@@ -11,6 +12,7 @@ class USceneComponent;
 class UStaticMesh;
 class UCSProductVisualRegistry;
 class UPrimitiveComponent;
+class ACSStoreGameState;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
@@ -73,6 +75,16 @@ public:
 	// 플레이어가 월드 바닥에 내려놓은 상품 메시의 물리를 활성화합니다.
 	void EnableWorldDropPhysics();
 
+	// 상품이 놓인 진열 환경을 기록하여 다음 영업일에 변질 속도를 계산합니다.
+	void SetStorageShelfType(ECSProductShelfType InStorageShelfType);
+
+	// 상품이 변질되어 판매할 수 없는 상태인지 반환합니다.
+	UFUNCTION(BlueprintPure, Category = "Product|ShelfLife")
+	bool IsSpoiled() const
+	{
+		return bIsSpoiled;
+	}
+
 	// 계산대 연출처럼 실제 재고로 취급하지 않을 표시용 상품을 재고 집계에서 제외합니다.
 	void SetExcludedFromStockCount(bool bShouldExclude)
 	{
@@ -87,6 +99,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -117,6 +130,28 @@ protected:
 	// 런타임 연출용 상품은 월드에 존재해도 실제 재고 수량에 포함하지 않습니다.
 	UPROPERTY(Transient)
 	bool bIsExcludedFromStockCount = false;
+
+	// 현재 상품이 놓인 시설의 보관 환경입니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|ShelfLife")
+	ECSProductShelfType StorageShelfType = ECSProductShelfType::UtilityShelf;
+
+	// 보관 기간이 누적되어 판매할 수 없게 되었는지 나타냅니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|ShelfLife")
+	bool bIsSpoiled = false;
+
+	// 상품이 부적절한 환경에 있었던 정도를 일 단위로 누적합니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|ShelfLife")
+	int32 StorageAgeDays = 0;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACSStoreGameState> StoreGameState;
+
+	UFUNCTION()
+	void HandleBusinessDayStarted(int32 NewBusinessDay);
+
+	// 상품 행의 유통기한과 현재 보관 환경을 사용해 변질 상태를 갱신합니다.
+	void UpdateSpoilageForNewBusinessDay(int32 NewBusinessDay);
+	bool IsStorageEnvironmentProper(const FCSProductDataRow& ProductData) const;
 
 	UFUNCTION()
 	void HandlePawnOverlap(
