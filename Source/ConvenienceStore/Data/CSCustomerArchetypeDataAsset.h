@@ -5,6 +5,8 @@
 #include "Data/CSProductTypes.h"
 #include "CSCustomerArchetypeDataAsset.generated.h"
 
+class UCSCustomerVisualDataAsset;
+
 // 손님의 연령대 (기획상 연령대 하나가 종족 하나에 1:1 대응)
 // (10대 이하 = 고블린, 20대 = 초보 모험가, 30대 이상은 종족 미정)
 UENUM(BlueprintType)
@@ -149,4 +151,11 @@ public:
 	// 중간값(BudgetMedianGold)이 아니라 그 손님이 뽑은 값을 넘겨야 함
 	UFUNCTION(BlueprintPure, Category = "Archetype|Budget")
 	int32 GetHardWalletLimitGold(int32 SoftBudgetGold) const;
+
+	// 외형 -------
+
+	// 이 종족의 메시/애니메이션 정보
+	// 외형 관련 데이터는 전부 UCSCustomerVisualDataAsset 쪽에서 관리하고 여기서는 참조만 함
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Visual")
+	TObjectPtr<UCSCustomerVisualDataAsset> Visual;
 };

@@ -8,6 +8,7 @@
 
 class ACSCustomerCharacter;
 class UCSCustomerArchetypeDataAsset;
+class UCSCustomerVisualDataAsset;
 
 UCLASS()
 class CONVENIENCESTORE_API ACSCustomerSpawner : public AActor
@@ -58,4 +59,7 @@ private:
 
 	// Archetypes 목록에서 SpawnWeightBase 비율에 따라 하나를 확률적으로 고름
 	UCSCustomerArchetypeDataAsset* PickArchetypeBySpawnWeight() const;
+
+	// 종족의 Visual 데이터를 읽어 손님 캐릭터의 메시/애니메이션을 적용함
+	void ApplyCustomerVisual(ACSCustomerCharacter* Customer, const UCSCustomerVisualDataAsset* Visual) const;
 };
