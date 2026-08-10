@@ -43,6 +43,9 @@ void UCSStoreHUDWidget::NativeConstruct()
 	{
 		ClockPanel->SetVisibility(ESlateVisibility::Collapsed);
 	}
+
+	// HUD가 생성될 때 이전 플레이 세션의 조준 안내가 보이지 않도록 초기화합니다.
+	ClearInteractionContext();
 }
 
 void UCSStoreHUDWidget::NativeDestruct()
@@ -83,11 +86,109 @@ void UCSStoreHUDWidget::ToggleClockVisibility()
 		: ESlateVisibility::Collapsed);
 }
 
+void UCSStoreHUDWidget::SetInteractionPrompt(
+	const FText& Message,
+	const FLinearColor& TextColor)
+{
+	if (!IsValid(InteractionPromptText))
+	{
+		return;
+	}
+
+	if (Message.IsEmpty())
+	{
+		InteractionPromptText->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	InteractionPromptText->SetText(Message);
+	InteractionPromptText->SetColorAndOpacity(FSlateColor(TextColor));
+	InteractionPromptText->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
+{
+	// 빈 슬롯이 없을 때는 가격과 보관 경고가 판단을 방해하지 않도록 함께 숨깁니다.
+	if (IsValid(ProductPriceText))
+	{
+		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(StorageWarningText))
+	{
+		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	SetInteractionPrompt(
+		NSLOCTEXT("Interaction", "ShelfFull", "진열할 빈 슬롯이 없습니다."),
+		FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+}
+
+void UCSStoreHUDWidget::SetProductPrice(const FText& Message)
+{
+	if (!IsValid(ProductPriceText))
+	{
+		return;
+	}
+
+	if (Message.IsEmpty())
+	{
+		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	ProductPriceText->SetText(Message);
+	ProductPriceText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.85f, 0.35f, 1.0f)));
+	ProductPriceText->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UCSStoreHUDWidget::SetStorageWarning(const FText& Message)
+{
+	if (!IsValid(StorageWarningText))
+	{
+		return;
+	}
+
+	if (Message.IsEmpty())
+	{
+		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	StorageWarningText->SetText(Message);
+	StorageWarningText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.8f, 0.1f, 1.0f)));
+	StorageWarningText->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void UCSStoreHUDWidget::ClearInteractionContext()
+{
+	if (IsValid(InteractionPromptText))
+	{
+		InteractionPromptText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(ProductPriceText))
+	{
+		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(StorageWarningText))
+	{
+		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
 void UCSStoreHUDWidget::HandlePhaseChanged(ECStorePhase NewPhase)
 {
 	if (PhaseNameText != nullptr && StoreGameState != nullptr)
 	{
 		PhaseNameText->SetText(StoreGameState->CurrentPhaseDisplayName);
+	}
+
+	if (NewPhase == ECStorePhase::Settlement || NewPhase == ECStorePhase::Finished)
+	{
+		// 조준점이 숨겨지는 단계에서는 이전 배치 안내도 함께 숨깁니다.
+		ClearInteractionContext();
 	}
 
 	UpdateEndOfDayPanel();

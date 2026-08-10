@@ -100,3 +100,45 @@ void ACSStorePlayerController::ToggleClock()
 		StoreHUDWidget->ToggleClockVisibility();
 	}
 }
+
+void ACSStorePlayerController::ShowPlacementUnavailablePrompt()
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->ShowPlacementUnavailablePrompt();
+	}
+}
+
+void ACSStorePlayerController::SetInteractionPrompt(
+	const FText& Message,
+	const FLinearColor& TextColor)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetInteractionPrompt(Message, TextColor);
+	}
+}
+
+void ACSStorePlayerController::SetProductPrice(const FText& Message)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetProductPrice(Message);
+	}
+}
+
+void ACSStorePlayerController::SetStorageWarning(const FText& Message)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetStorageWarning(Message);
+	}
+}
+
+void ACSStorePlayerController::ClearInteractionContext()
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->ClearInteractionContext();
+	}
+}
