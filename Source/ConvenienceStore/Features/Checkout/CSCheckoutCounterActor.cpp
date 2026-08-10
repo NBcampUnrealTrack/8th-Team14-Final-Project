@@ -11,6 +11,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
 #include "UI/Checkout/CSCheckoutWidget.h"
 
@@ -312,11 +313,20 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 	// UI가 열린 주문과 같은 손님의 상품을 계산대 위에 표시합니다.
 	SpawnCheckoutDisplayProducts();
 
-	// 스캔 버튼을 조작할 수 있도록 플레이어 입력을 UI 중심으로 전환합니다.
-	FInputModeUIOnly InputMode;
-	InputMode.SetWidgetToFocus(ActiveCheckoutWidget->TakeWidget());
-	PlayerController->SetInputMode(InputMode);
-	PlayerController->SetShowMouseCursor(true);
+	// 계산 UI가 열린 사실을 컨트롤러에 등록하여 단계 변경이 UI 입력을 게임 입력으로 덮어쓰지 않게 합니다.
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(PlayerController))
+	{
+		StorePlayerController->SetGameplayUIInputLock(ActiveCheckoutWidget, true);
+	}
+	else
+	{
+		// 편의점 전용 컨트롤러가 아닌 테스트 환경에서도 계산 UI를 조작할 수 있게 기존 입력 전환을 유지합니다.
+		FInputModeUIOnly InputMode;
+		InputMode.SetWidgetToFocus(ActiveCheckoutWidget->TakeWidget());
+		PlayerController->SetInputMode(InputMode);
+		PlayerController->SetShowMouseCursor(true);
+	}
 
 	return true;
 }
@@ -416,10 +426,17 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 	}
 
 	APlayerController* PlayerController = ActiveCheckoutWidget->GetOwningPlayer();
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(PlayerController))
+	{
+		// 위젯을 닫기 전에 입력 잠금을 해제하여 플레이어 조작 상태를 정상으로 돌립니다.
+		StorePlayerController->SetGameplayUIInputLock(ActiveCheckoutWidget, false);
+	}
 	ActiveCheckoutWidget->RemoveFromParent();
 	ActiveCheckoutWidget = nullptr;
 
-	if (IsValid(PlayerController))
+	if (IsValid(PlayerController) &&
+		!PlayerController->IsA<ACSStorePlayerController>())
 	{
 		// 계산 UI가 닫힌 뒤에는 플레이어가 다시 캐릭터를 조작할 수 있게 복구합니다.
 		FInputModeGameOnly InputMode;
