@@ -23,14 +23,15 @@
 //
 // TODO(소비심리 파트 연동 시):
 //   1. "어디 갈지"는 현재 PickRandomUnvisitedShelf(랜덤)로 임시 구현되어 있음 → 교체 예정
-//   2. "뭘 살지"도 현재 태스크에서 확률로 처리 중 → TakeProduct()에 결정된 상품을 넘기는 방식으로 교체
+//   [완료] 2. "뭘 살지"도 현재 태스크에서 확률로 처리 중 → TakeProduct()에 결정된 상품을 넘기는 방식으로 교체
 //   3. 진열 높이(상/중/하) 등 상세 진열 정보 제공은 요청 확정 후 추가 예정
-//   4. 판단 결과("어느 진열대로 가라", "이 상품 사라")를 손님 AI가 어떻게 전달받을지 미정 — 컴포넌트 함수 호출 / 인터페이스 중 협의 필요
+//   [완료] 4. 판단 결과("어느 진열대로 가라", "이 상품 사라")를 손님 AI가 어떻게 전달받을지 미정 — 컴포넌트 함수 호출 / 인터페이스 중 협의 필요
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Data/CSPurchaseDecisionTypes.h"
 #include "CSCustomerRuntimeSubsystem.generated.h"
 
 class ACSCustomerCharacter;
@@ -91,9 +92,11 @@ public:
 	// 소비심리 파트가 고른 상품을 이 함수로 넘기면 됨.
 	FName TakeProduct(AActor* ShelfActor, AActor* ProductActor, ACSCustomerCharacter* Customer);
 
-	// [임시/테스트용] 진열된 상품 중 아무거나 하나 집는다
-	// 뭘 살지를 담당하는 곳이라 ["백록담"]님 파트가 완성되면 교체
-	FName TakeRandomProduct(AActor* ShelfActor, ACSCustomerCharacter* Customer);
+	// 진열대 위 상품들을 판단용 후보 목록으로 변환
+	// GetProductsOnShelf()가 주는 액터 목록을 판단 컴포넌트가 바로 쓸 수 있는
+	// FCSPurchaseCandidate(도감 참조 + 액터) 형태로 번역하는 역할
+	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
+	TArray<FCSPurchaseCandidate> BuildPurchaseCandidates(const AActor* ShelfActor) const;
 
 	// =====================================================================
 	// 계산대 / 대기열

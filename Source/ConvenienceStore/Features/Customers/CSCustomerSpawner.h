@@ -7,6 +7,7 @@
 #include "CSCustomerSpawner.generated.h"
 
 class ACSCustomerCharacter;
+class UCSCustomerArchetypeDataAsset;
 
 UCLASS()
 class CONVENIENCESTORE_API ACSCustomerSpawner : public AActor
@@ -42,6 +43,11 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Spawn")
     TObjectPtr<AActor> ExitPoint;
 
+	// 스폰 시 손님에게 확률적으로 배정할 종족 데이터 목록
+	// 각 DA의 SpawnWeightBase 비율에 따라 뽑힘
+	UPROPERTY(EditAnywhere, Category = "Spawn")
+	TArray<TObjectPtr<UCSCustomerArchetypeDataAsset>> Archetypes;
+
 private:
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열
 	UPROPERTY()
@@ -49,4 +55,7 @@ private:
 
 	//손님들의 생성하는 반복 타이머를 가리키는 핸들
 	FTimerHandle SpawnTimerHandle;
+
+	// Archetypes 목록에서 SpawnWeightBase 비율에 따라 하나를 확률적으로 고름
+	UCSCustomerArchetypeDataAsset* PickArchetypeBySpawnWeight() const;
 };
