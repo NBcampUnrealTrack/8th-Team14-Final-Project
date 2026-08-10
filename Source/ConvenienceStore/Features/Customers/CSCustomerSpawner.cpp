@@ -7,6 +7,8 @@
 #include "TimerManager.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Data/CSCustomerVisualDataAsset.h"
 
 ACSCustomerSpawner::ACSCustomerSpawner()
 {
@@ -48,6 +50,39 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 		if (Roll <= Cumulative) return Candidate;
 	}
 	return Archetypes.Last(); // 부동소수점 오차로 못 걸렸을 때 대비한 폴백
+}
+
+void ACSCustomerSpawner::ApplyCustomerVisual(ACSCustomerCharacter* Customer, const UCSCustomerVisualDataAsset* Visual) const
+{
+	if (Customer == nullptr || Visual == nullptr)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* MeshComp = Customer->GetMesh();
+	if (MeshComp == nullptr)
+	{
+		return;
+	}
+
+	// 메시 교체
+	// 종족마다 스켈레톤이 달라서 이 메시와 짝지어진 애니메이션이 아래에서 함께 적용되어야 정상적으로 재생됨
+	if (Visual->CharacterMesh != nullptr)
+	{
+		MeshComp->SetSkeletalMesh(Visual->CharacterMesh);
+	}
+
+	// 애니메이션 블루프린트가 채워져 있으면 그걸 우선 사용
+	// (나중에 ABP가 생기면 DA에 클래스만 채워 넣으면 코드 수정 없이 이 경로가 자동으로 활성화)
+	if (Visual->AnimBlueprintClass != nullptr)
+	{
+		MeshComp->SetAnimInstanceClass(Visual->AnimBlueprintClass);
+	}
+	else if (Visual->FallbackWalkAnimation != nullptr)
+	{
+		// ABP가 없을 때 쓰는 간이 재생 방식
+		MeshComp->PlayAnimation(Visual->FallbackWalkAnimation, /*bLooping=*/ true);
+	}
 }
 
 void ACSCustomerSpawner::TrySpawnCustomer()
@@ -132,6 +167,12 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	if (Decision != nullptr)
 	{
 		Decision->Archetype = PickArchetypeBySpawnWeight();
+
+		// 종족의 외형 데이터를 찾아 메시/애니메이션을 적용
+		if (Decision->Archetype != nullptr)
+		{
+			ApplyCustomerVisual(Customer, Decision->Archetype->Visual);
+		}
 	}
 
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열에 추가
