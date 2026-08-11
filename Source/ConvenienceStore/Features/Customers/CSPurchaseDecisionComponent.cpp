@@ -320,16 +320,13 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 	// 담은 개수가 0 이하인 비정상 입력 방어 (최소 1로 취급)
 	const int32 SafeItemCount = FMath::Max(ItemsInBasket, 1);
 
-	// 1) 개수감쇠
-	// TargetBasketSize(이 종족의 목표 평균 구매 개수)로부터 감쇠 속도를 역산
-
+	// 다다익선을 막는 상한은 Archetype의 EvaluationBudget(체류 중 볼 수 있는
+	// 상품 개수 한도)이 이미 담당하므로 여기서 중복으로 자를 필요가 없음
 	const float TargetBasketSize = Archetype ? Archetype->TargetBasketSize : 2.7f;
-	const float Lambda = 1.0f / FMath::Max(TargetBasketSize - 1.0f, 0.1f);
-	const float CountDecay = FMath::Exp(-Lambda * (SafeItemCount - 1));
+	const float SafeTarget = FMath::Max(TargetBasketSize, 1.01f);
+	const float BaseProbability = 1.0f - (1.0f / SafeTarget);
 
-	// 2) 예산 여유도
-	// 남은 예산 비율이 낮을수록 그만 담자는 쪽으로 기울어짐
-	// 아직 예산이 초기화 안 됐거나 손님 상태를 못 찾으면 예산 요인 없이(만점) 진행
+	// 예산 여유도
 	float BudgetFactor = 1.0f;
 	if (UCSCustomerStateComponent* State = GetCustomerState())
 	{
@@ -339,12 +336,10 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 		const float RemainingSoftBudget = static_cast<float>(State->GetRemainingSoftBudget());
 		const float RemainingBudgetRatio = RemainingSoftBudget / SoftBudget;
 
-		// 잔여 예산 비율이 0~0.3 구간에서 0→1로 부드럽게 이어지는 커브
-		// 30% 이상 남았으면 예산 걱정 없이 만점, 0%에 가까울수록 부드럽게 0으로 떨어짐
 		BudgetFactor = FMath::SmoothStep(0.0f, 0.3f, RemainingBudgetRatio);
 	}
 
-	// 3) 최종 확률 = 기본확률 × 개수감쇠 × 예산여유도
-	// 0.95로 상한을 둔 이유: 아무리 의욕이 넘쳐도 100% 확정은 아니게 하기 위함
-	return FMath::Clamp(BaseContinueProbability * CountDecay * BudgetFactor, 0.0f, 0.95f);
+	// 최종 확률 = 기본확률 × 예산여유도
+	// 0.95 상한: 아무리 의욕이 넘쳐도 100% 확정은 아니게 함
+	return FMath::Clamp(BaseProbability * BudgetFactor, 0.0f, 0.95f);
 }
