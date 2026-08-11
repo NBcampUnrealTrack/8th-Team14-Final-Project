@@ -4,6 +4,7 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
+#include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -800,19 +801,27 @@ void ACSPlayerCharacter::ShowProductPrice(
 		return;
 	}
 
+	const UCSStorePricingSubsystem* PricingSubsystem =
+		GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
+			: nullptr;
+	const int32 CurrentSalePrice = IsValid(PricingSubsystem)
+		? PricingSubsystem->GetSalePrice(ProductRow)
+		: ProductData->RecommendedSalePrice;
+
 	if (RemainingQuantity != INDEX_NONE)
 	{
 		// 배송 상자는 상품 가격과 함께 상자에 남은 수량을 표시합니다.
 		StorePlayerController->SetProductPrice(FText::Format(
 			NSLOCTEXT("Interaction", "CrateProductPrice", "판매가: {0} 골드 / 남은 수량: {1}개"),
-			FText::AsNumber(ProductData->RecommendedSalePrice),
+			FText::AsNumber(CurrentSalePrice),
 			FText::AsNumber(FMath::Max(0, RemainingQuantity))));
 		return;
 	}
 
 	StorePlayerController->SetProductPrice(FText::Format(
 		NSLOCTEXT("Interaction", "ProductPrice", "판매가: {0} 골드"),
-		FText::AsNumber(ProductData->RecommendedSalePrice)));
+		FText::AsNumber(CurrentSalePrice)));
 }
 
 void ACSPlayerCharacter::ShowProductShelfLife(

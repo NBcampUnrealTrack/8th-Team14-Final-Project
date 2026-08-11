@@ -29,6 +29,9 @@ struct FCSSelectProduct
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FCSProductRuntimeState ProductRuntimeState;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	int32 SalePriceAtPickup = 0;
 };
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -89,7 +92,8 @@ public:
 	void AddSelectProduct(
 		const FDataTableRowHandle& InProductRow,
 		TSubclassOf<AActor> InProductClass,
-		const FCSProductRuntimeState& InProductRuntimeState);
+		const FCSProductRuntimeState& InProductRuntimeState,
+		int32 InSalePriceAtPickup);
 	bool HasSelectedItems() const;
 
 	// 고른 상품 목록을 비운다. 상품을 월드에 반환하거나 계산이 끝난 뒤 호출

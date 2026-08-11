@@ -6,10 +6,13 @@
 void UCSCustomerStateComponent::AddSelectProduct(
 	const FDataTableRowHandle& InProductRow,
 	TSubclassOf<AActor> InProductClass,
-	const FCSProductRuntimeState& InProductRuntimeState)
+	const FCSProductRuntimeState& InProductRuntimeState,
+	int32 InSalePriceAtPickup)
 {
 	// 행 정보가 없으면 나중에 상품을 되돌릴 수도, 가격을 조회할 수도 없으므로 기록하지 않는다.
-	if (InProductRow.DataTable == nullptr || InProductRow.RowName.IsNone())
+	if (InProductRow.DataTable == nullptr ||
+		InProductRow.RowName.IsNone() ||
+		InSalePriceAtPickup < 0)
 	{
 		return;
 	}
@@ -18,6 +21,7 @@ void UCSCustomerStateComponent::AddSelectProduct(
 	Selected.ProductRow = InProductRow;
 	Selected.ProductClass = InProductClass;
 	Selected.ProductRuntimeState = InProductRuntimeState;
+	Selected.SalePriceAtPickup = InSalePriceAtPickup;
 	SelectProducts.Add(Selected);
 }
 
