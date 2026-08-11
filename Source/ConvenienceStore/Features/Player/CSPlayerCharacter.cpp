@@ -4,6 +4,7 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
 
@@ -319,6 +320,17 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 			ProductRow,
 			IsValid(DeliveryCrate) ? DeliveryCrate->GetRemainingQuantity() : INDEX_NONE);
 	}
+
+	if (const ACSProductPickupActor* ProductActor =
+		Cast<ACSProductPickupActor>(TargetActor))
+	{
+		ShowProductShelfLife(ProductActor->GetProductRuntimeState());
+	}
+	else if (const ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(TargetActor))
+	{
+		ShowProductShelfLife(DeliveryCrate->GetProductRuntimeState());
+	}
 }
 
 void ACSPlayerCharacter::UpdatePlacementPreview()
@@ -406,6 +418,17 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 			{
 				ShowStorageWarning(ProductRow);
 			}
+		}
+
+		if (const ACSProductPickupActor* ProductActor =
+			Cast<ACSProductPickupActor>(HeldActor))
+		{
+			ShowProductShelfLife(ProductActor->GetProductRuntimeState());
+		}
+		else if (const ACSDeliveryCrateActor* DeliveryCrate =
+			Cast<ACSDeliveryCrateActor>(HeldActor))
+		{
+			ShowProductShelfLife(DeliveryCrate->GetProductRuntimeState());
 		}
 		SetPlacementPreviewVisible(true);
 	}
@@ -724,6 +747,46 @@ void ACSPlayerCharacter::ShowProductPrice(
 	StorePlayerController->SetProductPrice(FText::Format(
 		NSLOCTEXT("Interaction", "ProductPrice", "판매가: {0} 골드"),
 		FText::AsNumber(ProductData->RecommendedSalePrice)));
+}
+
+void ACSPlayerCharacter::ShowProductShelfLife(
+	const FCSProductRuntimeState& RuntimeState) const
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	if (!IsValid(StorePlayerController) ||
+		!IsValid(StoreGameState))
+	{
+		return;
+	}
+
+	if (!RuntimeState.bExpirationInitialized ||
+		RuntimeState.ExpirationBusinessDay <= 0)
+	{
+		return;
+	}
+
+	const int32 RemainingDays =
+		RuntimeState.ExpirationBusinessDay - StoreGameState->CurrentBusinessDay;
+	if (RemainingDays <= 0)
+	{
+		StorePlayerController->SetProductShelfLife(
+			NSLOCTEXT("Interaction", "ProductShelfLifeExpired", "유통기한: 만료"),
+			FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+		return;
+	}
+
+	const FLinearColor TextColor = RemainingDays == 1
+		? FLinearColor(1.0f, 0.8f, 0.1f, 1.0f)
+		: FLinearColor::White;
+	StorePlayerController->SetProductShelfLife(
+		FText::Format(
+			NSLOCTEXT("Interaction", "ProductShelfLifeRemaining", "유통기한: {0}일 남음"),
+			FText::AsNumber(RemainingDays)),
+		TextColor);
 }
 
 void ACSPlayerCharacter::ShowStorageWarning(const FDataTableRowHandle& ProductRow) const

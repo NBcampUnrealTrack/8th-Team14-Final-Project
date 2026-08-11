@@ -51,6 +51,49 @@ enum class ECSReputationGrade : uint8
 };
 
 USTRUCT(BlueprintType)
+struct CONVENIENCESTORE_API FCSProductRuntimeState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime")
+	bool bExpirationInitialized = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime")
+	int32 ExpirationBusinessDay = 0;
+
+	void InitializeExpiration(
+		int32 CurrentBusinessDay,
+		bool bPerishable,
+		int32 ShelfLifeDays)
+	{
+		if (bExpirationInitialized)
+		{
+			return;
+		}
+
+		bExpirationInitialized = true;
+		ExpirationBusinessDay = 0;
+
+		if (!bPerishable || ShelfLifeDays <= 0)
+		{
+			return;
+		}
+
+		const int64 CalculatedExpirationDay =
+			static_cast<int64>(FMath::Max(1, CurrentBusinessDay)) + ShelfLifeDays;
+		ExpirationBusinessDay = static_cast<int32>(
+			FMath::Min<int64>(CalculatedExpirationDay, MAX_int32));
+	}
+
+	bool IsExpired(int32 CurrentBusinessDay) const
+	{
+		return bExpirationInitialized &&
+			ExpirationBusinessDay > 0 &&
+			CurrentBusinessDay >= ExpirationBusinessDay;
+	}
+};
+
+USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSProductDataRow : public FTableRowBase
 {
 	GENERATED_BODY()
@@ -79,16 +122,6 @@ struct CONVENIENCESTORE_API FCSProductDataRow : public FTableRowBase
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife")
 	bool bPerishable = false;
-
-	// 권장 보관 환경이 아닌 곳에 놓였을 때 하루에 누적할 변질 일수입니다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife",
-		meta = (ClampMin = "1", UIMin = "1"))
-	int32 ImproperStorageAgePerDay = 3;
-
-	// 유통기한이 없는 냉장·냉동 상품이 부적절한 환경에서 버틸 수 있는 일수입니다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife",
-		meta = (ClampMin = "1", UIMin = "1"))
-	int32 MishandledStorageShelfLifeDays = 1;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|Shelf")
 	ECSProductShelfType ShelfType = ECSProductShelfType::ChilledShelf;
