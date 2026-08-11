@@ -43,18 +43,21 @@ float UCSPurchaseDecisionComponent::ComputePriceScore(float ActualPrice, float R
 	// 준거가격 대비 얼마나 벗어났는지를 비율로 계산 (부호 있음: + 비쌈 / - 쌈)
 	const float DeviationRatio = (ActualPrice - ReferencePrice) / ReferencePrice;
 
-	// 대칭 판단이므로 부호는 버리고 얼마나 벗어났는지 크기만 봄
-	const float AbsDeviation = FMath::Abs(DeviationRatio);
-
-	// 데드존 이내: 손님이 차이를 못 느낌 -> 만점
-	if (AbsDeviation <= DeadZoneRatio)
+	// 데드존 이내면 편차 자체를 0으로 취급 (손님이 차이를 못 느낌 -> 완전 중립)
+	// 데드존을 벗어나면 그만큼만 시그모이드에 반영
+	float D = DeviationRatio;
+	if (FMath::Abs(D) <= DeadZoneRatio)
 	{
-		return 1.0f;
+		D = 0.f;
+	}
+	else
+	{
+		D -= FMath::Sign(D) * DeadZoneRatio;
 	}
 
-	// 데드존을 벗어난 만큼만 시그모이드에 넣음
-	const float ExceedAmount = AbsDeviation - DeadZoneRatio;
-	return 2.0f / (1.0f + FMath::Exp(Steepness * ExceedAmount));
+	// 0.5 중립 시그모이드: 준거가격과 같으면 0.5(중립), 싸질수록 1.0에 가까워지고
+	// 비싸질수록 0.0에 가까워짐
+	return 1.0f / (1.0f + FMath::Exp(Steepness * D));
 }
 
 float UCSPurchaseDecisionComponent::ComputeCategoryScore(const FCSProductDataRow& ProductRow) const
