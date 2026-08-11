@@ -8,6 +8,7 @@
 #include "CSShelfActor.generated.h"
 
 class UArrowComponent;
+class UPrimitiveComponent;
 class UStaticMeshComponent;
 
 USTRUCT(BlueprintType)
@@ -55,6 +56,9 @@ public:
 		AActor* ItemActor,
 		ECSShelfSlotLevel& OutSlotLevel) const override;
 
+	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
+	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
+
 protected:
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
 	// Arrow Component 이름에서 Slot_00 형식의 슬롯 번호를 읽어옵니다.
@@ -65,6 +69,8 @@ protected:
 	void SyncFacilityData();
 	// 냉장·냉동 상품이 현재 시설의 보관 환경과 맞지 않는지 확인합니다.
 	bool ShouldWarnStorage(AActor* ItemActor) const;
+	// 외곽선 표시를 끌 때 기존 Custom Depth 설정을 복원합니다.
+	void RestorePlacementHighlight();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
@@ -81,4 +87,8 @@ protected:
 	// 진열대 블루프린트에서 상품 위치마다 하나씩 추가합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf")
 	TArray<FCSShelfSlot> Slots;
+
+	// 외곽선 표시 전의 렌더링 설정을 보관하여 다른 기능의 Custom Depth 설정을 보존합니다.
+	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
+	TMap<TObjectPtr<UPrimitiveComponent>, int32> OriginalCustomStencilValues;
 };

@@ -120,6 +120,10 @@ private:
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
 	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);
 	void DestroyPlacementPreview();
+	// 상품을 들거나 내려놓는 시점에만 배치 가능한 진열대 외곽선을 갱신합니다.
+	void RefreshShelfPlacementHighlights();
+	// 들고 있던 상품이 없어졌을 때 모든 진열대 외곽선을 해제합니다.
+	void ClearShelfPlacementHighlights();
 	void SetPlacementPreviewVisible(bool bIsVisible);
 	bool TryPlaceProductFromCrate(
 		ACSDeliveryCrateActor* DeliveryCrate,
