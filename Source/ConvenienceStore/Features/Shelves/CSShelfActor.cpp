@@ -1,6 +1,7 @@
 #include "Features/Shelves/CSShelfActor.h"
 
 #include "Components/ArrowComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -22,6 +23,112 @@ void ACSShelfActor::OnConstruction(const FTransform& Transform)
 	SyncFacilityData();
 	// 블루프린트에서 배치한 슬롯 마커의 위치를 슬롯 데이터에 반영합니다.
 	SyncSlotsFromMarkers();
+}
+
+void ACSShelfActor::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 에디터가 아닌 실제 게임 시작 시에만 상품을 생성하여 중복 배치되지 않도록 합니다.
+	SpawnInitialProducts();
+}
+
+void ACSShelfActor::SpawnInitialProducts()
+{
+	if (InitialProducts.IsEmpty())
+	{
+		return;
+	}
+
+	if (InitialProductActorClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("%s: 시작 진열 상품을 생성할 액터 클래스가 지정되지 않았습니다."),
+			*GetName());
+		return;
+	}
+
+	for (const FCSInitialShelfProduct& InitialProduct : InitialProducts)
+	{
+		if (InitialProduct.ProductRow.DataTable == nullptr ||
+			InitialProduct.ProductRow.RowName.IsNone())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("%s: 시작 진열 상품의 DataTable 행이 비어 있습니다."),
+				*GetName());
+			continue;
+		}
+
+		const int32 RequestedQuantity = FMath::Max(1, InitialProduct.Quantity);
+		int32 PlacedQuantity = 0;
+		const int32 FirstSlotIndex = FMath::Max(0, InitialProduct.StartSlotIndex);
+		for (int32 SlotIndex = FirstSlotIndex;
+			SlotIndex < Slots.Num() && PlacedQuantity < RequestedQuantity;
+			++SlotIndex)
+		{
+			// 이미 사용 중인 슬롯은 건너뛰고 다음 빈 슬롯을 계속 찾습니다.
+			if (IsValid(Slots[SlotIndex].OccupyingItem))
+			{
+				continue;
+			}
+
+			if (SpawnInitialProductInSlot(InitialProduct.ProductRow, SlotIndex))
+			{
+				++PlacedQuantity;
+			}
+		}
+
+		if (PlacedQuantity < RequestedQuantity)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("%s: %s 상품의 시작 진열 수량이 부족한 슬롯으로 인해 일부만 배치되었습니다. 요청=%d, 배치=%d"),
+				*GetName(),
+				*InitialProduct.ProductRow.RowName.ToString(),
+				RequestedQuantity,
+				PlacedQuantity);
+		}
+	}
+}
+
+bool ACSShelfActor::SpawnInitialProductInSlot(
+	const FDataTableRowHandle& ProductRow,
+	int32 SlotIndex)
+{
+	if (GetWorld() == nullptr ||
+		InitialProductActorClass == nullptr ||
+		!Slots.IsValidIndex(SlotIndex) ||
+		IsValid(Slots[SlotIndex].OccupyingItem))
+	{
+		return false;
+	}
+
+	const FTransform SlotWorldTransform =
+		Slots[SlotIndex].LocalTransform * GetActorTransform();
+	ACSProductPickupActor* ProductActor =
+		GetWorld()->SpawnActorDeferred<ACSProductPickupActor>(
+			InitialProductActorClass,
+			SlotWorldTransform,
+			this,
+			nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(ProductActor) || !ProductActor->InitializeProduct(ProductRow))
+	{
+		if (IsValid(ProductActor))
+		{
+			ProductActor->Destroy();
+		}
+
+		return false;
+	}
+
+	ProductActor->FinishSpawning(SlotWorldTransform);
+	if (!TryPlaceItem_Implementation(ProductActor, SlotWorldTransform.GetLocation()))
+	{
+		ProductActor->Destroy();
+		return false;
+	}
+
+	return true;
 }
 
 void ACSShelfActor::SyncFacilityData()
@@ -136,6 +243,67 @@ bool ACSShelfActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 		{
 			return !IsValid(Slot.OccupyingItem);
 		});
+}
+
+void ACSShelfActor::SetPlacementHighlight(
+	ECSShelfPlacementPreviewState NewState)
+{
+	if (NewState == ECSShelfPlacementPreviewState::Invalid)
+	{
+		RestorePlacementHighlight();
+		return;
+	}
+
+	// Post Process 외곽선 머티리얼에서 1은 초록, 2는 노랑으로 설정하여 사용합니다.
+	const int32 StencilValue = NewState == ECSShelfPlacementPreviewState::Warning
+		? 2
+		: 1;
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!IsValid(PrimitiveComponent))
+		{
+			continue;
+		}
+
+		// 최초 표시 시의 값만 저장하여 외곽선 해제 후 원래 설정으로 되돌립니다.
+		if (!OriginalCustomDepthStates.Contains(PrimitiveComponent))
+		{
+			OriginalCustomDepthStates.Add(
+				PrimitiveComponent,
+				PrimitiveComponent->bRenderCustomDepth);
+			OriginalCustomStencilValues.Add(
+				PrimitiveComponent,
+				PrimitiveComponent->CustomDepthStencilValue);
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(true);
+		PrimitiveComponent->SetCustomDepthStencilValue(StencilValue);
+	}
+}
+
+void ACSShelfActor::RestorePlacementHighlight()
+{
+	for (const TPair<TObjectPtr<UPrimitiveComponent>, bool>& Pair : OriginalCustomDepthStates)
+	{
+		UPrimitiveComponent* PrimitiveComponent = Pair.Key.Get();
+		if (!IsValid(PrimitiveComponent))
+		{
+			continue;
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(Pair.Value);
+		if (const int32* OriginalStencilValue =
+			OriginalCustomStencilValues.Find(PrimitiveComponent))
+		{
+			PrimitiveComponent->SetCustomDepthStencilValue(*OriginalStencilValue);
+		}
+	}
+
+	OriginalCustomDepthStates.Empty();
+	OriginalCustomStencilValues.Empty();
 }
 
 int32 ACSShelfActor::FindClosestEmptySlot(FVector PlacementHint) const
