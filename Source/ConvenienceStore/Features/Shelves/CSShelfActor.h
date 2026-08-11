@@ -10,6 +10,28 @@
 class UArrowComponent;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
+class ACSProductPickupActor;
+
+USTRUCT(BlueprintType)
+struct FCSInitialShelfProduct
+{
+	GENERATED_BODY()
+
+	// 상품 자동 진열을 시작할 슬롯 번호입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products",
+		meta = (ClampMin = "0", UIMin = "0"))
+	int32 StartSlotIndex = 0;
+
+	// 게임 시작 시 생성할 상품의 DataTable 행입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products",
+		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
+	FDataTableRowHandle ProductRow;
+
+	// 1이면 기본형, 2 이상이면 시작 슬롯부터 빈 슬롯을 순서대로 채웁니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products",
+		meta = (ClampMin = "1", UIMin = "1"))
+	int32 Quantity = 1;
+};
 
 USTRUCT(BlueprintType)
 struct FCSShelfSlot
@@ -38,6 +60,7 @@ class CONVENIENCESTORE_API ACSShelfActor : public AActor, public ICSShelfPlaceab
 public:
 	ACSShelfActor();
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void BeginPlay() override;
 
 	virtual bool CanPlaceItem_Implementation(AActor* ItemActor) const override;
 	virtual bool GetPlacementPreview_Implementation(
@@ -71,6 +94,12 @@ protected:
 	bool ShouldWarnStorage(AActor* ItemActor) const;
 	// 외곽선 표시를 끌 때 기존 Custom Depth 설정을 복원합니다.
 	void RestorePlacementHighlight();
+	// 레벨에서 지정한 시작 진열 상품을 게임 시작 시 한 번만 생성합니다.
+	void SpawnInitialProducts();
+	// 지정 슬롯에 상품 하나를 생성하고 기존 진열 배치 규칙으로 배치합니다.
+	bool SpawnInitialProductInSlot(
+		const FDataTableRowHandle& ProductRow,
+		int32 SlotIndex);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
@@ -87,6 +116,14 @@ protected:
 	// 진열대 블루프린트에서 상품 위치마다 하나씩 추가합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf")
 	TArray<FCSShelfSlot> Slots;
+
+	// 시작 진열 상품에 사용할 공통 상품 액터 클래스입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products")
+	TSubclassOf<ACSProductPickupActor> InitialProductActorClass;
+
+	// 레벨에서 설정한 상품을 플레이 시작 시 자동으로 진열합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products")
+	TArray<FCSInitialShelfProduct> InitialProducts;
 
 	// 외곽선 표시 전의 렌더링 설정을 보관하여 다른 기능의 Custom Depth 설정을 보존합니다.
 	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
