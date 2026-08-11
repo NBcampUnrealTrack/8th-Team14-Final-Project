@@ -77,13 +77,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_Budget = 1.0f;
 
-	// 장바구니 종료 조건 관련 파라미터
-	// 담은 개수가 0(또는 1)일 때의 기본 하나 더 담을 확률
-	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Basket")
-	float BaseContinueProbability = 0.63f;
-
 
 	// 후보 하나에 점수를 매기는 함수
+	// 반환값 규약: 정상 후보는 0.0~1.0, 구매 불가(하드 차단/지갑 초과/데이터 없음)는 음수(-1.0)를 반환
 	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate) const;
 
 	// 점수 계산 함수 (이 상품 가격이 적당한가)
