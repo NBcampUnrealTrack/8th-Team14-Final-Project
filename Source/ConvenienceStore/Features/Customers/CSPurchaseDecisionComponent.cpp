@@ -3,6 +3,7 @@
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "GameFramework/Actor.h"
+#include "Systems/Pricing/CSStorePricingSubsystem.h"
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
@@ -100,7 +101,14 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	const float Steepness = 3.0f * Elasticity;
 
 	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
-	const float ActualPrice = static_cast<float>(ProductRow->RecommendedSalePrice); // TODO(3-1): 실제 판매가로 교체
+	const UCSStorePricingSubsystem* PricingSubsystem =
+		GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
+			: nullptr;
+	const float ActualPrice = static_cast<float>(
+		IsValid(PricingSubsystem)
+			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
+			: ProductRow->RecommendedSalePrice);
 	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
 
 	const float CategoryScore = ComputeCategoryScore(*ProductRow);

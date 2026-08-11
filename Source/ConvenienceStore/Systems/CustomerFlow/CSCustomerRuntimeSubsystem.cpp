@@ -5,12 +5,14 @@
 #include "Features/Customers/Interface/CSCustomerCounterInterface.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Data/CSProductTypes.h"
 #include "EngineUtils.h"
 #include "Components/ArrowComponent.h"
 // 아래 3개는 팀원 파일에 따라 수정해야함
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
+#include "Systems/Pricing/CSStorePricingSubsystem.h"
 
 void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
@@ -208,6 +210,22 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		return NAME_None;
 	}
 
+	const FDataTableRowHandle ProductRow = Product->GetProductRow();
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("UCSCustomerRuntimeSubsystem::TakeProduct"));
+	if (ProductData == nullptr)
+	{
+		return NAME_None;
+	}
+
+	const UCSStorePricingSubsystem* PricingSubsystem =
+		GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
+			: nullptr;
+	const int32 SalePriceAtPickup = IsValid(PricingSubsystem)
+		? PricingSubsystem->GetSalePrice(ProductRow)
+		: ProductData->RecommendedSalePrice;
+
 	// 진열대의 슬롯 점유를 해제합니다. (플레이어가 진열된 물건을 다시 집을 때와 동일한 규약 유지)
 	// 이 처리를 누락하면 물리적 상품 액터는 사라져도, 논리적으로 슬롯이 차 있다고 인식되어 재진열이 불가해집니다.
 	// 이 액터가 진열대 규약을 구현했으면, 그 진열대한테 '이 상품 치웠으니 슬롯 비워' 라고 알리는 기능 가져옴
@@ -219,9 +237,10 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 	// ProductRow(테이블+행)와 클래스를 함께 남겨야 나중에 원본 그대로 되돌릴 수 있다.
 	// 액터를 파괴하기 전에 기록
 	CustomerState->AddSelectProduct(
-		Product->GetProductRow(),
+		ProductRow,
 		Product->GetClass(),
-		Product->GetProductRuntimeState());
+		Product->GetProductRuntimeState(),
+		SalePriceAtPickup);
 
 	// 손님이 가져간 상품 액터를 월드에서 물리적으로 완전히 제거합니다.
 	// (상품 판매 및 인벤토리 처리는 델리게이트를 통해 외부에서 처리하도록 분리)

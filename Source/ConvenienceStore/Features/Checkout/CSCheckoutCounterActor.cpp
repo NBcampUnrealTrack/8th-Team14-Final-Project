@@ -204,31 +204,19 @@ bool ACSCheckoutCounterActor::BuildFrontCustomerOrder(
 	}
 
 
-	TArray<FName> OrderedProductIds;
-	TMap<FName, int32> ProductQuantities;
-	for (const FName ProductId : CustomerState->GetSelectProductIds()) //[무송] (const FName ProductId : CustomerState->SelectItemIds)에서 변경
+	for (const FCSSelectProduct& SelectedProduct : CustomerState->SelectProducts)
 	{
+		const FName ProductId = SelectedProduct.ProductRow.RowName;
 		// 비어 있는 상품 ID는 데이터 오류이므로 결제를 진행하지 않습니다.
-		if (ProductId.IsNone())
+		if (ProductId.IsNone() || SelectedProduct.SalePriceAtPickup < 0)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[CheckoutCounter] 손님 구매 목록에 비어 있는 상품 ID가 포함되어 있습니다."));
+				TEXT("[CheckoutCounter] 손님 구매 목록에 유효하지 않은 상품 ID 또는 판매가가 포함되어 있습니다."));
 			OutLineItems.Reset();
+			OutTotalSalePrice = 0;
 			return false;
 		}
 
-		int32& Quantity = ProductQuantities.FindOrAdd(ProductId);
-		if (Quantity == 0)
-		{
-			// 손님이 상품을 집은 순서를 유지하여 계산대 UI의 표시 순서를 안정적으로 관리합니다.
-			OrderedProductIds.Add(ProductId);
-		}
-
-		++Quantity;
-	}
-
-	for (const FName ProductId : OrderedProductIds)
-	{
 		// 상품 ID는 상품 마스터 데이터 테이블의 RowName과 일치해야 합니다.
 		const FCSProductDataRow* ProductData = ProductMasterDataTable->FindRow<FCSProductDataRow>(
 			ProductId,
@@ -243,18 +231,31 @@ bool ACSCheckoutCounterActor::BuildFrontCustomerOrder(
 			return false;
 		}
 
-		const int32 Quantity = ProductQuantities.FindChecked(ProductId);
-		FCSCheckoutLineItem& LineItem = OutLineItems.AddDefaulted_GetRef();
-		LineItem.ProductId = ProductId;
-		LineItem.ItemName = ProductData->DisplayName.IsEmpty()
+		FCSCheckoutLineItem* LineItem = OutLineItems.FindByPredicate(
+			[ProductId, &SelectedProduct](const FCSCheckoutLineItem& ExistingLineItem)
+			{
+				return ExistingLineItem.ProductId == ProductId &&
+					ExistingLineItem.UnitSalePrice == SelectedProduct.SalePriceAtPickup;
+			});
+		if (LineItem != nullptr)
+		{
+			++LineItem->Quantity;
+			LineItem->LineTotalSalePrice += SelectedProduct.SalePriceAtPickup;
+			OutTotalSalePrice += SelectedProduct.SalePriceAtPickup;
+			continue;
+		}
+
+		LineItem = &OutLineItems.AddDefaulted_GetRef();
+		LineItem->ProductId = ProductId;
+		LineItem->ItemName = ProductData->DisplayName.IsEmpty()
 			? FText::FromName(ProductId)
 			: ProductData->DisplayName;
-		LineItem.Quantity = Quantity;
-		LineItem.UnitSalePrice = ProductData->RecommendedSalePrice;
-		LineItem.UnitPurchasePrice = ProductData->PurchasePrice;
-		LineItem.LineTotalSalePrice = LineItem.UnitSalePrice * Quantity;
+		LineItem->Quantity = 1;
+		LineItem->UnitSalePrice = SelectedProduct.SalePriceAtPickup;
+		LineItem->UnitPurchasePrice = ProductData->PurchasePrice;
+		LineItem->LineTotalSalePrice = SelectedProduct.SalePriceAtPickup;
 
-		OutTotalSalePrice += LineItem.LineTotalSalePrice;
+		OutTotalSalePrice += SelectedProduct.SalePriceAtPickup;
 	}
 
 	return !OutLineItems.IsEmpty();
