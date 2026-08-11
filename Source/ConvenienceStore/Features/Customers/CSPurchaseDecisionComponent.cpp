@@ -88,7 +88,7 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	if (!ProductRow)
 	{
 		// 상품 데이터를 못 찾으면 이 후보는 아예 고려하지 않음
-		return 0.f;
+		return -1.0f;
 	}
 
 	// 데드존/가파름 값을 Archetype에서 가져옴
@@ -103,10 +103,10 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	const float CategoryScore = ComputeCategoryScore(*ProductRow);
 
 	// 하드 차단 신호(-1.0)를 받으면 가격 점수가 아무리 좋아도
-	// 이 상품은 애초에 구매 후보가 될 수 없으므로 즉시 0점으로 반환
+	// 이 상품은 애초에 구매 후보가 될 수 없으므로 구매 불가 신호 전파
 	if (CategoryScore < 0.f)
 	{
-		return 0.f;
+		return -1.0f;
 	}
 
 	// 예산 점수 계산
@@ -118,10 +118,10 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
 		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
 
-		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 즉시 0점 처리
+		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 구매 불가 신호 전파
 		if (BudgetScore < 0.f)
 		{
-			return 0.f;
+			return -1.0f;
 		}
 	}
 
@@ -140,26 +140,36 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 // 여기서 잘려나간 후보들은 이후 softmax 선택 대상에서 아예 제외됨
 TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const
 {
-	// 후보 하나하나에 점수를 매김
+	// 후보 하나하나에 점수를 매기되, 구매 불가 신호(-1.0)를 받은 후보는
+	// 애초에 배열에 넣지 않음 → softmax 대상에서 아예 제외되어 선택 확률이 정확히 0%가 됨
+	TArray<FCSPurchaseCandidate> Viable;
+	Viable.Reserve(Candidates.Num());
+
 	for (FCSPurchaseCandidate& Candidate : Candidates)
 	{
-		Candidate.Score = ScoreCandidate(Candidate);
+		const float Score = ScoreCandidate(Candidate);
+		if (Score < 0.f)
+		{
+			continue;
+		}
+		Candidate.Score = Score;
+		Viable.Add(Candidate);
 	}
 
 	// 점수가 높은 순으로 정렬
-	Candidates.Sort([](const FCSPurchaseCandidate& A, const FCSPurchaseCandidate& B)
+	Viable.Sort([](const FCSPurchaseCandidate& A, const FCSPurchaseCandidate& B)
 	{
 		return A.Score > B.Score;
 	});
 
 	// 상위 EffectiveCount개만 남기고 자름
 	const int32 EffectiveCount = GetEffectiveTopCandidateCount();
-	if (Candidates.Num() > EffectiveCount)
+	if (Viable.Num() > EffectiveCount)
 	{
-		Candidates.SetNum(EffectiveCount);
+		Viable.SetNum(EffectiveCount);
 	}
 
-	return Candidates;
+	return Viable;
 }
 
 // 상위 후보들 중 점수가 높을수록 뽑힐 확률이 높은
@@ -217,6 +227,13 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 
 	// 점수 매기고 상위 후보만 추림
 	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates);
+
+	// 진열대에 구매 불가 상품(차단 카테고리/예산 초과)만 있으면 Viable이 비어있을 수 있음
+	// 이 방어가 없으면 다음 줄에서 TopCandidates[0] 접근 시 배열 범위 초과로 크래시함
+	if (TopCandidates.IsEmpty())
+	{
+		return false;
+	}
 
 	// 1등 점수가 최소 구매 임계치보다 낮으면 손님이 살 게 없다고 판단하고 지나감
 	if (TopCandidates[0].Score < GetEffectiveMinPurchaseUtility())
