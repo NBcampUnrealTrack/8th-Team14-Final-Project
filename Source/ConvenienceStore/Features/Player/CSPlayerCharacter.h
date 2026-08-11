@@ -13,6 +13,7 @@ class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
 struct FInputActionValue;
+struct FCSProductRuntimeState;
 
 UCLASS()
 class CONVENIENCESTORE_API ACSPlayerCharacter : public ACharacter
@@ -114,6 +115,7 @@ private:
 	void ShowProductPrice(
 		const FDataTableRowHandle& ProductRow,
 		int32 RemainingQuantity = INDEX_NONE) const;
+	void ShowProductShelfLife(const FCSProductRuntimeState& RuntimeState) const;
 	void ShowStorageWarning(const FDataTableRowHandle& ProductRow) const;
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
 	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);

@@ -148,7 +148,7 @@ TArray<AActor*> UCSCustomerRuntimeSubsystem::GetProductsOnShelf(const AActor* Sh
 	for (int32 i = 0; i < Attached.Num(); i++)
 	{
 		ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Attached[i]);
-		if (Product != nullptr)
+		if (Product != nullptr && Product->IsSellable())
 		{
 			Result.Add(Product);
 		}
@@ -190,6 +190,11 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		return NAME_None;
 	}
 
+	if (!Product->IsSellable())
+	{
+		return NAME_None;
+	}
+
 	// ProductId는 DT_ProductMaster에서 ProductRow가 가리키는 RowName입니다.
 	const FName ProductId = Product->GetProductId();
 	if (ProductId.IsNone())
@@ -213,7 +218,10 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 
 	// ProductRow(테이블+행)와 클래스를 함께 남겨야 나중에 원본 그대로 되돌릴 수 있다.
 	// 액터를 파괴하기 전에 기록
-	CustomerState->AddSelectProduct(Product->GetProductRow(), Product->GetClass());
+	CustomerState->AddSelectProduct(
+		Product->GetProductRow(),
+		Product->GetClass(),
+		Product->GetProductRuntimeState());
 
 	// 손님이 가져간 상품 액터를 월드에서 물리적으로 완전히 제거합니다.
 	// (상품 판매 및 인벤토리 처리는 델리게이트를 통해 외부에서 처리하도록 분리)
@@ -511,6 +519,7 @@ ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const F
 		return nullptr;
 	}
 
+	Product->ApplyProductRuntimeState(Selected.ProductRuntimeState);
 	Product->FinishSpawning(SpawnTransform);
 	if (!IsValid(Product))
 	{

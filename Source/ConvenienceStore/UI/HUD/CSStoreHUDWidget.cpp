@@ -108,10 +108,15 @@ void UCSStoreHUDWidget::SetInteractionPrompt(
 
 void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
 {
-	// 빈 슬롯이 없을 때는 가격과 보관 경고가 판단을 방해하지 않도록 함께 숨깁니다.
+	// 빈 슬롯이 없을 때는 상품 상세 정보가 판단을 방해하지 않도록 함께 숨깁니다.
 	if (IsValid(ProductPriceText))
 	{
 		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(ProductShelfLifeText))
+	{
+		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (IsValid(StorageWarningText))
@@ -142,6 +147,26 @@ void UCSStoreHUDWidget::SetProductPrice(const FText& Message)
 	ProductPriceText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
+void UCSStoreHUDWidget::SetProductShelfLife(
+	const FText& Message,
+	const FLinearColor& TextColor)
+{
+	if (!IsValid(ProductShelfLifeText))
+	{
+		return;
+	}
+
+	if (Message.IsEmpty())
+	{
+		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	ProductShelfLifeText->SetText(Message);
+	ProductShelfLifeText->SetColorAndOpacity(FSlateColor(TextColor));
+	ProductShelfLifeText->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
 void UCSStoreHUDWidget::SetStorageWarning(const FText& Message)
 {
 	if (!IsValid(StorageWarningText))
@@ -170,6 +195,11 @@ void UCSStoreHUDWidget::ClearInteractionContext()
 	if (IsValid(ProductPriceText))
 	{
 		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(ProductShelfLifeText))
+	{
+		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (IsValid(StorageWarningText))

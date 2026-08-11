@@ -32,6 +32,9 @@ public:
 	// 조준한 상품의 판매가를 HUD에 전달합니다.
 	void SetProductPrice(const FText& Message);
 
+	// 조준한 개별 상품의 남은 유통기한과 표시 색상을 HUD에 전달합니다.
+	void SetProductShelfLife(const FText& Message, const FLinearColor& TextColor);
+
 	// 진열 보관 환경이 맞지 않을 때 HUD에 경고를 전달합니다.
 	void SetStorageWarning(const FText& Message);
 

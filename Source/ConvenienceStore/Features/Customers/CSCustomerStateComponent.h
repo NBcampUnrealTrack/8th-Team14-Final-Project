@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
@@ -25,6 +26,9 @@ struct FCSSelectProduct
 	// 같은 BP로 생성해야 DataAsset 기반 외형이 동일하게 적용된다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	TSubclassOf<AActor> ProductClass;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	FCSProductRuntimeState ProductRuntimeState;
 };
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -82,7 +86,10 @@ public:
 	int32 GetRemainingHardWallet() const;
 
 	// 고른 상품을 기록한다. 상품 액터를 파괴하기 전에 호출할 것.
-	void AddSelectProduct(const FDataTableRowHandle& InProductRow, TSubclassOf<AActor> InProductClass);
+	void AddSelectProduct(
+		const FDataTableRowHandle& InProductRow,
+		TSubclassOf<AActor> InProductClass,
+		const FCSProductRuntimeState& InProductRuntimeState);
 	bool HasSelectedItems() const;
 
 	// 고른 상품 목록을 비운다. 상품을 월드에 반환하거나 계산이 끝난 뒤 호출

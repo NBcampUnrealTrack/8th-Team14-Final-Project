@@ -8,6 +8,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 
 ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 {
@@ -70,8 +71,23 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 		return false;
 	}
 
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	if (!IsValid(StoreGameState))
+	{
+		return false;
+	}
+
+	FCSProductRuntimeState NewRuntimeState;
+	NewRuntimeState.InitializeExpiration(
+		StoreGameState->CurrentBusinessDay,
+		ProductData->bPerishable,
+		ProductData->ShelfLifeDays);
+
 	ProductRow = InProductRow;
 	RemainingQuantity = InQuantity;
+	ProductRuntimeState = NewRuntimeState;
 	return true;
 }
 
@@ -188,6 +204,7 @@ ACSProductPickupActor* ACSDeliveryCrateActor::SpawnProductActor() const
 		return nullptr;
 	}
 
+	SpawnedProduct->ApplyProductRuntimeState(ProductRuntimeState);
 	SpawnedProduct->FinishSpawning(SpawnTransform);
 	if (!IsValid(SpawnedProduct))
 	{

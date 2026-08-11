@@ -3,8 +3,10 @@
 
 #include "Features/Customers/CSCustomerStateComponent.h"
 
-void UCSCustomerStateComponent::AddSelectProduct(const FDataTableRowHandle& InProductRow,
-	TSubclassOf<AActor> InProductClass)
+void UCSCustomerStateComponent::AddSelectProduct(
+	const FDataTableRowHandle& InProductRow,
+	TSubclassOf<AActor> InProductClass,
+	const FCSProductRuntimeState& InProductRuntimeState)
 {
 	// 행 정보가 없으면 나중에 상품을 되돌릴 수도, 가격을 조회할 수도 없으므로 기록하지 않는다.
 	if (InProductRow.DataTable == nullptr || InProductRow.RowName.IsNone())
@@ -15,6 +17,7 @@ void UCSCustomerStateComponent::AddSelectProduct(const FDataTableRowHandle& InPr
 	FCSSelectProduct Selected;
 	Selected.ProductRow = InProductRow;
 	Selected.ProductClass = InProductClass;
+	Selected.ProductRuntimeState = InProductRuntimeState;
 	SelectProducts.Add(Selected);
 }
 

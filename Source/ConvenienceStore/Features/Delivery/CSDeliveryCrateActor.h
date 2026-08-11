@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "GameFramework/Actor.h"
@@ -39,6 +40,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Delivery")
 	FDataTableRowHandle GetProductRow() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery|Product")
+	FCSProductRuntimeState GetProductRuntimeState() const
+	{
+		return ProductRuntimeState;
+	}
 
 	UFUNCTION(BlueprintPure, Category = "Delivery|Product")
 	TSubclassOf<ACSProductPickupActor> GetProductActorClass() const;
@@ -86,6 +93,9 @@ protected:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery")
 	int32 RemainingQuantity = 0;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Product")
+	FCSProductRuntimeState ProductRuntimeState;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Holding")
 	FVector HeldRelativeLocation = FVector::ZeroVector;

@@ -358,8 +358,32 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 	}
 
 	ACSStoreGameState* CurrentStoreGameState = World->GetGameState<ACSStoreGameState>();
-	if (!IsValid(CurrentStoreGameState) ||
-		!CurrentStoreGameState->RecordCheckoutTransaction(ActiveCheckoutWidget->OrderItems))
+	if (!IsValid(CurrentStoreGameState))
+	{
+		return;
+	}
+
+	const ACSCustomerCharacter* FrontCustomer = CustomerSubsystem->GetFrontCustomer();
+	const UCSCustomerStateComponent* CustomerState =
+		IsValid(FrontCustomer) ? FrontCustomer->GetCustomerState() : nullptr;
+	if (!IsValid(CustomerState))
+	{
+		return;
+	}
+
+	for (const FCSSelectProduct& SelectedProduct : CustomerState->SelectProducts)
+	{
+		if (SelectedProduct.ProductRuntimeState.IsExpired(
+			CurrentStoreGameState->CurrentBusinessDay))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CheckoutCounter] An expired product cannot be checked out: %s"),
+				*SelectedProduct.ProductRow.RowName.ToString());
+			return;
+		}
+	}
+
+	if (!CurrentStoreGameState->RecordCheckoutTransaction(ActiveCheckoutWidget->OrderItems))
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[CheckoutCounter] 거래 기록에 실패하여 손님 결제를 완료하지 않습니다."));

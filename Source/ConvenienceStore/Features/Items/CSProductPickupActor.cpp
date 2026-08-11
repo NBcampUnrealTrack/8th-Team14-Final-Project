@@ -42,24 +42,7 @@ void ACSProductPickupActor::BeginPlay()
 		ProductMesh->SetGenerateOverlapEvents(true);
 	}
 
-	StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
-	if (IsValid(StoreGameState))
-	{
-		// 다음 영업일이 시작될 때만 변질 상태를 계산해 매 프레임 비용을 만들지 않습니다.
-		StoreGameState->OnBusinessDayStarted.AddDynamic(
-			this, &ACSProductPickupActor::HandleBusinessDayStarted);
-	}
-}
-
-void ACSProductPickupActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	if (IsValid(StoreGameState))
-	{
-		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
-			this, &ACSProductPickupActor::HandleBusinessDayStarted);
-	}
-
-	Super::EndPlay(EndPlayReason);
+	EnsureProductRuntimeStateInitialized();
 }
 
 void ACSProductPickupActor::Interact_Implementation(AActor* Interactor)
@@ -112,7 +95,31 @@ bool ACSProductPickupActor::InitializeProduct(FDataTableRowHandle InProductRow)
 
 	ProductRow = InProductRow;
 	ApplyProductVisual();
+	if (HasActorBegunPlay())
+	{
+		EnsureProductRuntimeStateInitialized();
+	}
 	return true;
+}
+
+void ACSProductPickupActor::ApplyProductRuntimeState(
+	const FCSProductRuntimeState& InProductRuntimeState)
+{
+	ProductRuntimeState = InProductRuntimeState;
+}
+
+bool ACSProductPickupActor::IsExpired() const
+{
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	return IsValid(CurrentStoreGameState) &&
+		ProductRuntimeState.IsExpired(CurrentStoreGameState->CurrentBusinessDay);
+}
+
+bool ACSProductPickupActor::IsSellable() const
+{
+	return !IsExpired();
 }
 
 void ACSProductPickupActor::PrepareForPickupPhysics()
@@ -162,72 +169,29 @@ void ACSProductPickupActor::SetStorageShelfType(ECSProductShelfType InStorageShe
 	StorageShelfType = InStorageShelfType;
 }
 
-void ACSProductPickupActor::HandleBusinessDayStarted(int32 NewBusinessDay)
+void ACSProductPickupActor::EnsureProductRuntimeStateInitialized()
 {
-	UpdateSpoilageForNewBusinessDay(NewBusinessDay);
-}
-
-void ACSProductPickupActor::UpdateSpoilageForNewBusinessDay(int32 NewBusinessDay)
-{
-	if (bIsSpoiled || ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+	if (ProductRuntimeState.bExpirationInitialized ||
+		ProductRow.DataTable == nullptr ||
+		ProductRow.RowName.IsNone())
 	{
 		return;
 	}
 
 	const FCSProductDataRow* ProductData =
-		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::UpdateSpoilageForNewBusinessDay"));
-	if (ProductData == nullptr)
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::EnsureProductRuntimeStateInitialized"));
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	if (ProductData == nullptr || !IsValid(CurrentStoreGameState))
 	{
 		return;
 	}
 
-	const bool bRequiresSpecialStorage =
-		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
-		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
-	if (!ProductData->bPerishable && !bRequiresSpecialStorage)
-	{
-		return;
-	}
-
-	const bool bProperStorage = IsStorageEnvironmentProper(*ProductData);
-	if (ProductData->bPerishable)
-	{
-		// 일반 유통기한 상품은 정상 보관 시 하루, 부적절한 보관 시 설정한 만큼 빠르게 경과합니다.
-		StorageAgeDays += bProperStorage
-			? 1
-			: FMath::Max(1, ProductData->ImproperStorageAgePerDay);
-		if (StorageAgeDays >= FMath::Max(1, ProductData->ShelfLifeDays))
-		{
-			bIsSpoiled = true;
-		}
-		return;
-	}
-
-	if (!bProperStorage)
-	{
-		// 유통기한이 없는 냉장·냉동 상품도 일반 매대에 방치하면 별도 기준으로 변질됩니다.
-		++StorageAgeDays;
-		if (StorageAgeDays >= FMath::Max(1, ProductData->MishandledStorageShelfLifeDays))
-		{
-			bIsSpoiled = true;
-		}
-	}
-}
-
-bool ACSProductPickupActor::IsStorageEnvironmentProper(
-	const FCSProductDataRow& ProductData) const
-{
-	if (ProductData.ShelfType == ECSProductShelfType::ChilledShelf)
-	{
-		return StorageShelfType == ECSProductShelfType::ChilledShelf;
-	}
-
-	if (ProductData.ShelfType == ECSProductShelfType::FreezerShelf)
-	{
-		return StorageShelfType == ECSProductShelfType::FreezerShelf;
-	}
-
-	return true;
+	ProductRuntimeState.InitializeExpiration(
+		CurrentStoreGameState->CurrentBusinessDay,
+		ProductData->bPerishable,
+		ProductData->ShelfLifeDays);
 }
 
 void ACSProductPickupActor::HandlePawnOverlap(
