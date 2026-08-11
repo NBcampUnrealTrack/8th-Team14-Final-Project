@@ -29,6 +29,9 @@ public:
 	// 조준한 상품의 권장 판매가를 표시합니다.
 	void SetProductPrice(const FText& Message);
 
+	// 조준한 개별 상품의 남은 유통기한을 지정한 색상으로 표시합니다.
+	void SetProductShelfLife(const FText& Message, const FLinearColor& TextColor);
+
 	// 현재 진열 환경이 상품 보관 조건과 맞지 않을 때 노란 경고를 표시합니다.
 	void SetStorageWarning(const FText& Message);
 
@@ -86,6 +89,10 @@ protected:
 	// 이후 상품 조준 시 판매가를 표시할 영역입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ProductPriceText;
+
+	// 개별 상품 RuntimeState의 남은 유통기한을 표시할 영역입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ProductShelfLifeText;
 
 	// 냉장·냉동 보관 경고를 표시할 영역입니다.
 	UPROPERTY(meta = (BindWidgetOptional))

@@ -182,6 +182,16 @@ void ACSStorePlayerController::SetProductPrice(const FText& Message)
 	}
 }
 
+void ACSStorePlayerController::SetProductShelfLife(
+	const FText& Message,
+	const FLinearColor& TextColor)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetProductShelfLife(Message, TextColor);
+	}
+}
+
 void ACSStorePlayerController::SetStorageWarning(const FText& Message)
 {
 	if (IsValid(StoreHUDWidget))
