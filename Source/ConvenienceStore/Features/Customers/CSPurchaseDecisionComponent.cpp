@@ -318,6 +318,10 @@ float UCSPurchaseDecisionComponent::ComputeBudgetScore(float ActualPrice, int32 
 float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBasket) const
 {
 	// 담은 개수가 0 이하인 비정상 입력 방어 (최소 1로 취급)
+	ensureMsgf(ItemsInBasket >= 1,
+		TEXT("ContinueShoppingProbability는 1 이상의 값으로 호출해야 합니다. (받은 값: %d) ")
+		TEXT("상품을 n번째로 담은 직후 n을 넣어 호출하세요."),
+		ItemsInBasket);
 	const int32 SafeItemCount = FMath::Max(ItemsInBasket, 1);
 
 	// 다다익선을 막는 상한은 Archetype의 EvaluationBudget(체류 중 볼 수 있는
