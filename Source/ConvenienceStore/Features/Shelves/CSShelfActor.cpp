@@ -1,6 +1,7 @@
 #include "Features/Shelves/CSShelfActor.h"
 
 #include "Components/ArrowComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -136,6 +137,67 @@ bool ACSShelfActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 		{
 			return !IsValid(Slot.OccupyingItem);
 		});
+}
+
+void ACSShelfActor::SetPlacementHighlight(
+	ECSShelfPlacementPreviewState NewState)
+{
+	if (NewState == ECSShelfPlacementPreviewState::Invalid)
+	{
+		RestorePlacementHighlight();
+		return;
+	}
+
+	// Post Process 외곽선 머티리얼에서 1은 초록, 2는 노랑으로 설정하여 사용합니다.
+	const int32 StencilValue = NewState == ECSShelfPlacementPreviewState::Warning
+		? 2
+		: 1;
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!IsValid(PrimitiveComponent))
+		{
+			continue;
+		}
+
+		// 최초 표시 시의 값만 저장하여 외곽선 해제 후 원래 설정으로 되돌립니다.
+		if (!OriginalCustomDepthStates.Contains(PrimitiveComponent))
+		{
+			OriginalCustomDepthStates.Add(
+				PrimitiveComponent,
+				PrimitiveComponent->bRenderCustomDepth);
+			OriginalCustomStencilValues.Add(
+				PrimitiveComponent,
+				PrimitiveComponent->CustomDepthStencilValue);
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(true);
+		PrimitiveComponent->SetCustomDepthStencilValue(StencilValue);
+	}
+}
+
+void ACSShelfActor::RestorePlacementHighlight()
+{
+	for (const TPair<TObjectPtr<UPrimitiveComponent>, bool>& Pair : OriginalCustomDepthStates)
+	{
+		UPrimitiveComponent* PrimitiveComponent = Pair.Key.Get();
+		if (!IsValid(PrimitiveComponent))
+		{
+			continue;
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(Pair.Value);
+		if (const int32* OriginalStencilValue =
+			OriginalCustomStencilValues.Find(PrimitiveComponent))
+		{
+			PrimitiveComponent->SetCustomDepthStencilValue(*OriginalStencilValue);
+		}
+	}
+
+	OriginalCustomDepthStates.Empty();
+	OriginalCustomStencilValues.Empty();
 }
 
 int32 ACSShelfActor::FindClosestEmptySlot(FVector PlacementHint) const

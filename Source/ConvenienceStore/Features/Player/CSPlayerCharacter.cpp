@@ -5,6 +5,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
 
@@ -17,6 +18,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
+#include "EngineUtils.h"
 
 ACSPlayerCharacter::ACSPlayerCharacter()
 {
@@ -265,6 +267,9 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		DestroyPlacementPreview();
 	}
+
+	// 매 프레임 검사하지 않고 상품을 든 직후 한 번만 진열대 안내 외곽선을 갱신합니다.
+	RefreshShelfPlacementHighlights();
     return true;
 }
 
@@ -674,12 +679,19 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 		HeldActor = nullptr;
 		DestroyPlacementPreview();
 	}
+	else
+	{
+		// 상자에서 한 개를 진열하면 빈 슬롯 수가 변하므로 이 시점에만 다시 판정합니다.
+		RefreshShelfPlacementHighlights();
+	}
 
 	return true;
 }
 
 void ACSPlayerCharacter::DestroyPlacementPreview()
 {
+	ClearShelfPlacementHighlights();
+
 	if (ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(GetController()))
 	{
@@ -693,6 +705,60 @@ void ACSPlayerCharacter::DestroyPlacementPreview()
 	}
 
 	PlacementPreviewActor = nullptr;
+}
+
+void ACSPlayerCharacter::RefreshShelfPlacementHighlights()
+{
+	ClearShelfPlacementHighlights();
+
+	if (!IsValid(HeldActor) || !IsValid(PlacementPreviewActor) || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	// 배송 상자는 상자 자체가 아닌, 내부 상품 형태의 프리뷰로 보관 적합성을 판정합니다.
+	AActor* PlacementItem = Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr
+		? static_cast<AActor*>(PlacementPreviewActor)
+		: HeldActor.Get();
+	if (!IsValid(PlacementItem))
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSShelfActor> ShelfIterator(GetWorld()); ShelfIterator; ++ShelfIterator)
+	{
+		ACSShelfActor* ShelfActor = *ShelfIterator;
+		if (!IsValid(ShelfActor) ||
+			!ICSShelfPlaceable::Execute_CanPlaceItem(ShelfActor, PlacementItem))
+		{
+			continue;
+		}
+
+		FTransform UnusedSlotTransform;
+		const ECSShelfPlacementPreviewState PreviewState =
+			ICSShelfPlaceable::Execute_GetPlacementPreviewState(
+				ShelfActor,
+				PlacementItem,
+				ShelfActor->GetActorLocation(),
+				UnusedSlotTransform);
+		ShelfActor->SetPlacementHighlight(PreviewState);
+	}
+}
+
+void ACSPlayerCharacter::ClearShelfPlacementHighlights()
+{
+	if (GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSShelfActor> ShelfIterator(GetWorld()); ShelfIterator; ++ShelfIterator)
+	{
+		if (ACSShelfActor* ShelfActor = *ShelfIterator; IsValid(ShelfActor))
+		{
+			ShelfActor->SetPlacementHighlight(ECSShelfPlacementPreviewState::Invalid);
+		}
+	}
 }
 
 void ACSPlayerCharacter::SetPlacementPreviewVisible(bool bIsVisible)
@@ -757,8 +823,7 @@ void ACSPlayerCharacter::ShowProductShelfLife(
 	const UWorld* World = GetWorld();
 	const ACSStoreGameState* StoreGameState =
 		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
-	if (!IsValid(StorePlayerController) ||
-		!IsValid(StoreGameState))
+	if (!IsValid(StorePlayerController) || !IsValid(StoreGameState))
 	{
 		return;
 	}
