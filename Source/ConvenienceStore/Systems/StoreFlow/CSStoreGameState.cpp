@@ -1,5 +1,6 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 
 void ACSStoreGameState::BeginPlay()
@@ -189,6 +190,23 @@ bool ACSStoreGameState::InitializeStoreProgression(
 	}
 
 	return true;
+}
+
+bool ACSStoreGameState::InitializeFreshnessSettings(
+	UCSFreshnessSettingsDataAsset* InFreshnessSettingsDataAsset)
+{
+	if (!IsValid(InFreshnessSettingsDataAsset))
+	{
+		return false;
+	}
+
+	FreshnessSettingsDataAsset = InFreshnessSettingsDataAsset;
+	return true;
+}
+
+UCSFreshnessSettingsDataAsset* ACSStoreGameState::GetFreshnessSettings() const
+{
+	return FreshnessSettingsDataAsset;
 }
 
 int32 ACSStoreGameState::GetStoreExperience() const

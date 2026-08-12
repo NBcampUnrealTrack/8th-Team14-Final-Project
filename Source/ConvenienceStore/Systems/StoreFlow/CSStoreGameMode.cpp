@@ -1,5 +1,6 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -18,17 +19,31 @@ void ACSStoreGameMode::BeginPlay()
 	if (!IsValid(StoreGameState))
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[StoreGameMode] ACSStoreGameState를 찾을 수 없어 상점 성장 상태를 초기화하지 못했습니다."));
+			TEXT("[StoreGameMode] ACSStoreGameState를 찾을 수 없어 상점 설정을 초기화하지 못했습니다."));
 	}
-	else if (!IsValid(StoreProgressionDataAsset))
+	else
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[StoreGameMode] StoreProgressionDataAsset이 지정되지 않아 기본 성장 상태만 유지합니다."));
-	}
-	else if (!StoreGameState->InitializeStoreProgression(StoreProgressionDataAsset))
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[StoreGameMode] StoreProgressionDataAsset으로 성장 상태를 초기화하지 못했습니다."));
+		if (!IsValid(StoreProgressionDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] StoreProgressionDataAsset이 지정되지 않아 기본 성장 상태만 유지합니다."));
+		}
+		else if (!StoreGameState->InitializeStoreProgression(StoreProgressionDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] StoreProgressionDataAsset으로 성장 상태를 초기화하지 못했습니다."));
+		}
+
+		if (!IsValid(FreshnessSettingsDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] FreshnessSettingsDataAsset이 지정되지 않아 신선도 감소를 적용하지 않습니다."));
+		}
+		else if (!StoreGameState->InitializeFreshnessSettings(FreshnessSettingsDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] FreshnessSettingsDataAsset으로 신선도 설정을 초기화하지 못했습니다."));
+		}
 	}
 
 	if (bStartFlowOnBeginPlay)
