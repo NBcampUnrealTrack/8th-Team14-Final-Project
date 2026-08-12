@@ -310,6 +310,13 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 	ActiveCheckoutWidget->OnItemScanned.AddDynamic(
 		this, &ACSCheckoutCounterActor::HandleCheckoutItemScanned);
 	ActiveCheckoutWidget->AddToViewport();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	ActiveCheckoutCustomer = IsValid(CustomerSubsystem)
+		? CustomerSubsystem->GetFrontCustomer()
+		: nullptr;
+	bCheckoutPaymentCompleted = false;
+	SetCheckoutCustomerBasketVisible(false);
 
 	// UI가 열린 주문과 같은 손님의 상품을 계산대 위에 표시합니다.
 	SpawnCheckoutDisplayProducts();
@@ -364,7 +371,7 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 		return;
 	}
 
-	const ACSCustomerCharacter* FrontCustomer = CustomerSubsystem->GetFrontCustomer();
+	ACSCustomerCharacter* FrontCustomer = CustomerSubsystem->GetFrontCustomer();
 	const UCSCustomerStateComponent* CustomerState =
 		IsValid(FrontCustomer) ? FrontCustomer->GetCustomerState() : nullptr;
 	if (!IsValid(CustomerState))
@@ -392,6 +399,11 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 	}
 
 	// 거래를 먼저 기록한 뒤 손님 Subsystem에 결제 완료를 알려 대기열과 손님 퇴장 흐름을 진행합니다.
+	if (IsValid(FrontCustomer))
+	{
+		FrontCustomer->ShowShoppingBag();
+	}
+	bCheckoutPaymentCompleted = true;
 	CustomerSubsystem->CompleteFrontCheckout();
 	CloseCheckoutWidget();
 }
@@ -444,6 +456,13 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 {
 	// UI가 어떤 이유로 닫히더라도 표시용 상품이 월드에 남지 않게 정리합니다.
 	ClearCheckoutDisplayProducts();
+	if (!bCheckoutPaymentCompleted)
+	{
+		// 취소 또는 강제 종료라면 계산 시작 전에 숨긴 장바구니를 다시 보여 줍니다.
+		SetCheckoutCustomerBasketVisible(true);
+	}
+	ActiveCheckoutCustomer = nullptr;
+	bCheckoutPaymentCompleted = false;
 
 	if (!IsValid(ActiveCheckoutWidget))
 	{
@@ -467,6 +486,14 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 		FInputModeGameOnly InputMode;
 		PlayerController->SetInputMode(InputMode);
 		PlayerController->SetShowMouseCursor(false);
+	}
+}
+
+void ACSCheckoutCounterActor::SetCheckoutCustomerBasketVisible(bool bShouldBeVisible)
+{
+	if (IsValid(ActiveCheckoutCustomer))
+	{
+		ActiveCheckoutCustomer->SetBasketDisplayVisible(bShouldBeVisible);
 	}
 }
 
