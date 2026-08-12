@@ -7,6 +7,7 @@
 
 class ACSStoreGameState;
 class UDataTable;
+class UCSStoreProgressionDataAsset;
 
 // 준비, 영업, 마감 업무, 다음 날 상태로 이어지는 하루 흐름을 제어합니다.
 UCLASS()
@@ -41,6 +42,10 @@ protected:
 	// 배송, 고객 입장, 피크타임 같은 시간 이벤트를 읽는 데이터 테이블입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	TObjectPtr<UDataTable> StoreScheduleEventDataTable;
+
+	// 상점 레벨과 평판의 초기값 및 임계값을 제공하는 성장 설정입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Progression")
+	TObjectPtr<UCSStoreProgressionDataAsset> StoreProgressionDataAsset;
 
 	// 하루를 시작할 게임 내 시각입니다. 기본값은 08:00 AM입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time", meta = (ClampMin = "0", ClampMax = "1440"))
