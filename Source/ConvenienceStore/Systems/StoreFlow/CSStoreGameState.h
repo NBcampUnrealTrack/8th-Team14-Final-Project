@@ -3,8 +3,11 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
 #include "Data/CSCheckoutTypes.h"
+#include "Data/CSProductTypes.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "CSStoreGameState.generated.h"
+
+class UCSStoreProgressionDataAsset;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStorePhaseChanged,
@@ -49,6 +52,26 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStoreBusinessDayStarted,
 	int32,
 	NewBusinessDay);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnStoreExperienceChanged,
+	int32,
+	NewExperience);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnStoreLevelChanged,
+	int32,
+	NewLevel);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnReputationChanged,
+	int32,
+	NewReputationScore);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnReputationGradeChanged,
+	ECSReputationGrade,
+	NewReputationGrade);
 
 // 게임플레이 액터와 UI가 읽는 편의점의 현재 상태를 보관합니다.
 UCLASS()
@@ -154,6 +177,18 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
 	FOnStoreBusinessDayStarted OnBusinessDayStarted;
 
+	UPROPERTY(BlueprintAssignable, Category = "Store|Progression")
+	FCSOnStoreExperienceChanged OnStoreExperienceChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Store|Progression")
+	FCSOnStoreLevelChanged OnStoreLevelChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Store|Progression")
+	FCSOnReputationChanged OnReputationChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Store|Progression")
+	FCSOnReputationGradeChanged OnReputationGradeChanged;
+
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
@@ -172,6 +207,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Funds")
 	bool AddFunds(int32 Amount);
 
+	bool InitializeStoreProgression(UCSStoreProgressionDataAsset* InProgressionDataAsset);
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetStoreExperience() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetStoreLevel() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetReputationScore() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	ECSReputationGrade GetReputationGrade() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Progression")
+	bool AddStoreExperience(int32 Amount);
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Progression")
+	bool AddReputation(int32 Delta);
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	bool IsStoreLevelRequirementMet(int32 RequiredLevel) const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	bool IsReputationRequirementMet(ECSReputationGrade RequiredGrade) const;
+
 	// 스캔이 끝난 주문을 거래로 기록하고 오늘의 매출·원가·이익을 갱신합니다.
 	bool RecordCheckoutTransaction(const TArray<FCSCheckoutLineItem>& LineItems);
 
@@ -187,6 +248,21 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Funds")
 	int32 CurrentFunds = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Progression")
+	int32 CurrentStoreExperience = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Progression")
+	int32 CurrentStoreLevel = 1;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Progression")
+	int32 CurrentReputationScore = 6000;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Progression")
+	ECSReputationGrade CurrentReputationGrade = ECSReputationGrade::Normal;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreProgressionDataAsset> StoreProgressionDataAsset;
 
 private:
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.

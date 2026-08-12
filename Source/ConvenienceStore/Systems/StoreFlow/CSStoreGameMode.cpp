@@ -1,5 +1,6 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
+#include "Data/CSStoreProgressionDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -14,6 +15,21 @@ void ACSStoreGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 	StoreGameState = GetGameState<ACSStoreGameState>();
+	if (!IsValid(StoreGameState))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameMode] ACSStoreGameState를 찾을 수 없어 상점 성장 상태를 초기화하지 못했습니다."));
+	}
+	else if (!IsValid(StoreProgressionDataAsset))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameMode] StoreProgressionDataAsset이 지정되지 않아 기본 성장 상태만 유지합니다."));
+	}
+	else if (!StoreGameState->InitializeStoreProgression(StoreProgressionDataAsset))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameMode] StoreProgressionDataAsset으로 성장 상태를 초기화하지 못했습니다."));
+	}
 
 	if (bStartFlowOnBeginPlay)
 	{
