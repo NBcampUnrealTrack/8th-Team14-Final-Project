@@ -86,7 +86,7 @@ protected:
 
 	// 가격 점수가 전체 점수에서 차지하는 가중치
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
-	float W_Price = 1.0f;
+	float W_Price = 3.0f;
 
 	// 카테고리 점수가 전체 점수에서 차지하는 가중치
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")

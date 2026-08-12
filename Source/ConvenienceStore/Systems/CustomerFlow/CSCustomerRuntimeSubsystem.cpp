@@ -252,6 +252,14 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		Product->GetClass(),
 		Product->GetProductRuntimeState(),
 		SalePriceAtPickup);
+
+	// 실제 지출 금액 기록
+	CustomerState->RecordSpending(SalePriceAtPickup);
+
+	//pr2
+	UE_LOG(LogTemp, Warning, TEXT("[TEMP-지출] %s 구매금액=%d 누적지출=%d"),
+	*ProductId.ToString(), SalePriceAtPickup, CustomerState->SpentGold);
+
 	if (CustomerState->SelectProducts.Num() > 0)
 	{
 		// 실제 상품을 제거하기 전에 같은 데이터로 장바구니 표시용 상품을 추가합니다.
