@@ -1,5 +1,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
+#include "Data/CSStoreProgressionDataAsset.h"
+
 void ACSStoreGameState::BeginPlay()
 {
 	Super::BeginPlay();
@@ -98,6 +100,167 @@ bool ACSStoreGameState::AddFunds(int32 Amount)
 	return true;
 }
 
+bool ACSStoreGameState::InitializeStoreProgression(
+	UCSStoreProgressionDataAsset* InProgressionDataAsset)
+{
+	if (!IsValid(InProgressionDataAsset))
+	{
+		return false;
+	}
+
+	StoreProgressionDataAsset = InProgressionDataAsset;
+	const int32 PreviousExperience = CurrentStoreExperience;
+	const int32 PreviousLevel = CurrentStoreLevel;
+	const int32 PreviousReputationScore = CurrentReputationScore;
+	const ECSReputationGrade PreviousReputationGrade = CurrentReputationGrade;
+
+	const int32 MaximumExperience =
+		StoreProgressionDataAsset->GetMaximumStoreExperience();
+	CurrentStoreExperience = FMath::Clamp(
+		StoreProgressionDataAsset->InitialStoreExperience,
+		0,
+		MaximumExperience);
+	CurrentStoreLevel = StoreProgressionDataAsset->GetStoreLevelForExperience(
+		CurrentStoreExperience);
+
+	const int32 MinimumReputationScore = FMath::Max(
+		0,
+		StoreProgressionDataAsset->MinimumReputationScore);
+	const int32 MaximumReputationScore = FMath::Max(
+		MinimumReputationScore,
+		StoreProgressionDataAsset->MaximumReputationScore);
+	CurrentReputationScore = FMath::Clamp(
+		StoreProgressionDataAsset->InitialReputationScore,
+		MinimumReputationScore,
+		MaximumReputationScore);
+	CurrentReputationGrade = StoreProgressionDataAsset->GetReputationGradeForScore(
+		CurrentReputationScore);
+
+	if (CurrentStoreExperience != PreviousExperience)
+	{
+		OnStoreExperienceChanged.Broadcast(CurrentStoreExperience);
+	}
+	if (CurrentStoreLevel != PreviousLevel)
+	{
+		OnStoreLevelChanged.Broadcast(CurrentStoreLevel);
+	}
+	if (CurrentReputationScore != PreviousReputationScore)
+	{
+		OnReputationChanged.Broadcast(CurrentReputationScore);
+	}
+	if (CurrentReputationGrade != PreviousReputationGrade)
+	{
+		OnReputationGradeChanged.Broadcast(CurrentReputationGrade);
+	}
+
+	return true;
+}
+
+int32 ACSStoreGameState::GetStoreExperience() const
+{
+	return CurrentStoreExperience;
+}
+
+int32 ACSStoreGameState::GetStoreLevel() const
+{
+	return CurrentStoreLevel;
+}
+
+int32 ACSStoreGameState::GetReputationScore() const
+{
+	return CurrentReputationScore;
+}
+
+ECSReputationGrade ACSStoreGameState::GetReputationGrade() const
+{
+	return CurrentReputationGrade;
+}
+
+bool ACSStoreGameState::AddStoreExperience(int32 Amount)
+{
+	if (!IsValid(StoreProgressionDataAsset) || Amount < 0)
+	{
+		return false;
+	}
+
+	const int32 MaximumExperience =
+		StoreProgressionDataAsset->GetMaximumStoreExperience();
+	const int64 AddedExperience =
+		static_cast<int64>(CurrentStoreExperience) + Amount;
+	const int32 NewExperience = static_cast<int32>(FMath::Clamp<int64>(
+		AddedExperience,
+		static_cast<int64>(0),
+		static_cast<int64>(MaximumExperience)));
+	if (NewExperience == CurrentStoreExperience)
+	{
+		return true;
+	}
+
+	CurrentStoreExperience = NewExperience;
+	OnStoreExperienceChanged.Broadcast(CurrentStoreExperience);
+
+	const int32 CalculatedLevel =
+		StoreProgressionDataAsset->GetStoreLevelForExperience(CurrentStoreExperience);
+	const int32 NewLevel = FMath::Max(CurrentStoreLevel, CalculatedLevel);
+	if (NewLevel != CurrentStoreLevel)
+	{
+		CurrentStoreLevel = NewLevel;
+		OnStoreLevelChanged.Broadcast(CurrentStoreLevel);
+	}
+
+	return true;
+}
+
+bool ACSStoreGameState::AddReputation(int32 Delta)
+{
+	if (!IsValid(StoreProgressionDataAsset))
+	{
+		return false;
+	}
+
+	const int32 MinimumReputationScore = FMath::Max(
+		0,
+		StoreProgressionDataAsset->MinimumReputationScore);
+	const int32 MaximumReputationScore = FMath::Max(
+		MinimumReputationScore,
+		StoreProgressionDataAsset->MaximumReputationScore);
+	const int64 AddedReputation =
+		static_cast<int64>(CurrentReputationScore) + Delta;
+	const int32 NewReputationScore = static_cast<int32>(FMath::Clamp<int64>(
+		AddedReputation,
+		static_cast<int64>(MinimumReputationScore),
+		static_cast<int64>(MaximumReputationScore)));
+	if (NewReputationScore == CurrentReputationScore)
+	{
+		return true;
+	}
+
+	CurrentReputationScore = NewReputationScore;
+	OnReputationChanged.Broadcast(CurrentReputationScore);
+
+	const ECSReputationGrade NewReputationGrade =
+		StoreProgressionDataAsset->GetReputationGradeForScore(CurrentReputationScore);
+	if (NewReputationGrade != CurrentReputationGrade)
+	{
+		CurrentReputationGrade = NewReputationGrade;
+		OnReputationGradeChanged.Broadcast(CurrentReputationGrade);
+	}
+
+	return true;
+}
+
+bool ACSStoreGameState::IsStoreLevelRequirementMet(int32 RequiredLevel) const
+{
+	return CurrentStoreLevel >= FMath::Max(1, RequiredLevel);
+}
+
+bool ACSStoreGameState::IsReputationRequirementMet(
+	ECSReputationGrade RequiredGrade) const
+{
+	return static_cast<uint8>(CurrentReputationGrade) >=
+		static_cast<uint8>(RequiredGrade);
+}
+
 bool ACSStoreGameState::RecordCheckoutTransaction(
 	const TArray<FCSCheckoutLineItem>& LineItems)
 {
@@ -162,6 +325,24 @@ bool ACSStoreGameState::RecordCheckoutTransaction(
 	for (const FCSCheckoutLineItem& LineItem : LineItems)
 	{
 		DailySoldQuantity += LineItem.Quantity;
+	}
+
+	if (IsValid(StoreProgressionDataAsset) &&
+		StoreProgressionDataAsset->ExperiencePerSoldItem > 0)
+	{
+		int64 TransactionSoldQuantity = 0;
+		for (const FCSCheckoutLineItem& LineItem : LineItems)
+		{
+			TransactionSoldQuantity = FMath::Min<int64>(
+				static_cast<int64>(MAX_int32),
+				TransactionSoldQuantity + LineItem.Quantity);
+		}
+
+		const int64 EarnedExperience = TransactionSoldQuantity *
+			StoreProgressionDataAsset->ExperiencePerSoldItem;
+		AddStoreExperience(static_cast<int32>(FMath::Min<int64>(
+			EarnedExperience,
+			MAX_int32)));
 	}
 
 	OnCheckoutRecorded.Broadcast(Transaction);
