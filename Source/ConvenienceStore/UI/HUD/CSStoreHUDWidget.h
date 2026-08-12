@@ -101,6 +101,10 @@ protected:
 	UFUNCTION()
 	void HandlePhaseChanged(ECStorePhase NewPhase);
 
+	// 입간판으로 변경한 실제 영업 상태를 단계 텍스트에 반영합니다.
+	UFUNCTION()
+	void HandleStoreOpenStateChanged(bool bNewStoreOpen);
+
 	UFUNCTION()
 	void HandleRemainingTimeChanged(float NewRemainingSeconds);
 
@@ -121,6 +125,7 @@ private:
 	FText FormatTime(float Seconds) const;
 	FText FormatGameClock(float GameMinutes) const;
 	FText GetEndOfDayButtonText(ECEndOfDayTask Task) const;
+	void UpdatePhaseNameDisplay();
 	void UpdateEndOfDayPanel();
 	void UpdateDailySalesDisplay();
 

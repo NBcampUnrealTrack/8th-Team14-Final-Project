@@ -57,6 +57,9 @@ void ACSStoreGameMode::StartStoreFlow()
 		true);
 
 	UpdateStorePhaseForCurrentTime();
+	// 영업 시간대가 되어도 입간판 확인 전까지는 고객을 받지 않습니다.
+	StoreGameState->bIsStoreOpen = false;
+	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
 	CheckScheduleEvents(InitialGameTimeMinutes - 0.01f, InitialGameTimeMinutes);
 
 	GetWorldTimerManager().ClearTimer(GameClockTimerHandle);
@@ -111,9 +114,9 @@ void ACSStoreGameMode::UpdateGameClock()
 	const float NewGameMinutes = PreviousGameMinutes +
 		StoreGameState->GameMinutesPerRealSecond * 0.1f;
 
-	if (NewGameMinutes >= 1440.0f)
+	if (NewGameMinutes >= AutomaticClosingTimeMinutes)
 	{
-		StoreGameState->SetCurrentGameMinutes(1440.0f);
+		StoreGameState->SetCurrentGameMinutes(AutomaticClosingTimeMinutes);
 		BeginClosingCheckpoint();
 		return;
 	}
@@ -169,6 +172,9 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 {
 	GetWorldTimerManager().ClearTimer(GameClockTimerHandle);
 	StoreGameState->bIsGameClockRunning = false;
+	// 새벽 02:00에는 입간판 상태와 무관하게 영업을 강제 종료합니다.
+	StoreGameState->bIsStoreOpen = false;
+	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
 
 	FCSStorePhaseData ClosingPhase;
 	ClosingPhase.Phase = ECStorePhase::Settlement;

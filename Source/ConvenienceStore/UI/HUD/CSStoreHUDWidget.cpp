@@ -18,6 +18,8 @@ void UCSStoreHUDWidget::NativeConstruct()
 
 	StoreGameState->OnStorePhaseChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandlePhaseChanged);
+	StoreGameState->OnStoreOpenStateChanged.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleStoreOpenStateChanged);
 	StoreGameState->OnRemainingTimeChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleRemainingTimeChanged);
 	StoreGameState->OnGameTimeChanged.AddDynamic(
@@ -54,6 +56,8 @@ void UCSStoreHUDWidget::NativeDestruct()
 	{
 		StoreGameState->OnStorePhaseChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandlePhaseChanged);
+		StoreGameState->OnStoreOpenStateChanged.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleStoreOpenStateChanged);
 		StoreGameState->OnRemainingTimeChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleRemainingTimeChanged);
 		StoreGameState->OnGameTimeChanged.RemoveDynamic(
@@ -210,10 +214,7 @@ void UCSStoreHUDWidget::ClearInteractionContext()
 
 void UCSStoreHUDWidget::HandlePhaseChanged(ECStorePhase NewPhase)
 {
-	if (PhaseNameText != nullptr && StoreGameState != nullptr)
-	{
-		PhaseNameText->SetText(StoreGameState->CurrentPhaseDisplayName);
-	}
+	UpdatePhaseNameDisplay();
 
 	if (NewPhase == ECStorePhase::Settlement || NewPhase == ECStorePhase::Finished)
 	{
@@ -222,6 +223,14 @@ void UCSStoreHUDWidget::HandlePhaseChanged(ECStorePhase NewPhase)
 	}
 
 	UpdateEndOfDayPanel();
+}
+
+void UCSStoreHUDWidget::HandleStoreOpenStateChanged(bool bNewStoreOpen)
+{
+	(void)bNewStoreOpen;
+
+	// 영업 단계에서 입간판으로 상태를 바꾸면 HUD 문구도 즉시 함께 갱신합니다.
+	UpdatePhaseNameDisplay();
 }
 
 void UCSStoreHUDWidget::HandleRemainingTimeChanged(float NewRemainingSeconds)
@@ -248,6 +257,33 @@ void UCSStoreHUDWidget::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
 void UCSStoreHUDWidget::HandleDailySalesChanged()
 {
 	UpdateDailySalesDisplay();
+}
+
+void UCSStoreHUDWidget::UpdatePhaseNameDisplay()
+{
+	if (!IsValid(PhaseNameText) || !IsValid(StoreGameState))
+	{
+		return;
+	}
+
+	// 영업 가능 시간에는 단계명이 아닌 실제 영업 상태를 우선 표시합니다.
+	if (StoreGameState->CurrentPhase == ECStorePhase::Open)
+	{
+		if (StoreGameState->bIsStoreOpen)
+		{
+			PhaseNameText->SetText(NSLOCTEXT("Store", "BusinessOpen", "영업중"));
+		}
+		else
+		{
+			// 오늘 영업을 시작하지 않았다면 종료가 아닌 개점 대기 상태로 안내합니다.
+			PhaseNameText->SetText(StoreGameState->bHasStoreOpenedToday
+				? NSLOCTEXT("Store", "BusinessClosed", "영업 종료")
+				: NSLOCTEXT("Store", "AwaitingOpening", "개점 대기"));
+		}
+		return;
+	}
+
+	PhaseNameText->SetText(StoreGameState->CurrentPhaseDisplayName);
 }
 
 void UCSStoreHUDWidget::UpdateEndOfDayPanel()
