@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Math/RandomStream.h"
 #include "CSPurchaseDecisionComponent.generated.h"
 
 struct FCSProductDataRow;
@@ -33,6 +34,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	float ContinueShoppingProbability(int32 ItemsInBasket) const;
 
+	// 담은 개수 → 확률 계산 + 실제 굴림까지 한 번에 처리
+	// StateTree Condition은 이 함수 하나만 호출하면 되고 내부 확률/난수는 몰라도 됨
+	UFUNCTION(BlueprintCallable, Category = "Purchase")
+	bool RollContinueShopping(int32 ItemsInBasket) const;
+
+	// 스포너가 스폰 직후 파생 시드를 주입할 때 사용
+	// 이미 굴림이 시작된 뒤에 다시 부르면 그 시점부터 시퀀스가 바뀌므로 스폰 직후 1회만 호출 전제
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
+	void InitializeRandomStream(int32 Seed);
+
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
@@ -61,6 +72,14 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackBudgetOverrunPenalty = 2.0f;
+
+	// 고정 시드 사용 여부. 스포너가 InitializeRandomStream으로 파생 시드를 주입하면 이 값은 덮어써짐
+	// (에디터에서 컴포넌트 단독 테스트할 때만 의미 있음)
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Random")
+	bool bUseFixedSeed = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Random", meta = (EditCondition = "bUseFixedSeed"))
+	int32 FixedSeed = 0;
 
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
@@ -116,6 +135,10 @@ private:
 	// 이미 초기화된 손님이면 아무것도 하지 않음
 	void EnsureBudgetInitialized(UCSCustomerStateComponent& State) const;
 
+	// 이 손님 전용 난수 스트림
+	mutable FRandomStream RandomStream;
+
 	// 표준정규분포(평균 0, 표준편차 1) 난수 하나를 뽑음 (Box-Muller 변환)
-	static float SampleStandardNormal();
+	// 전역 RNG 대신 RandomStream을 쓰도록 static 제거, 인스턴스 메서드로 전환
+	float SampleStandardNormal() const;
 };

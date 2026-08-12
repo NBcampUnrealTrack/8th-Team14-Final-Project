@@ -9,6 +9,10 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
 	// 매 프레임 계산이 필요한 로직이 아니라 손님이 진열대 앞에 섰을 때만 호출되면 되므로 Tick은 꺼두기
 	PrimaryComponentTick.bCanEverTick = false;
+
+	// 스포너가 InitializeRandomStream을 호출하기 전에도 동작은 하도록 기본 시드를 잡아둠
+	// bUseFixedSeed가 꺼져 있으면 엔진 전역 RNG에서 시드를 한 번만 얻어옴(이후 굴림은 전부 이 스트림 안에서만 진행)
+	RandomStream.Initialize(bUseFixedSeed ? FixedSeed : FMath::Rand());
 }
 
 const FCSProductDataRow* UCSPurchaseDecisionComponent::GetProductRow(const FCSPurchaseCandidate& Candidate) const
@@ -207,7 +211,7 @@ int32 UCSPurchaseDecisionComponent::SoftmaxSelectIndex(const TArray<FCSPurchaseC
 	// 0~WeightSum 사이 난수를 뽑아 가중치를 누적해가며
 	// 그 난수를 처음 넘어서는 지점의 후보를 선택
 	// 가중치가 큰 후보일수록 이 구간이 넓어서 뽑힐 확률이 높아지는 방식
-	const float Roll = FMath::FRandRange(0.f, WeightSum);
+	const float Roll = RandomStream.FRandRange(0.f, WeightSum);
 
 	float CumulativeWeight = 0.f;
 	for (int32 Index = 0; Index < Weights.Num(); ++Index)
@@ -264,12 +268,10 @@ UCSCustomerStateComponent* UCSPurchaseDecisionComponent::GetCustomerState() cons
 	return Owner ? Owner->FindComponentByClass<UCSCustomerStateComponent>() : nullptr;
 }
 
-float UCSPurchaseDecisionComponent::SampleStandardNormal()
+float UCSPurchaseDecisionComponent::SampleStandardNormal() const
 {
-	// Box-Muller 변환: 0~1 사이 균등분포 난수 2개로 표준정규분포 난수 1개를 만들기
-	// U1이 정확히 0이면 로그 계산이 깨지므로 아주 작은 양수부터 뽑음
-	const float U1 = FMath::FRandRange(KINDA_SMALL_NUMBER, 1.0f);
-	const float U2 = FMath::FRandRange(0.0f, 1.0f);
+	const float U1 = RandomStream.FRandRange(KINDA_SMALL_NUMBER, 1.0f);
+	const float U2 = RandomStream.FRandRange(0.0f, 1.0f);
 	return FMath::Sqrt(-2.0f * FMath::Loge(U1)) * FMath::Cos(2.0f * PI * U2);
 }
 
@@ -354,4 +356,15 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 	// 최종 확률 = 기본확률 × 예산여유도
 	// 0.95 상한: 아무리 의욕이 넘쳐도 100% 확정은 아니게 함
 	return FMath::Clamp(BaseProbability * BudgetFactor, 0.0f, 0.95f);
+}
+
+bool UCSPurchaseDecisionComponent::RollContinueShopping(int32 ItemsInBasket) const
+{
+	const float ContinueProbability = ContinueShoppingProbability(ItemsInBasket);
+	return RandomStream.FRand() < ContinueProbability;
+}
+
+void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
+{
+	RandomStream.Initialize(Seed);
 }

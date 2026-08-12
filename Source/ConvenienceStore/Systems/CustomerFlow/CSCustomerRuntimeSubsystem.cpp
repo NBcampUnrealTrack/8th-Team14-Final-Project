@@ -14,9 +14,20 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 
+TAutoConsoleVariable<int32> CVarCS_FixedSeed(
+	TEXT("cs.Seed"),
+	-1,
+	TEXT("0 이상이면 이 값을 손님 관련 굴림(종족 배정/예산 추첨/진열대 선택)의 고정 시드로 사용. -1(기본값)이면 매번 다른 시드"),
+	ECVF_Default);
+
 void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
+
+	// 이 서브시스템이 살아있는 동안 한 번만 시드를 잡음
+	const int32 FixedSeed = CVarCS_FixedSeed.GetValueOnGameThread();
+	ShelfRandomStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
+
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
 }
 
@@ -97,7 +108,7 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObje
 	}
 
 	// 후보군 배열 내에서 무작위 인덱스를 하나 뽑아 해당 진열대를 반환
-	const int32 PickIndex = FMath::RandRange(0, Candidates.Num() - 1);
+	const int32 PickIndex = ShelfRandomStream.RandRange(0, Candidates.Num() - 1);
 	return Candidates[PickIndex];
 }
 
@@ -391,7 +402,8 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	//    진열대에 되돌려놓을지, 그 자리에 버릴지 결정
 	//    되돌려놓기로 하면 상품 목록을 그대로 두고, ReturnItems 상태가 처리한다.
 	//    [임시] 확률은 나중에 소비심리 성향값으로 교체 가능한 자리.
-	const bool bWillReturnToShelf = (FMath::FRand() < GetReturnToShelfChance(Customer));
+	const bool bWillReturnToShelf = (ShelfRandomStream.FRand() < GetReturnToShelfChance(Customer));
+
 	if (bWillReturnToShelf == false)
 	{
 		DropCustomerItems(Customer);
@@ -584,7 +596,7 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
 		return nullptr;
 	}
 
-	const int32 PickIndex = FMath::RandRange(0, Candidates.Num() - 1);
+	const int32 PickIndex = ShelfRandomStream.RandRange(0, Candidates.Num() - 1);
 	return Candidates[PickIndex];
 }
 
