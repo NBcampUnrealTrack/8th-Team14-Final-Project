@@ -40,7 +40,12 @@ void ACSTimeOfDayLightingController::HandleGameTimeChanged(float NewGameMinutes)
 		return;
 	}
 
-	const float NormalizedTime = FMath::Clamp(NewGameMinutes / 1440.0f, 0.0f, 1.0f);
+	// 다음 날 새벽 시간은 24시간 주기로 다시 계산하여 02:00 조명도 자연스럽게 적용합니다.
+	const float MinutesInDay = 1440.0f;
+	const float TimeOfDayMinutes = FMath::Fmod(
+		FMath::Max(0.0f, NewGameMinutes),
+		MinutesInDay);
+	const float NormalizedTime = TimeOfDayMinutes / MinutesInDay;
 	const float SunPitch = SunPitchCurve != nullptr
 		? SunPitchCurve->GetFloatValue(NormalizedTime)
 		// 음수 Pitch가 지면을 향하도록 하여 06시 일출, 정오, 18시 일몰 방향을 계산합니다.

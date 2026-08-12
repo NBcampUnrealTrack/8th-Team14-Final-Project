@@ -55,6 +55,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time", meta = (ClampMin = "0.01"))
 	float GameMinutesPerRealSecond = 1.5f;
 
+	// 다음 날 새벽 02:00에 영업을 강제 종료하고 정산 단계로 전환합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time",
+		meta = (ClampMin = "1440.0", ClampMax = "1560.0"))
+	float AutomaticClosingTimeMinutes = 1560.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	bool bStartFlowOnBeginPlay = true;
 
