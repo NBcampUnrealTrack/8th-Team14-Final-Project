@@ -17,6 +17,12 @@ void ACSStoreGameState::SetStorePhase(const FCSStorePhaseData& PhaseData)
 	bCanRestock = PhaseData.bCanRestock;
 	bCanCheckout = PhaseData.bCanCheckout;
 	bCanSpawnCustomers = PhaseData.bCanSpawnCustomers;
+	if (CurrentPhase != ECStorePhase::Open && bIsStoreOpen)
+	{
+		// 정산 등 영업 시간 밖의 단계로 바뀌면 영업 상태도 함께 종료합니다.
+		bIsStoreOpen = false;
+		OnStoreOpenStateChanged.Broadcast(false);
+	}
 
 	SetRemainingSeconds(0.0f);
 	OnStorePhaseChanged.Broadcast(CurrentPhase);
@@ -34,7 +40,8 @@ void ACSStoreGameState::SetGameClock(
 
 void ACSStoreGameState::SetCurrentGameMinutes(float NewGameMinutes)
 {
-	CurrentGameMinutes = FMath::Clamp(NewGameMinutes, 0.0f, 1440.0f);
+	// 다음 날 새벽 02:00까지 영업 시간을 유지할 수 있도록 26:00까지 허용합니다.
+	CurrentGameMinutes = FMath::Clamp(NewGameMinutes, 0.0f, 1560.0f);
 	OnGameTimeChanged.Broadcast(CurrentGameMinutes);
 }
 
@@ -42,6 +49,34 @@ void ACSStoreGameState::SetEndOfDayTask(ECEndOfDayTask NewTask)
 {
 	CurrentEndOfDayTask = NewTask;
 	OnEndOfDayTaskChanged.Broadcast(CurrentEndOfDayTask);
+}
+
+bool ACSStoreGameState::CanChangeStoreOpenState() const
+{
+	return CurrentPhase == ECStorePhase::Open &&
+		CurrentEndOfDayTask == ECEndOfDayTask::None;
+}
+
+bool ACSStoreGameState::SetStoreOpen(bool bShouldOpen)
+{
+	if (!CanChangeStoreOpenState())
+	{
+		return false;
+	}
+
+	if (bIsStoreOpen == bShouldOpen)
+	{
+		return true;
+	}
+
+	bIsStoreOpen = bShouldOpen;
+	if (bIsStoreOpen)
+	{
+		// 당일에 영업을 시작한 이력을 남겨, 이후 중지 상태를 영업 종료로 표시합니다.
+		bHasStoreOpenedToday = true;
+	}
+	OnStoreOpenStateChanged.Broadcast(bIsStoreOpen);
+	return true;
 }
 
 void ACSStoreGameState::SetRemainingSeconds(float NewRemainingSeconds)
@@ -353,6 +388,8 @@ bool ACSStoreGameState::RecordCheckoutTransaction(
 void ACSStoreGameState::BeginNextBusinessDay()
 {
 	++CurrentBusinessDay;
+	// 새 영업일에는 아직 개점하지 않았으므로 영업 시작 이력을 초기화합니다.
+	bHasStoreOpenedToday = false;
 	DailySalesGold = 0;
 	DailyCostGold = 0;
 	DailyProfitGold = 0;

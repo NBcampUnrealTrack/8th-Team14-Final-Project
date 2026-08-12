@@ -107,7 +107,8 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	// TODO(확장): GameState의 OnScheduleEventFired를 구독해서
 	//             PeakStart/PeakEnd에 SpawnInterval을 바꾸면 피크타임 웨이브 구현 가능.
 	const ACSStoreGameState* StoreState = GetWorld()->GetGameState<ACSStoreGameState>();
-	if (StoreState != nullptr && StoreState->bCanSpawnCustomers == false)
+	if (StoreState != nullptr &&
+		(StoreState->bCanSpawnCustomers == false || StoreState->bIsStoreOpen == false))
 	{
 		return;
 	}
