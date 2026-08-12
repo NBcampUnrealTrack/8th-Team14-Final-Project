@@ -252,6 +252,11 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		Product->GetClass(),
 		Product->GetProductRuntimeState(),
 		SalePriceAtPickup);
+	if (CustomerState->SelectProducts.Num() > 0)
+	{
+		// 실제 상품을 제거하기 전에 같은 데이터로 장바구니 표시용 상품을 추가합니다.
+		Customer->AddBasketDisplayProduct(CustomerState->SelectProducts.Last());
+	}
 
 	// 손님이 가져간 상품 액터를 월드에서 물리적으로 완전히 제거합니다.
 	// (상품 판매 및 인벤토리 처리는 델리게이트를 통해 외부에서 처리하도록 분리)
@@ -366,6 +371,8 @@ void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
 			// 손님의 상태 컴포넌트에 계산이 완료되었음을 마킹
 			State->bCheckoutDone = true;
 		}
+		// 결제가 완료된 상품은 고객 장바구니에서도 즉시 제거합니다.
+		Front->ClearBasketDisplayProducts();
 
 		// 계산이 완료되었음을 브로드캐스트하여, UI 갱신이나 매출 증가 등의 후속 시스템 처리 유도
 		OnCheckoutCompleted.Broadcast(Front);
@@ -512,6 +519,7 @@ int32 UCSCustomerRuntimeSubsystem::DropCustomerItems(ACSCustomerCharacter* Custo
 	// 일부 생성에 실패해도 목록은 비운다.
 	// 남겨두면 손님이 계속 "상품을 들고 있는" 상태가 되어 이후 판정이 꼬인다.
 	State->ClearSelectItems();
+	Customer->ClearBasketDisplayProducts();
 
 	return SpawnedCount;
 
@@ -652,6 +660,7 @@ int32 UCSCustomerRuntimeSubsystem::ReturnCustomerItemsToShelf(ACSCustomerCharact
 
 	// 슬롯에 들어간 상품은 목록에서 지우고, 남은 것만 다시 채워 넣음
 	State->ClearSelectItems();
+	Customer->ClearBasketDisplayProducts();
 	for (int32 i = 0; i < LeftoverProducts.Num(); i++)
 	{
 		State->SelectProducts.Add(LeftoverProducts[i]);

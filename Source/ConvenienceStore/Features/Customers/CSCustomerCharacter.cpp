@@ -4,6 +4,8 @@
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Features/Customers/CSCustomerAIController.h"
+#include "Features/Customers/CSCustomerBasketActor.h"
+#include "Features/Customers/CSCustomerShoppingBagActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -15,6 +17,10 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	PrimaryActorTick.bCanEverTick = false;
 
 	CustomerState = CreateDefaultSubobject<UCSCustomerStateComponent>(TEXT("CustomerState"));
+	BasketAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("BasketAnchor"));
+	BasketAnchor->SetupAttachment(GetMesh());
+	// 블루프린트에서 고객 메시와 애니메이션에 맞춰 손 위치로 조정합니다.
+	BasketAnchor->SetRelativeLocation(FVector(20.0f, 25.0f, 0.0f));
 
 
 	AIControllerClass = ACSCustomerAIController::StaticClass();// 스폰될 때 어떤 클래스의 AI 컨트롤러가 빙의할지 지정
@@ -46,9 +52,76 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 
 }
 
+void ACSCustomerCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (BasketActorClass == nullptr || GetWorld() == nullptr || !IsValid(BasketAnchor))
+	{
+		return;
+	}
+
+	BasketActor = GetWorld()->SpawnActor<ACSCustomerBasketActor>(
+		BasketActorClass,
+		BasketAnchor->GetComponentTransform());
+	if (IsValid(BasketActor))
+	{
+		BasketActor->AttachToComponent(
+			BasketAnchor,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	}
+}
+
 UCSCustomerStateComponent* ACSCustomerCharacter::GetCustomerState() const
 {
 	return CustomerState;
+}
+
+void ACSCustomerCharacter::AddBasketDisplayProduct(
+	const FCSSelectProduct& SelectedProduct)
+{
+	if (IsValid(BasketActor))
+	{
+		BasketActor->AddDisplayProduct(SelectedProduct);
+	}
+}
+
+void ACSCustomerCharacter::ClearBasketDisplayProducts()
+{
+	if (IsValid(BasketActor))
+	{
+		BasketActor->ClearDisplayProducts();
+	}
+}
+
+void ACSCustomerCharacter::SetBasketDisplayVisible(bool bShouldBeVisible)
+{
+	if (IsValid(BasketActor))
+	{
+		BasketActor->SetBasketDisplayVisible(bShouldBeVisible);
+	}
+}
+
+void ACSCustomerCharacter::ShowShoppingBag()
+{
+	SetBasketDisplayVisible(false);
+	if (IsValid(ShoppingBagActor) ||
+		ShoppingBagActorClass == nullptr ||
+		GetWorld() == nullptr ||
+		!IsValid(BasketAnchor))
+	{
+		return;
+	}
+
+	ShoppingBagActor = GetWorld()->SpawnActor<ACSCustomerShoppingBagActor>(
+		ShoppingBagActorClass,
+		BasketAnchor->GetComponentTransform());
+	if (IsValid(ShoppingBagActor))
+	{
+		ShoppingBagActor->AttachToComponent(
+			BasketAnchor,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	}
 }
 
 const UArrowComponent* ACSCustomerCharacter::GetDropOrigin(const int32 SideIndex) const
@@ -65,6 +138,15 @@ const UArrowComponent* ACSCustomerCharacter::GetDropOrigin(const int32 SideIndex
 
 void ACSCustomerCharacter::Destroyed()
 {
+	ClearBasketDisplayProducts();
+	if (IsValid(BasketActor))
+	{
+		BasketActor->Destroy();
+	}
+	if (IsValid(ShoppingBagActor))
+	{
+		ShoppingBagActor->Destroy();
+	}
 	AController* MyController = GetController(); //현재 컨트롤러를 미리 변수에 저장
 
 	Super::Destroyed();
