@@ -15,6 +15,7 @@ class UStaticMeshComponent;
 class UCSCheckoutWidget;
 class ACSStoreGameState;
 class ACSProductPickupActor;
+class ACSCustomerCharacter;
 
 // 손님 대기열의 위치를 제공하는 기본 계산대 액터입니다.
 UCLASS()
@@ -76,6 +77,8 @@ protected:
 
 	// 계산 종료, 취소, 단계 전환 시 표시용으로 생성한 상품을 모두 제거합니다.
 	void ClearCheckoutDisplayProducts();
+	// 계산 중인 고객의 장바구니 표시를 숨기거나 복원합니다.
+	void SetCheckoutCustomerBasketVisible(bool bShouldBeVisible);
 
 	// 계산대 메시와 대기열 안내 요소를 부착하기 위한 루트 컴포넌트입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -131,6 +134,13 @@ protected:
 	// 표시용 액터와 같은 인덱스로 저장한 상품 ID입니다.
 	UPROPERTY(Transient)
 	TArray<FName> CheckoutDisplayProductIds;
+
+	// 계산 UI가 열렸을 때의 고객을 보관하여 취소 시 장바구니를 다시 표시합니다.
+	UPROPERTY(Transient)
+	TObjectPtr<ACSCustomerCharacter> ActiveCheckoutCustomer;
+
+	// 결제가 확정된 경우에는 장바구니를 복원하지 않고 봉투 표시를 유지합니다.
+	bool bCheckoutPaymentCompleted = false;
 
 	// 영업 단계 변경을 감지하기 위해 현재 매장 GameState를 저장합니다.
 	UPROPERTY(Transient)
