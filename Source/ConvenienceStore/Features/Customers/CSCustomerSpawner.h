@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Math/RandomStream.h"
 #include "CSCustomerSpawner.generated.h"
 
 class ACSCustomerCharacter;
@@ -56,6 +57,10 @@ private:
 
 	//손님들의 생성하는 반복 타이머를 가리키는 핸들
 	FTimerHandle SpawnTimerHandle;
+
+	// 종족 배정 + 손님별 파생 시드 발급용 마스터 스트림
+	// PickArchetypeBySpawnWeight가 const라서 mutable 필요
+	mutable FRandomStream MasterStream;
 
 	// Archetypes 목록에서 SpawnWeightBase 비율에 따라 하나를 확률적으로 고름
 	UCSCustomerArchetypeDataAsset* PickArchetypeBySpawnWeight() const;
