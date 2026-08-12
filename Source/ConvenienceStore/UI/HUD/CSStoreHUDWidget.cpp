@@ -123,6 +123,11 @@ void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
 		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
+	if (IsValid(ProductFreshnessText))
+	{
+		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	if (IsValid(StorageWarningText))
 	{
 		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
@@ -171,6 +176,26 @@ void UCSStoreHUDWidget::SetProductShelfLife(
 	ProductShelfLifeText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
+void UCSStoreHUDWidget::SetProductFreshness(
+	const FText& Message,
+	const FLinearColor& TextColor)
+{
+	if (!IsValid(ProductFreshnessText))
+	{
+		return;
+	}
+
+	if (Message.IsEmpty())
+	{
+		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	ProductFreshnessText->SetText(Message);
+	ProductFreshnessText->SetColorAndOpacity(FSlateColor(TextColor));
+	ProductFreshnessText->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
 void UCSStoreHUDWidget::SetStorageWarning(const FText& Message)
 {
 	if (!IsValid(StorageWarningText))
@@ -204,6 +229,11 @@ void UCSStoreHUDWidget::ClearInteractionContext()
 	if (IsValid(ProductShelfLifeText))
 	{
 		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	if (IsValid(ProductFreshnessText))
+	{
+		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
 	}
 
 	if (IsValid(StorageWarningText))

@@ -2,6 +2,7 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/StaticMesh.h"
@@ -106,6 +107,7 @@ void ACSProductPickupActor::ApplyProductRuntimeState(
 	const FCSProductRuntimeState& InProductRuntimeState)
 {
 	ProductRuntimeState = InProductRuntimeState;
+	UpdateFreshnessDecayState();
 }
 
 bool ACSProductPickupActor::IsExpired() const
@@ -119,7 +121,42 @@ bool ACSProductPickupActor::IsExpired() const
 
 bool ACSProductPickupActor::IsSellable() const
 {
-	return !IsExpired();
+	if (IsExpired())
+	{
+		return false;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::IsSellable"));
+	const bool bRequiresFreshnessManagement = ProductData != nullptr &&
+		(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+	if (!bRequiresFreshnessManagement || !ProductRuntimeState.bFreshnessInitialized)
+	{
+		return true;
+	}
+
+	return GetCurrentFreshness() > 0;
+}
+
+int32 ACSProductPickupActor::GetCurrentFreshness() const
+{
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(CurrentStoreGameState)
+			? CurrentStoreGameState->GetFreshnessSettings()
+			: nullptr;
+	if (!IsValid(World) || !IsValid(FreshnessSettings))
+	{
+		return FMath::Clamp(ProductRuntimeState.Freshness, 0, 100);
+	}
+
+	return ProductRuntimeState.GetCurrentFreshness(
+		World->GetTimeSeconds(),
+		FreshnessSettings->DecayIntervalSeconds,
+		FreshnessSettings->DecayAmountPerInterval);
 }
 
 void ACSProductPickupActor::PrepareForPickupPhysics()
@@ -167,12 +204,62 @@ void ACSProductPickupActor::EnableWorldDropPhysics()
 void ACSProductPickupActor::SetStorageShelfType(ECSProductShelfType InStorageShelfType)
 {
 	StorageShelfType = InStorageShelfType;
+	EnsureProductRuntimeStateInitialized();
+	UpdateFreshnessDecayState();
+}
+
+void ACSProductPickupActor::EnterFreshnessSafeZone(
+	ECSProductShelfType SafeStorageType)
+{
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::EnterFreshnessSafeZone"));
+	if (ProductData == nullptr || ProductData->ShelfType != SafeStorageType ||
+		(SafeStorageType != ECSProductShelfType::ChilledShelf &&
+			SafeStorageType != ECSProductShelfType::FreezerShelf))
+	{
+		return;
+	}
+
+	if (MatchingFreshnessSafeZoneCount < MAX_int32)
+	{
+		++MatchingFreshnessSafeZoneCount;
+	}
+	UpdateFreshnessDecayState();
+}
+
+void ACSProductPickupActor::ExitFreshnessSafeZone(
+	ECSProductShelfType SafeStorageType)
+{
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::ExitFreshnessSafeZone"));
+	if (ProductData == nullptr || ProductData->ShelfType != SafeStorageType ||
+		MatchingFreshnessSafeZoneCount <= 0)
+	{
+		return;
+	}
+
+	--MatchingFreshnessSafeZoneCount;
+	UpdateFreshnessDecayState();
+}
+
+void ACSProductPickupActor::SetHeldByPlayerForFreshness(bool bIsHeldByPlayer)
+{
+	if (bIsHeldByPlayerForFreshness == bIsHeldByPlayer)
+	{
+		return;
+	}
+
+	bIsHeldByPlayerForFreshness = bIsHeldByPlayer;
+	UpdateFreshnessDecayState();
+	if (!bIsHeldByPlayerForFreshness && IsValid(ProductMesh))
+	{
+		ProductMesh->UpdateOverlaps();
+	}
 }
 
 void ACSProductPickupActor::EnsureProductRuntimeStateInitialized()
 {
-	if (ProductRuntimeState.bExpirationInitialized ||
-		ProductRow.DataTable == nullptr ||
+	if (ProductRow.DataTable == nullptr ||
 		ProductRow.RowName.IsNone())
 	{
 		return;
@@ -192,6 +279,68 @@ void ACSProductPickupActor::EnsureProductRuntimeStateInitialized()
 		CurrentStoreGameState->CurrentBusinessDay,
 		ProductData->bPerishable,
 		ProductData->ShelfLifeDays);
+
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		CurrentStoreGameState->GetFreshnessSettings();
+	if (!IsValid(FreshnessSettings))
+	{
+		return;
+	}
+
+	const bool bRequiresFreshnessManagement =
+		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+	const bool bIsSuitableStorage =
+		bRequiresFreshnessManagement && StorageShelfType == ProductData->ShelfType;
+	const bool bIsInMatchingSafeZone = MatchingFreshnessSafeZoneCount > 0;
+	ProductRuntimeState.InitializeFreshness(
+		FreshnessSettings->InitialFreshness,
+		bRequiresFreshnessManagement &&
+			(bIsHeldByPlayerForFreshness ||
+				(!bIsSuitableStorage && !bIsInMatchingSafeZone)),
+		World->GetTimeSeconds());
+	UpdateFreshnessDecayState();
+}
+
+void ACSProductPickupActor::UpdateFreshnessDecayState()
+{
+	if (!ProductRuntimeState.bFreshnessInitialized)
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::UpdateFreshnessDecayState"));
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(CurrentStoreGameState)
+			? CurrentStoreGameState->GetFreshnessSettings()
+			: nullptr;
+	if (ProductData == nullptr || !IsValid(World) || !IsValid(FreshnessSettings))
+	{
+		return;
+	}
+
+	const bool bRequiresFreshnessManagement =
+		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+	const bool bIsSuitableStorage =
+		bRequiresFreshnessManagement && StorageShelfType == ProductData->ShelfType;
+	const bool bIsInMatchingSafeZone = MatchingFreshnessSafeZoneCount > 0;
+	const bool bIsFreshnessSafe = !bIsHeldByPlayerForFreshness &&
+		(bIsSuitableStorage || bIsInMatchingSafeZone);
+	if (!bRequiresFreshnessManagement || bIsFreshnessSafe)
+	{
+		ProductRuntimeState.StopFreshnessDecay(
+			World->GetTimeSeconds(),
+			FreshnessSettings->DecayIntervalSeconds,
+			FreshnessSettings->DecayAmountPerInterval);
+		return;
+	}
+
+	ProductRuntimeState.StartFreshnessDecay(World->GetTimeSeconds());
 }
 
 void ACSProductPickupActor::HandlePawnOverlap(

@@ -2,6 +2,7 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/World.h"
@@ -84,11 +85,42 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 		StoreGameState->CurrentBusinessDay,
 		ProductData->bPerishable,
 		ProductData->ShelfLifeDays);
+	if (const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		StoreGameState->GetFreshnessSettings();
+		IsValid(FreshnessSettings))
+	{
+		const bool bRequiresFreshnessManagement =
+			ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+		NewRuntimeState.InitializeFreshness(
+			FreshnessSettings->InitialFreshness,
+			bRequiresFreshnessManagement,
+			World->GetTimeSeconds());
+	}
 
 	ProductRow = InProductRow;
 	RemainingQuantity = InQuantity;
 	ProductRuntimeState = NewRuntimeState;
+	UpdateFreshnessDecayState();
 	return true;
+}
+
+int32 ACSDeliveryCrateActor::GetCurrentFreshness() const
+{
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(StoreGameState) ? StoreGameState->GetFreshnessSettings() : nullptr;
+	if (!IsValid(World) || !IsValid(FreshnessSettings))
+	{
+		return FMath::Clamp(ProductRuntimeState.Freshness, 0, 100);
+	}
+
+	return ProductRuntimeState.GetCurrentFreshness(
+		World->GetTimeSeconds(),
+		FreshnessSettings->DecayIntervalSeconds,
+		FreshnessSettings->DecayAmountPerInterval);
 }
 
 FName ACSDeliveryCrateActor::GetProductId() const
@@ -263,6 +295,91 @@ void ACSDeliveryCrateActor::EnableWorldDropPhysics()
 	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	CrateMesh->SetGenerateOverlapEvents(true);
 	CrateMesh->SetSimulatePhysics(true);
+}
+
+void ACSDeliveryCrateActor::EnterFreshnessSafeZone(
+	ECSProductShelfType SafeStorageType)
+{
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::EnterFreshnessSafeZone"));
+	if (ProductData == nullptr || ProductData->ShelfType != SafeStorageType ||
+		(SafeStorageType != ECSProductShelfType::ChilledShelf &&
+			SafeStorageType != ECSProductShelfType::FreezerShelf))
+	{
+		return;
+	}
+
+	if (MatchingFreshnessSafeZoneCount < MAX_int32)
+	{
+		++MatchingFreshnessSafeZoneCount;
+	}
+	UpdateFreshnessDecayState();
+}
+
+void ACSDeliveryCrateActor::ExitFreshnessSafeZone(
+	ECSProductShelfType SafeStorageType)
+{
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::ExitFreshnessSafeZone"));
+	if (ProductData == nullptr || ProductData->ShelfType != SafeStorageType ||
+		MatchingFreshnessSafeZoneCount <= 0)
+	{
+		return;
+	}
+
+	--MatchingFreshnessSafeZoneCount;
+	UpdateFreshnessDecayState();
+}
+
+void ACSDeliveryCrateActor::SetHeldByPlayerForFreshness(bool bIsHeldByPlayer)
+{
+	if (bIsHeldByPlayerForFreshness == bIsHeldByPlayer)
+	{
+		return;
+	}
+
+	bIsHeldByPlayerForFreshness = bIsHeldByPlayer;
+	UpdateFreshnessDecayState();
+	if (!bIsHeldByPlayerForFreshness && IsValid(CrateMesh))
+	{
+		CrateMesh->UpdateOverlaps();
+	}
+}
+
+void ACSDeliveryCrateActor::UpdateFreshnessDecayState()
+{
+	if (!ProductRuntimeState.bFreshnessInitialized)
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::UpdateFreshnessDecayState"));
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(StoreGameState) ? StoreGameState->GetFreshnessSettings() : nullptr;
+	if (ProductData == nullptr || !IsValid(World) || !IsValid(FreshnessSettings))
+	{
+		return;
+	}
+
+	const bool bRequiresFreshnessManagement =
+		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+	const bool bIsFreshnessSafe = !bIsHeldByPlayerForFreshness &&
+		MatchingFreshnessSafeZoneCount > 0;
+	if (!bRequiresFreshnessManagement || bIsFreshnessSafe)
+	{
+		ProductRuntimeState.StopFreshnessDecay(
+			World->GetTimeSeconds(),
+			FreshnessSettings->DecayIntervalSeconds,
+			FreshnessSettings->DecayAmountPerInterval);
+		return;
+	}
+
+	ProductRuntimeState.StartFreshnessDecay(World->GetTimeSeconds());
 }
 
 void ACSDeliveryCrateActor::HandlePawnOverlap(

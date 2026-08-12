@@ -61,6 +61,18 @@ struct CONVENIENCESTORE_API FCSProductRuntimeState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime")
 	int32 ExpirationBusinessDay = 0;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime|Freshness")
+	bool bFreshnessInitialized = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime|Freshness")
+	int32 Freshness = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime|Freshness")
+	bool bFreshnessDecayActive = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Product|Runtime|Freshness")
+	float FreshnessDecayStartTimeSeconds = 0.0f;
+
 	void InitializeExpiration(
 		int32 CurrentBusinessDay,
 		bool bPerishable,
@@ -90,6 +102,103 @@ struct CONVENIENCESTORE_API FCSProductRuntimeState
 		return bExpirationInitialized &&
 			ExpirationBusinessDay > 0 &&
 			CurrentBusinessDay >= ExpirationBusinessDay;
+	}
+
+	void InitializeFreshness(
+		int32 InitialFreshness,
+		bool bStartDecay,
+		float CurrentGameTimeSeconds)
+	{
+		if (bFreshnessInitialized)
+		{
+			return;
+		}
+
+		bFreshnessInitialized = true;
+		Freshness = FMath::Clamp(InitialFreshness, 0, 100);
+		bFreshnessDecayActive = false;
+		FreshnessDecayStartTimeSeconds = 0.0f;
+
+		if (bStartDecay && Freshness > 0)
+		{
+			StartFreshnessDecay(CurrentGameTimeSeconds);
+		}
+	}
+
+	int32 GetCurrentFreshness(
+		float CurrentGameTimeSeconds,
+		float DecayIntervalSeconds,
+		int32 DecayAmountPerInterval) const
+	{
+		if (!bFreshnessInitialized ||
+			!bFreshnessDecayActive ||
+			Freshness <= 0 ||
+			DecayIntervalSeconds <= 0.0f ||
+			DecayAmountPerInterval <= 0)
+		{
+			return FMath::Clamp(Freshness, 0, 100);
+		}
+
+		const double ElapsedSeconds = FMath::Max(
+			0.0,
+			static_cast<double>(CurrentGameTimeSeconds) -
+				static_cast<double>(FreshnessDecayStartTimeSeconds));
+		const int64 CompletedIntervals = FMath::FloorToInt64(
+			ElapsedSeconds / static_cast<double>(DecayIntervalSeconds));
+		const int64 IntervalsToReachZero = FMath::DivideAndRoundUp<int64>(
+			static_cast<int64>(Freshness),
+			static_cast<int64>(DecayAmountPerInterval));
+		if (CompletedIntervals >= IntervalsToReachZero)
+		{
+			return 0;
+		}
+
+		const int64 TotalDecay = CompletedIntervals * DecayAmountPerInterval;
+		return static_cast<int32>(FMath::Clamp<int64>(
+			static_cast<int64>(Freshness) - TotalDecay,
+			0,
+			100));
+	}
+
+	void StartFreshnessDecay(float CurrentGameTimeSeconds)
+	{
+		if (!bFreshnessInitialized || bFreshnessDecayActive || Freshness <= 0)
+		{
+			return;
+		}
+
+		bFreshnessDecayActive = true;
+		FreshnessDecayStartTimeSeconds = FMath::Max(0.0f, CurrentGameTimeSeconds);
+	}
+
+	void StopFreshnessDecay(
+		float CurrentGameTimeSeconds,
+		float DecayIntervalSeconds,
+		int32 DecayAmountPerInterval)
+	{
+		if (!bFreshnessInitialized || !bFreshnessDecayActive)
+		{
+			return;
+		}
+
+		Freshness = GetCurrentFreshness(
+			CurrentGameTimeSeconds,
+			DecayIntervalSeconds,
+			DecayAmountPerInterval);
+		bFreshnessDecayActive = false;
+		FreshnessDecayStartTimeSeconds = 0.0f;
+	}
+
+	bool HasFreshnessRemaining(
+		float CurrentGameTimeSeconds,
+		float DecayIntervalSeconds,
+		int32 DecayAmountPerInterval) const
+	{
+		return bFreshnessInitialized &&
+			GetCurrentFreshness(
+				CurrentGameTimeSeconds,
+				DecayIntervalSeconds,
+				DecayAmountPerInterval) > 0;
 	}
 };
 

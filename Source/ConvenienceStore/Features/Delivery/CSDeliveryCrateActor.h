@@ -47,6 +47,9 @@ public:
 		return ProductRuntimeState;
 	}
 
+	UFUNCTION(BlueprintPure, Category = "Delivery|Freshness")
+	int32 GetCurrentFreshness() const;
+
 	UFUNCTION(BlueprintPure, Category = "Delivery|Product")
 	TSubclassOf<ACSProductPickupActor> GetProductActorClass() const;
 
@@ -66,6 +69,10 @@ public:
 
 	// 플레이어가 월드 바닥에 내려놓은 배송 상자의 물리를 활성화합니다.
 	void EnableWorldDropPhysics();
+
+	void EnterFreshnessSafeZone(ECSProductShelfType SafeStorageType);
+	void ExitFreshnessSafeZone(ECSProductShelfType SafeStorageType);
+	void SetHeldByPlayerForFreshness(bool bIsHeldByPlayer);
 
 	FVector GetHeldRelativeLocation() const
 	{
@@ -97,6 +104,12 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Product")
 	FCSProductRuntimeState ProductRuntimeState;
 
+	UPROPERTY(Transient)
+	int32 MatchingFreshnessSafeZoneCount = 0;
+
+	UPROPERTY(Transient)
+	bool bIsHeldByPlayerForFreshness = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Holding")
 	FVector HeldRelativeLocation = FVector::ZeroVector;
 
@@ -118,4 +131,6 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Visual")
 	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
+
+	void UpdateFreshnessDecayState();
 };

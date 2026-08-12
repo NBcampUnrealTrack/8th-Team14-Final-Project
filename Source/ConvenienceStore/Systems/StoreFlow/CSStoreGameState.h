@@ -8,6 +8,7 @@
 #include "CSStoreGameState.generated.h"
 
 class UCSStoreProgressionDataAsset;
+class UCSFreshnessSettingsDataAsset;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStorePhaseChanged,
@@ -231,6 +232,10 @@ public:
 	bool AddFunds(int32 Amount);
 
 	bool InitializeStoreProgression(UCSStoreProgressionDataAsset* InProgressionDataAsset);
+	bool InitializeFreshnessSettings(UCSFreshnessSettingsDataAsset* InFreshnessSettingsDataAsset);
+
+	UFUNCTION(BlueprintPure, Category = "Store|Freshness")
+	UCSFreshnessSettingsDataAsset* GetFreshnessSettings() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	int32 GetStoreExperience() const;
@@ -286,6 +291,9 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCSStoreProgressionDataAsset> StoreProgressionDataAsset;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCSFreshnessSettingsDataAsset> FreshnessSettingsDataAsset;
 
 private:
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.
