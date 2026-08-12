@@ -5,6 +5,7 @@
 #include "Features/Customers/Interface/CSCustomerCounterInterface.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "EngineUtils.h"
 #include "Components/ArrowComponent.h"
@@ -13,6 +14,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 
 TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("cs.Seed"),
@@ -245,12 +247,27 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 		ICSShelfPlaceable::Execute_RemovePlacedItem(ShelfActor, Product);
 	}
 
+	FCSProductRuntimeState CustomerProductRuntimeState =
+		Product->GetProductRuntimeState();
+	UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(StoreGameState) ? StoreGameState->GetFreshnessSettings() : nullptr;
+	if (IsValid(World) && IsValid(FreshnessSettings))
+	{
+		CustomerProductRuntimeState.StopFreshnessDecay(
+			World->GetTimeSeconds(),
+			FreshnessSettings->DecayIntervalSeconds,
+			FreshnessSettings->DecayAmountPerInterval);
+	}
+
 	// ProductRow(테이블+행)와 클래스를 함께 남겨야 나중에 원본 그대로 되돌릴 수 있다.
 	// 액터를 파괴하기 전에 기록
 	CustomerState->AddSelectProduct(
 		ProductRow,
 		Product->GetClass(),
-		Product->GetProductRuntimeState(),
+		CustomerProductRuntimeState,
 		SalePriceAtPickup);
 
 	// 실제 지출 금액 기록

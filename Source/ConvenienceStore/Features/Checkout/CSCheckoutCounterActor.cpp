@@ -1,5 +1,6 @@
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 
+#include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Components/ArrowComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -386,6 +387,20 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 		{
 			UE_LOG(LogTemp, Warning,
 				TEXT("[CheckoutCounter] An expired product cannot be checked out: %s"),
+				*SelectedProduct.ProductRow.RowName.ToString());
+			return;
+		}
+
+		const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+			CurrentStoreGameState->GetFreshnessSettings();
+		if (IsValid(FreshnessSettings) &&
+			!SelectedProduct.ProductRuntimeState.HasFreshnessRemaining(
+				World->GetTimeSeconds(),
+				FreshnessSettings->DecayIntervalSeconds,
+				FreshnessSettings->DecayAmountPerInterval))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CheckoutCounter] Freshness가 0인 상품은 결제할 수 없습니다: %s"),
 				*SelectedProduct.ProductRow.RowName.ToString());
 			return;
 		}

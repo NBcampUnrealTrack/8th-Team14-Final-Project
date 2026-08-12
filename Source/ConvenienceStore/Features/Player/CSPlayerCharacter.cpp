@@ -234,11 +234,13 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(PickupActor))
 	{
 		ProductActor->PrepareForPickupPhysics();
+		ProductActor->SetHeldByPlayerForFreshness(true);
 	}
 	else if (ACSDeliveryCrateActor* DeliveryCrate =
 		Cast<ACSDeliveryCrateActor>(PickupActor))
 	{
 		DeliveryCrate->PrepareForPickupPhysics();
+		DeliveryCrate->SetHeldByPlayerForFreshness(true);
 	}
 
 	PickupActor->SetActorEnableCollision(false);
@@ -331,11 +333,17 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		Cast<ACSProductPickupActor>(TargetActor))
 	{
 		ShowProductShelfLife(ProductActor->GetProductRuntimeState());
+		ShowProductFreshness(
+			ProductActor->GetProductRow(),
+			ProductActor->GetCurrentFreshness());
 	}
 	else if (const ACSDeliveryCrateActor* DeliveryCrate =
 		Cast<ACSDeliveryCrateActor>(TargetActor))
 	{
 		ShowProductShelfLife(DeliveryCrate->GetProductRuntimeState());
+		ShowProductFreshness(
+			DeliveryCrate->GetProductRow(),
+			DeliveryCrate->GetCurrentFreshness());
 	}
 }
 
@@ -354,6 +362,21 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		SetPlacementPreviewVisible(false);
         return;
     }
+
+	if (const ACSProductPickupActor* ProductActor =
+		Cast<ACSProductPickupActor>(HeldActor))
+	{
+		ShowProductFreshness(
+			ProductActor->GetProductRow(),
+			ProductActor->GetCurrentFreshness());
+	}
+	else if (const ACSDeliveryCrateActor* DeliveryCrate =
+		Cast<ACSDeliveryCrateActor>(HeldActor))
+	{
+		ShowProductFreshness(
+			DeliveryCrate->GetProductRow(),
+			DeliveryCrate->GetCurrentFreshness());
+	}
 
 	// 진열대에 조준하지 않는 동안에는 이전 위치의 고스트가 남지 않도록 숨깁니다.
 	SetPlacementPreviewVisible(false);
@@ -484,6 +507,11 @@ void ACSPlayerCharacter::DropHeldItem()
 				HeldActor,
 				AimHitResult.ImpactPoint))
 			{
+				if (ACSProductPickupActor* PlacedProduct =
+					Cast<ACSProductPickupActor>(HeldActor))
+				{
+					PlacedProduct->SetHeldByPlayerForFreshness(false);
+				}
             HeldActor = nullptr;
 			DestroyPlacementPreview();
             return;
@@ -567,6 +595,15 @@ void ACSPlayerCharacter::DropHeldItem()
 	else if (IsValid(CrateToDrop))
 	{
 		CrateToDrop->EnableWorldDropPhysics();
+	}
+
+	if (IsValid(ProductToDrop))
+	{
+		ProductToDrop->SetHeldByPlayerForFreshness(false);
+	}
+	else if (IsValid(CrateToDrop))
+	{
+		CrateToDrop->SetHeldByPlayerForFreshness(false);
 	}
 
 }
@@ -860,6 +897,38 @@ void ACSPlayerCharacter::ShowProductShelfLife(
 		FText::Format(
 			NSLOCTEXT("Interaction", "ProductShelfLifeRemaining", "유통기한: {0}일 남음"),
 			FText::AsNumber(RemainingDays)),
+		TextColor);
+}
+
+void ACSPlayerCharacter::ShowProductFreshness(
+	const FDataTableRowHandle& ProductRow,
+	int32 CurrentFreshness) const
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSPlayerCharacter::ShowProductFreshness"));
+	if (!IsValid(StorePlayerController) || ProductData == nullptr)
+	{
+		return;
+	}
+
+	if (ProductData->ShelfType != ECSProductShelfType::ChilledShelf &&
+		ProductData->ShelfType != ECSProductShelfType::FreezerShelf)
+	{
+		return;
+	}
+
+	const int32 DisplayFreshness = FMath::Clamp(CurrentFreshness, 0, 100);
+	const FLinearColor TextColor = DisplayFreshness == 0
+		? FLinearColor(1.0f, 0.25f, 0.25f, 1.0f)
+		: DisplayFreshness <= 50
+			? FLinearColor(1.0f, 0.8f, 0.1f, 1.0f)
+			: FLinearColor::White;
+	StorePlayerController->SetProductFreshness(
+		FText::Format(
+			NSLOCTEXT("Interaction", "ProductFreshness", "신선도: {0}%"),
+			FText::AsNumber(DisplayFreshness)),
 		TextColor);
 }
 

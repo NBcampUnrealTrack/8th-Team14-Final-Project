@@ -116,6 +116,9 @@ private:
 		const FDataTableRowHandle& ProductRow,
 		int32 RemainingQuantity = INDEX_NONE) const;
 	void ShowProductShelfLife(const FCSProductRuntimeState& RuntimeState) const;
+	void ShowProductFreshness(
+		const FDataTableRowHandle& ProductRow,
+		int32 CurrentFreshness) const;
 	void ShowStorageWarning(const FDataTableRowHandle& ProductRow) const;
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
 	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);

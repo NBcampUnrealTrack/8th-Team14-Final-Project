@@ -8,6 +8,7 @@
 class ACSStoreGameState;
 class UDataTable;
 class UCSStoreProgressionDataAsset;
+class UCSFreshnessSettingsDataAsset;
 
 // 준비, 영업, 마감 업무, 다음 날 상태로 이어지는 하루 흐름을 제어합니다.
 UCLASS()
@@ -46,6 +47,10 @@ protected:
 	// 상점 레벨과 평판의 초기값 및 임계값을 제공하는 성장 설정입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Progression")
 	TObjectPtr<UCSStoreProgressionDataAsset> StoreProgressionDataAsset;
+
+	// 상품 신선도의 초기값과 시간 기반 감소량을 제공하는 전역 설정입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Freshness")
+	TObjectPtr<UCSFreshnessSettingsDataAsset> FreshnessSettingsDataAsset;
 
 	// 하루를 시작할 게임 내 시각입니다. 기본값은 08:00 AM입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time", meta = (ClampMin = "0", ClampMax = "1440"))

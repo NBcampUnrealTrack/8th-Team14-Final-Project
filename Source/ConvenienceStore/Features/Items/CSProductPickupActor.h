@@ -83,6 +83,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Product|ShelfLife")
 	bool IsSellable() const;
 
+	UFUNCTION(BlueprintPure, Category = "Product|Freshness")
+	int32 GetCurrentFreshness() const;
+
 	// 바닥 물리를 중지하고 메시를 상품별 정상 상대 Transform으로 복원합니다.
 	void PrepareForPickupPhysics();
 
@@ -91,6 +94,10 @@ public:
 
 	// 진열대 호환성을 위해 보관 환경을 기록하지만 유통기한에는 영향을 주지 않습니다.
 	void SetStorageShelfType(ECSProductShelfType InStorageShelfType);
+
+	void EnterFreshnessSafeZone(ECSProductShelfType SafeStorageType);
+	void ExitFreshnessSafeZone(ECSProductShelfType SafeStorageType);
+	void SetHeldByPlayerForFreshness(bool bIsHeldByPlayer);
 
 	// 계산대 연출처럼 실제 재고로 취급하지 않을 표시용 상품을 재고 집계에서 제외합니다.
 	void SetExcludedFromStockCount(bool bShouldExclude)
@@ -144,6 +151,12 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|Runtime")
 	FCSProductRuntimeState ProductRuntimeState;
 
+	UPROPERTY(Transient)
+	int32 MatchingFreshnessSafeZoneCount = 0;
+
+	UPROPERTY(Transient)
+	bool bIsHeldByPlayerForFreshness = false;
+
 	UFUNCTION()
 	void HandlePawnOverlap(
 		UPrimitiveComponent* OverlappedComponent,
@@ -155,4 +168,5 @@ protected:
 
 	void ApplyProductVisual();
 	void EnsureProductRuntimeStateInitialized();
+	void UpdateFreshnessDecayState();
 };
