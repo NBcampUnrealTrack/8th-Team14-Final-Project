@@ -113,9 +113,9 @@ bool FCSCond_WantsMoreItems::TestCondition(FStateTreeExecutionContext& Context) 
 			}
 			else
 			{
-				// 담은 개수를 바탕으로 하나 더 담을 확률을 구하고 그 확률로 동전 던지기
-				const float ContinueProbability = Decision->ContinueShoppingProbability(ItemsInBasket);
-				bResult = (FMath::FRand() < ContinueProbability);
+				// 확률 계산 + 굴림을 컴포넌트 안에서 한 번에 처리
+				// 전역 FMath::FRand() 대신 그 손님의 RandomStream을 써서 재현 가능해짐
+				bResult = Decision->RollContinueShopping(ItemsInBasket);
 			}
 		}
 	}

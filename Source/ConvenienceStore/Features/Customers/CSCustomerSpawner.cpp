@@ -10,6 +10,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/CSCustomerVisualDataAsset.h"
 
+extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
+
 ACSCustomerSpawner::ACSCustomerSpawner()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -18,6 +20,10 @@ ACSCustomerSpawner::ACSCustomerSpawner()
 void ACSCustomerSpawner::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// 여기서 딱 한 번만 시드를 잡아야 이후 종족 배정 + 손님별 파생 시드가 전부 결정론적으로 나옴
+	const int32 FixedSeed = CVarCS_FixedSeed.GetValueOnGameThread();
+	MasterStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
 	GetWorldTimerManager().SetTimer(
 		SpawnTimerHandle,
@@ -41,7 +47,8 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 	if (TotalWeight <= 0.f) return Archetypes[0]; // 가중치가 전부 0이면 첫 종족으로 폴백
 
 	// 0~TotalWeight 사이 난수를 뽑아 가중치를 누적하며 그 난수를 처음 넘는 종족을 선택
-	const float Roll = FMath::FRandRange(0.f, TotalWeight);
+	const float Roll = MasterStream.FRandRange(0.f, TotalWeight);
+
 	float Cumulative = 0.f;
 	for (const auto& Candidate : Archetypes)
 	{
@@ -168,7 +175,11 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	{
 		Decision->Archetype = PickArchetypeBySpawnWeight();
 
-		// 종족의 외형 데이터를 찾아 메시/애니메이션을 적용
+		// 이 손님 전용 파생 시드 주입 마스터 스트림에서 하나 뽑아 넘기면
+		// 이 손님의 예산 추첨/구매 판단 굴림이 전부 이 시드로만 결정됨
+		const int32 CustomerSeed = MasterStream.RandHelper(MAX_int32);
+		Decision->InitializeRandomStream(CustomerSeed);
+
 		if (Decision->Archetype != nullptr)
 		{
 			ApplyCustomerVisual(Customer, Decision->Archetype->Visual);

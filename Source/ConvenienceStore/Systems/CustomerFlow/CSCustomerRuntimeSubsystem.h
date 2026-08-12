@@ -32,6 +32,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Math/RandomStream.h"
 #include "CSCustomerRuntimeSubsystem.generated.h"
 
 class ACSCustomerCharacter;
@@ -121,6 +122,9 @@ public:
 
 	// 순번에 해당하는 월드 위치 (계산대가 알려주는 좌표)
 	FVector GetQueueSlotLocation(const int32 Index) const;
+
+	// 진열대 선택/반환 굴림용 스트림. 여러 함수가 const라서 mutable 필요
+	mutable FRandomStream ShelfRandomStream;
 
 	//지금 줄 맨 앞 손님 (없으면 nullptr)
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
