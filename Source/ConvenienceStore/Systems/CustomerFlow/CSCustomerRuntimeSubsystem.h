@@ -49,6 +49,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCheckoutAbandoned,ACSCustomerC
 // 손님이 매장을 완전히 떠날 때(FCSTask_LeaveAndDespawn에서 파괴 직전) 방송
 // bCheckoutDone이 false면 결제를 한 번도 완료하지 못하고 빈손으로 나간 것 : 빈손 퇴장률 집계에 사용
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCustomerDespawned, ACSCustomerCharacter*, Customer, bool, bCheckoutDone);
+// 절도 시작 방송(디버그용 테스트). AtRiskGold는 들고 나가려는 상품의 판매가 합계.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftStarted,ACSCustomerCharacter*, Customer, int32, AtRiskGold);
+// 빌런 도주 성공 방송매, 매출/평판 집계는 이것을 구독하세요.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftEscaped,ACSCustomerCharacter*, Customer, int32, LostGold);
 
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
@@ -216,6 +220,17 @@ public:
 	// 처리 후 손님의 구매 목록은 비워진다. 반환값 = 슬롯에 실제로 들어간 개수
 	int32 ReturnCustomerItemsToShelf(ACSCustomerCharacter* Customer, AActor* ShelfActor);
 
+	// =====================================================================
+	// 빌런
+	// =====================================================================
+
+	// 손님이 계산하지 않고 상품을 든 채 도주하는 로직
+	// 빌런 행동을 했는지 체크용 + 빌런이 발생해서 처리해야할 함수를 구독해야하는 부분
+	void CommitShoplift(ACSCustomerCharacter* Customer);
+
+	// 절도범이 사라지기 직전에 호출. 손실이 일어났다고 알리는 부분
+	// NotifyCustomerDespawned 안에서 불리므로 태스크가 직접 부를 일은 없습니다.
+	void ReportShopliftEscaped(ACSCustomerCharacter* Customer);
 
 	// =====================================================================
 	// 이벤트
@@ -232,6 +247,12 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnCustomerDespawned OnCustomerDespawned; // 손님 퇴장(파괴) 순간 방송. 빈손 퇴장률 등 통계용
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnShopliftStarted OnShopliftStarted; // 절도 시작. 경고 연출용
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnShopliftEscaped OnShopliftEscaped; // 도주 성공. 손실/평판 집계용
 
 private:
 	UPROPERTY()

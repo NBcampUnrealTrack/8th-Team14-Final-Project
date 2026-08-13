@@ -9,6 +9,7 @@
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/CSCustomerVisualDataAsset.h"
+#include "Data/CSVillainTypes.h"
 
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
 
@@ -90,6 +91,61 @@ void ACSCustomerSpawner::ApplyCustomerVisual(ACSCustomerCharacter* Customer, con
 		// ABP가 없을 때 쓰는 간이 재생 방식
 		MeshComp->PlayAnimation(Visual->FallbackWalkAnimation, /*bLooping=*/ true);
 	}
+}
+
+ECSVillainAction ACSCustomerSpawner::RollVillainAction(const UCSCustomerArchetypeDataAsset* Archetype,
+	FRandomStream& Stream) const
+{
+	//데이터가 없거나	빌런이 될 확률 0인 경우
+	if (Archetype == nullptr || Archetype->VillainChance <= 0.0f)
+	{
+		return ECSVillainAction::None;
+	}
+
+	// 빌런이 되는지 안되는지 정해지는 곳
+	if (Stream.FRand() >= Archetype->VillainChance)
+	{
+		return ECSVillainAction::None;
+	}
+
+	// 빌런 행동 중 무엇을 할지 고르기 위해, 각 행동의 비중(Weight)을  더해 총합을 구하는 로직
+	// (PickArchetypeBySpawnWeight와 완전히 같은 누적 가중 방식)
+	float TotalWeight = 0.0f;
+	for (int32 i = 0; i < Archetype->VillainActionWeights.Num(); i++)
+	{
+		if (Archetype->VillainActionWeights[i].Action == ECSVillainAction::None)
+		{
+			continue;
+		}
+		TotalWeight += FMath::Max(Archetype->VillainActionWeights[i].Weight, 0.0f);
+	}
+
+	// 빌런으로 됬는데 데이터에 행동이 하나도 안 적혀 있거나 가중치 합이 0일 경우 발생하는 오류 방어 코드
+	if (TotalWeight <= 0.0f)
+	{
+		return ECSVillainAction::None;
+	}
+
+	//총합 사이의 난수를 하나 뽑은 뒤, 항목들을 순회하며 가중치를 누적합니다. 누적값이 난수보다 커지는 순간의 행동을 선택
+	const float Roll = Stream.FRandRange(0.0f, TotalWeight);
+
+	float Cumulative = 0.0f;
+	for (int32 i = 0; i < Archetype->VillainActionWeights.Num(); i++)
+	{
+		if (Archetype->VillainActionWeights[i].Action == ECSVillainAction::None)
+		{
+			continue;
+		}
+
+		Cumulative += FMath::Max(Archetype->VillainActionWeights[i].Weight, 0.0f);
+		if (Roll <= Cumulative)
+		{
+			return Archetype->VillainActionWeights[i].Action;
+		}
+	}
+
+	// 부동소수점 오차로 어느 구간에도 안 걸렸을 때의 폴백
+	return Archetype->VillainActionWeights.Last().Action;
 }
 
 void ACSCustomerSpawner::TrySpawnCustomer()
@@ -180,6 +236,28 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		// 이 손님의 예산 추첨/구매 판단 굴림이 전부 이 시드로만 결정됨
 		const int32 CustomerSeed = MasterStream.RandHelper(MAX_int32);
 		Decision->InitializeRandomStream(CustomerSeed);
+
+		// [빌런 판정 로직] (추후에 맵에 대해서 빌런 확률 더 증가한다 이런게 추가되면 값을 받아와서 계산하는 로직을 추가)
+		// 빌런 판정용 파생 시드 하나 더 발급
+		const int32 VillainSeed = MasterStream.RandHelper(MAX_int32);
+		FRandomStream VillainStream(VillainSeed);
+
+		// 빌런 행동 추첨
+		// 결과가 일반 손님이면 ECSVillainAction::None이 반환
+		const ECSVillainAction VillainAction = RollVillainAction(Decision->Archetype, VillainStream);
+
+		// 디버그 로직 (빌런 생성될때)
+		if (State != nullptr && VillainAction != ECSVillainAction::None)
+		{
+			State->AssignVillainAction(VillainAction);
+
+			UE_LOG(LogTemp, Warning, TEXT("[빌런배정] %s | 종족=%s | 행동=%s"),
+			   *Customer->GetName(),
+			   Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"),
+			   *UEnum::GetDisplayValueAsText(VillainAction).ToString());
+		}
+
+		// =============
 
 		if (Decision->Archetype != nullptr)
 		{
