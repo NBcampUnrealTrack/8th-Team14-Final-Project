@@ -10,6 +10,7 @@
 class ACSCustomerCharacter;
 class UCSCustomerArchetypeDataAsset;
 class UCSCustomerVisualDataAsset;
+enum class ECSVillainAction : uint8;
 
 UCLASS()
 class CONVENIENCESTORE_API ACSCustomerSpawner : public AActor
@@ -67,4 +68,7 @@ private:
 
 	// 종족의 Visual 데이터를 읽어 손님 캐릭터의 메시/애니메이션을 적용함
 	void ApplyCustomerVisual(ACSCustomerCharacter* Customer, const UCSCustomerVisualDataAsset* Visual) const;
+
+	// 아키타입의 VillainChance / VillainActionWeights를 읽어 이 손님의 빌런 행동을 결정.
+	ECSVillainAction RollVillainAction(const UCSCustomerArchetypeDataAsset* Archetype,FRandomStream& Stream) const;
 };

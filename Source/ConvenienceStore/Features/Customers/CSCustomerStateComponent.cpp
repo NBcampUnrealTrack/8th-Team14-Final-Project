@@ -73,6 +73,41 @@ bool UCSCustomerStateComponent::HasVisited(const AActor* ShelfActor) const
 	return false;
 }
 
+bool UCSCustomerStateComponent::AssignVillainAction(ECSVillainAction NewAction)
+{
+	// 빌런 해제(None 대입)는 지원하지 X
+	// 한번 악인은 영원한 악인
+	if (NewAction == ECSVillainAction::None)
+	{
+		return false;
+	}
+
+	// 이미 저지른 손님은 다시 빌런이 되지 않게
+	if (bVillainActionDone)
+	{
+		return false;
+	}
+
+	PlannedVillainAction = NewAction;
+	return true;
+}
+
+bool UCSCustomerStateComponent::IsVillain() const
+{
+	return PlannedVillainAction != ECSVillainAction::None;
+}
+
+bool UCSCustomerStateComponent::HasPendingVillainAction() const
+{
+	// 빌런이고, 아직 저지르지 않았을 때만 참
+	return IsVillain() && (bVillainActionDone == false);
+}
+
+void UCSCustomerStateComponent::MarkVillainActionDone()
+{
+	bVillainActionDone = true;
+}
+
 void UCSCustomerStateComponent::RecordSpending(int32 Amount)
 {
 	SpentGold += Amount;

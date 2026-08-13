@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSVillainTypes.h"
 #include "CSCustomerArchetypeDataAsset.generated.h"
 
 class UCSCustomerVisualDataAsset;
@@ -151,6 +152,19 @@ public:
 	// 중간값(BudgetMedianGold)이 아니라 그 손님이 뽑은 값을 넘겨야 함
 	UFUNCTION(BlueprintPure, Category = "Archetype|Budget")
 	int32 GetHardWalletLimitGold(int32 SoftBudgetGold) const;
+
+	// 빌런(백록담님 언제든 수정 가능합니다) -------
+
+	// 스폰된 손님이 빌런일 확률.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Villain",
+	meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float VillainChance = 0.0f;
+
+	// 빌런이 무슨 짓을 할지의 가중치 목록.
+	// (예를들어 10대는 훔치는것보다 주류를 더 훔칠려고 한다 등등)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Villain")
+	TArray<FCSVillainActionWeight> VillainActionWeights;
+
 
 	// 외형 -------
 
