@@ -196,9 +196,17 @@ public:
 	// 구매 완료 여부를 읽어 OnCustomerDespawned로 방송한다 : 빈손 퇴장률 집계용
 	void NotifyCustomerDespawned(ACSCustomerCharacter* Customer);
 
-	// [임시] 되돌려놓기 확률 기본값. 소비심리 로직이 붙기 전까지  이 값을 사용, 두 행동이 다 보여야 검증이 되므로 0.5로 설정
+	// 폴백값
 	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DefaultReturnToShelfChance = 0.5f;
+
+	// 가장 침착한 손님(Impulsiveness=0)이 상품을 되돌려놓으러 갈 확률 상한
+	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxReturnToShelfChance = 0.8f;
+
+	// 가장 충동적인 손님(Impulsiveness=1)이 상품을 되돌려놓으러 갈 확률 하한
+	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinReturnToShelfChance = 0.2f;
 
 	// 레벨의 진열대 중 하나를 랜덤으로 반환. 진열대가 하나도 없으면 nullptr.
 	// [임시] 동선을 어떻게 될지 확정되면 교체 예정.

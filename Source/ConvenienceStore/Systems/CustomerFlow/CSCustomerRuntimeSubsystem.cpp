@@ -625,8 +625,18 @@ ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const F
 
 float UCSCustomerRuntimeSubsystem::GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const
 {
-	// TODO(소비심리 파트): 손님 소비심리에 따라 다른 값을 반환하도록 교체
-	return DefaultReturnToShelfChance;
+	const UCSPurchaseDecisionComponent* Decision = IsValid(Customer)
+		? Customer->FindComponentByClass<UCSPurchaseDecisionComponent>()
+		: nullptr;
+
+	// 종족 카드가 없으면(비정상 상황) 계산할 재료가 없으니 예전처럼 고정값 그대로 반환
+	if (Decision == nullptr || Decision->Archetype == nullptr)
+	{
+		return DefaultReturnToShelfChance;
+	}
+
+	// 충동성 0(침착)~1(충동적)을 MaxReturnToShelfChance~MinReturnToShelfChance 사이로 부드럽게 매핑
+	return FMath::Lerp(MaxReturnToShelfChance, MinReturnToShelfChance, Decision->Archetype->Impulsiveness);
 }
 
 AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
