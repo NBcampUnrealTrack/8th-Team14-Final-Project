@@ -334,8 +334,6 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 		ItemsInBasket);
 	const int32 SafeItemCount = FMath::Max(ItemsInBasket, 1);
 
-	// 다다익선을 막는 상한은 Archetype의 EvaluationBudget(체류 중 볼 수 있는
-	// 상품 개수 한도)이 이미 담당하므로 여기서 중복으로 자를 필요가 없음
 	const float TargetBasketSize = Archetype ? Archetype->TargetBasketSize : 2.7f;
 	const float SafeTarget = FMath::Max(TargetBasketSize, 1.01f);
 	const float BaseProbability = 1.0f - (1.0f / SafeTarget);
