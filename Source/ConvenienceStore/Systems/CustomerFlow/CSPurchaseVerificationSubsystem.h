@@ -54,4 +54,7 @@ private:
 
 	// 그중 결제를 한 번도 완료하지 못하고 빈손으로 나간 손님 수
 	int32 EmptyHandedDepartures = 0;
+
+	// 결제는 못 했지만 계산 포기(대기열 시간 초과)로 나간 손님 수
+	int32 CheckoutAbandonedDepartures = 0;
 };
