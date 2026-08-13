@@ -429,6 +429,11 @@ void ACSProductPickupActor::UpdateSpoiledVFX()
 void ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged(float NewGameMinutes)
 {
 	(void)NewGameMinutes;
+	if (!ProductRuntimeState.bFreshnessInitialized)
+	{
+		EnsureProductRuntimeStateInitialized();
+	}
+
 	UpdateSpoiledVFX();
 }
 
