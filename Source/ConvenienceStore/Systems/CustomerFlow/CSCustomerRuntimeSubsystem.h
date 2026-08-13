@@ -46,6 +46,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutCompleted, ACSCustomerC
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnItemTaken, ACSCustomerCharacter*, Customer, FName, ProductId);
 // 계산을 포기하고 떠날 때 방송. WaitedSeconds는 줄에서 기다린 시간. 만족도 하락, 평판, 매출 손실 계산은 구독하는 쪽에서 처리
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCheckoutAbandoned,ACSCustomerCharacter*, Customer,float, WaitedSeconds);
+// 손님이 매장을 완전히 떠날 때(FCSTask_LeaveAndDespawn에서 파괴 직전) 방송
+// bCheckoutDone이 false면 결제를 한 번도 완료하지 못하고 빈손으로 나간 것 : 빈손 퇴장률 집계에 사용
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCustomerDespawned, ACSCustomerCharacter*, Customer, bool, bCheckoutDone);
+
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
 {
@@ -180,6 +184,10 @@ public:
 	// [임시] ["백록담"]님 파트 연동 시 이 함수 내부만 교체
 	float GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const;
 
+	// 손님이 매장을 완전히 떠날 때 호출
+	// 구매 완료 여부를 읽어 OnCustomerDespawned로 방송한다 : 빈손 퇴장률 집계용
+	void NotifyCustomerDespawned(ACSCustomerCharacter* Customer);
+
 	// [임시] 되돌려놓기 확률 기본값. 소비심리 로직이 붙기 전까지  이 값을 사용, 두 행동이 다 보여야 검증이 되므로 0.5로 설정
 	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float DefaultReturnToShelfChance = 0.5f;
@@ -205,6 +213,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnCheckoutAbandoned OnCheckoutAbandoned; // 계산 포기 순간 방송. 만족도/평판/통계 파트 구독용
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnCustomerDespawned OnCustomerDespawned; // 손님 퇴장(파괴) 순간 방송. 빈손 퇴장률 등 통계용
 
 private:
 	UPROPERTY()

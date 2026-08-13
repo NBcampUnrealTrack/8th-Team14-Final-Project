@@ -7,7 +7,6 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSPurchaseDecisionTypes.h"
-#include "Data/CSCustomerArchetypeDataAsset.h" // 로그 삭제시 같이 삭제
 
 // =====================================================================
 // PickNextShelf
@@ -179,15 +178,6 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			{
 				// 결정된 상품을 실제로 집음 (재고 차감 + 장바구니 기록은 TakeProduct 내부 처리)
 				Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
-
-				UE_LOG(LogTemp, Warning, TEXT("[구매판단] %s | 종족=%s | 결과=구매"), *Customer->GetName(),
-					Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"));
-			}
-			else
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[구매판단] %s | 종족=%s | 결과=미구매(패스)"),
-					*Customer->GetName(),
-					Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"));
 			}
 		}
 	}
@@ -334,17 +324,29 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 		return EStateTreeRunStatus::Failed;
 	}
 
+	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+
 	const EPathFollowingRequestResult::Type Result =
 		Data.AIController->MoveToLocation(State->ExitLocation, Data.AcceptanceRadius);
 
 	if (Result == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
+		// 빈손 퇴장률 집계용 : 파괴 직전에 구매 완료 여부를 방송
+		if (Subsystem != nullptr)
+		{
+			Subsystem->NotifyCustomerDespawned(Data.Actor);
+		}
+
 		Data.Actor->Destroy();
 		return EStateTreeRunStatus::Succeeded;
 	}
 	if (Result == EPathFollowingRequestResult::Failed)
 	{
 		// 경로를 못 찾아도 남겨두면 유령 손님이 되므로 그냥 제거
+		if (Subsystem != nullptr)
+		{
+			Subsystem->NotifyCustomerDespawned(Data.Actor);
+		}
 		Data.Actor->Destroy();
 		return EStateTreeRunStatus::Succeeded;
 	}
@@ -363,6 +365,12 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::Tick(FStateTreeExecutionContext& Co
 
 	if (Data.AIController->GetMoveStatus() == EPathFollowingStatus::Idle)
 	{
+		// 빈손 퇴장률 집계용 : 파괴 직전에 구매 완료 여부를 방송
+		if (UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			Subsystem->NotifyCustomerDespawned(Data.Actor);
+		}
+
 		// 이동이 완료되면 도달 여부와 무관하게 무조건 삭제
 		Data.Actor->Destroy();
 		return EStateTreeRunStatus::Succeeded;

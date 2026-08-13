@@ -17,12 +17,10 @@ struct FCSPurchaseCandidate
 
 	// 실제로 진열대 위에 놓여 있는 상품 액터
 	// 손님이 이 후보를 선택하면 이 액터를 TakeProduct()에 넘겨 집게 됨
-	// (TakeProduct 연동은 아직 구현 안 됐음 일단 자리만)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Purchase")
 	TObjectPtr<AActor> ProductActor = nullptr;
 
 	// 이 후보에 매겨진 0~1 점수
-	// 지금은 임시값
 	UPROPERTY(BlueprintReadOnly, Category = "Purchase")
 	float Score = 0.f;
 };

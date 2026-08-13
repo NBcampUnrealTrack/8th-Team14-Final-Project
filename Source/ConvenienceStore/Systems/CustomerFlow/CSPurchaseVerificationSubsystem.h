@@ -33,6 +33,10 @@ private:
 	UFUNCTION()
 	void HandleCheckoutCompleted(ACSCustomerCharacter* Customer);
 
+	// CSCustomerRuntimeSubsystem::OnCustomerDespawned를 구독하는 핸들러
+	UFUNCTION()
+	void HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone);
+
 	// 누적 통계를 바탕으로 평균 장바구니 개수 / 1개만 산 비율을 계산해 로그로 출력합
 	void LogSummary() const;
 
@@ -44,4 +48,10 @@ private:
 
 	// 1개만 사고 간 손님 수
 	int32 SingleItemCheckouts = 0;
+
+	// 매장을 완전히 떠난 손님 총원 (구매 여부 무관)
+	int32 TotalCustomersLeft = 0;
+
+	// 그중 결제를 한 번도 완료하지 못하고 빈손으로 나간 손님 수
+	int32 EmptyHandedDepartures = 0;
 };

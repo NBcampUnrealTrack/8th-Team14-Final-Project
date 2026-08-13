@@ -12,6 +12,7 @@ void UCSPurchaseVerificationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	if (UCSCustomerRuntimeSubsystem* RuntimeSubsystem = InWorld.GetSubsystem<UCSCustomerRuntimeSubsystem>())
 	{
 		RuntimeSubsystem->OnCheckoutCompleted.AddDynamic(this, &UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted);
+		RuntimeSubsystem->OnCustomerDespawned.AddDynamic(this, &UCSPurchaseVerificationSubsystem::HandleCustomerDespawned);
 	}
 }
 
@@ -23,6 +24,7 @@ void UCSPurchaseVerificationSubsystem::Deinitialize()
 		if (UCSCustomerRuntimeSubsystem* RuntimeSubsystem = World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
 		{
 			RuntimeSubsystem->OnCheckoutCompleted.RemoveDynamic(this, &UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted);
+			RuntimeSubsystem->OnCustomerDespawned.RemoveDynamic(this, &UCSPurchaseVerificationSubsystem::HandleCustomerDespawned);
 		}
 	}
 
@@ -64,6 +66,17 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 	}
 }
 
+void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone)
+{
+	++TotalCustomersLeft;
+	const float SingleItemRatio = static_cast<float>(SingleItemCheckouts) / static_cast<float>(TotalCheckouts) * 100.0f;
+
+	if (!bCheckoutDone)
+	{
+		++EmptyHandedDepartures;
+	}
+}
+
 void UCSPurchaseVerificationSubsystem::LogSummary() const
 {
 	if (TotalCheckouts == 0)
@@ -77,8 +90,13 @@ void UCSPurchaseVerificationSubsystem::LogSummary() const
 	// 1개만 산 비율(%) = 1개만 산 손님 수 / 전체 손님 수 × 100
 	const float SingleItemRatio = static_cast<float>(SingleItemCheckouts) / static_cast<float>(TotalCheckouts) * 100.0f;
 
+	// 빈손 퇴장률 = 빈손으로 나간 손님 / 매장을 떠난 손님 총원 × 100
+	const float EmptyHandedRatio = (TotalCustomersLeft > 0)
+	? (static_cast<float>(EmptyHandedDepartures) / static_cast<float>(TotalCustomersLeft) * 100.0f)
+	: 0.0f;
+
 	// 요약 로그는 Warning 레벨로
 	UE_LOG(LogTemp, Warning,
-		TEXT("[구매검증 요약] 누적 %d명 | 평균 장바구니=%.2f개 (목표 2.5~3.0) | 1개만 구매 비율=%.1f%% (목표 37~50%%)"),
-		TotalCheckouts, AverageBasketSize, SingleItemRatio);
+		TEXT("[구매검증 요약] 누적 %d명 | 평균 장바구니=%.2f개 (목표 2.5~3.0) | 1개만 구매 비율=%.1f%% (목표 37~50%%) | 빈손 퇴장률=%.1f%% (목표 10~15%%)"),
+		TotalCheckouts, AverageBasketSize, SingleItemRatio, EmptyHandedRatio);
 }

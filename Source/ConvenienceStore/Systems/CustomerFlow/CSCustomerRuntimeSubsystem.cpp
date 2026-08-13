@@ -273,10 +273,6 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 	// 실제 지출 금액 기록
 	CustomerState->RecordSpending(SalePriceAtPickup);
 
-	//pr2
-	UE_LOG(LogTemp, Warning, TEXT("[TEMP-지출] %s 구매금액=%d 누적지출=%d"),
-	*ProductId.ToString(), SalePriceAtPickup, CustomerState->SpentGold);
-
 	if (CustomerState->SelectProducts.Num() > 0)
 	{
 		// 실제 상품을 제거하기 전에 같은 데이터로 장바구니 표시용 상품을 추가합니다.
@@ -445,6 +441,18 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	OnCheckoutAbandoned.Broadcast(Customer, WaitedSeconds);
 
 	UE_LOG(LogTemp, Log,TEXT("[CSCustomerRuntimeSubsystem] %s 가 %.1f초 대기 후 계산을 포기했습니다."),*Customer->GetName(), WaitedSeconds);
+}
+
+void UCSCustomerRuntimeSubsystem::NotifyCustomerDespawned(ACSCustomerCharacter* Customer)
+{
+	const UCSCustomerStateComponent* CustomerState = IsValid(Customer)
+		? Customer->GetCustomerState()
+		: nullptr;
+
+	// CustomerState가 없으면(비정상 상황) 빈손으로 취급
+	const bool bCheckoutDone = IsValid(CustomerState) && CustomerState->bCheckoutDone;
+
+	OnCustomerDespawned.Broadcast(Customer, bCheckoutDone);
 }
 
 int32 UCSCustomerRuntimeSubsystem::DropCustomerItems(ACSCustomerCharacter* Customer)
