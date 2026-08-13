@@ -4,6 +4,8 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
+#include "Features/Tools/CSUsableTool.h"
+#include "Features/Tools/CSUsableToolActor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
@@ -126,6 +128,12 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
     EnhancedInputComponent->BindAction(
         DropAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::DropHeldItem);
 
+	if (PrimaryUseAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			PrimaryUseAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryUsePrimaryTool);
+	}
+
     EnhancedInputComponent->BindAction(
         ToggleClockAction, ETriggerEvent::Started, this,
         &ACSPlayerCharacter::ToggleClock);
@@ -208,7 +216,19 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 	if (IsValid(HeldActor))
 	{
-		UpdatePlacementPreview();
+		if (HeldActor->Implements<UCSUsableTool>())
+		{
+			// 도구를 들고 있을 때는 상품 배치 프리뷰 대신 기존 조준 안내만 숨깁니다.
+			if (ACSStorePlayerController* StorePlayerController =
+				Cast<ACSStorePlayerController>(GetController()))
+			{
+				StorePlayerController->ClearInteractionContext();
+			}
+		}
+		else
+		{
+			UpdatePlacementPreview();
+		}
 	}
 	else
 	{
@@ -242,6 +262,11 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 		DeliveryCrate->PrepareForPickupPhysics();
 		DeliveryCrate->SetHeldByPlayerForFreshness(true);
 	}
+	else if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(PickupActor))
+	{
+		// 물리 상태의 루트 메시를 부착하면 실패할 수 있으므로 부착 전에 먼저 물리를 해제합니다.
+		ToolActor->PrepareForPickupPhysics();
+	}
 
 	PickupActor->SetActorEnableCollision(false);
 	PickupActor->AttachToComponent(
@@ -255,6 +280,12 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	}
 
 	HeldActor = PickupActor;
+
+	if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(HeldActor))
+	{
+		// 도구는 손에 든 상태와 물리를 정리해 좌클릭 사용 가능 여부를 판단합니다.
+		ToolActor->OnEquipped(this);
+	}
 
 	// 들고 있는 대상에 맞춰 실제 진열될 상품의 고스트 프리뷰를 생성합니다.
 	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(HeldActor))
@@ -547,6 +578,7 @@ void ACSPlayerCharacter::DropHeldItem()
 	AActor* ActorToDrop = HeldActor;
 	ACSProductPickupActor* ProductToDrop = Cast<ACSProductPickupActor>(ActorToDrop);
 	ACSDeliveryCrateActor* CrateToDrop = Cast<ACSDeliveryCrateActor>(ActorToDrop);
+	ACSUsableToolActor* ToolToDrop = Cast<ACSUsableToolActor>(ActorToDrop);
 
 	// Bounds 계산 전에 물리를 끄고 메시를 정상 SceneRoot/상대 Transform 상태로 맞춥니다.
 	if (IsValid(ProductToDrop))
@@ -586,6 +618,11 @@ void ACSPlayerCharacter::DropHeldItem()
 	ActorToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	ActorToDrop->SetActorLocation(DropLocation);
 	ActorToDrop->SetActorEnableCollision(true);
+	if (IsValid(ToolToDrop))
+	{
+		ToolToDrop->OnUnequipped();
+		ToolToDrop->EnableWorldDropPhysics();
+	}
 
 	// 최종 안전 위치로 이동한 뒤 실제 월드 Drop 대상의 메시 물리만 활성화합니다.
 	if (IsValid(ProductToDrop))
@@ -606,6 +643,17 @@ void ACSPlayerCharacter::DropHeldItem()
 		CrateToDrop->SetHeldByPlayerForFreshness(false);
 	}
 
+}
+
+void ACSPlayerCharacter::TryUsePrimaryTool()
+{
+	if (!IsValid(HeldActor) || !HeldActor->Implements<UCSUsableTool>())
+	{
+		return;
+	}
+
+	// 현재 장착한 도구만 주 사용 입력을 처리하므로 청소 도구도 같은 흐름으로 확장할 수 있습니다.
+	ICSUsableTool::Execute_UsePrimary(HeldActor, this);
 }
 
 void ACSPlayerCharacter::CreatePlacementPreview(ACSProductPickupActor* ProductActor)
