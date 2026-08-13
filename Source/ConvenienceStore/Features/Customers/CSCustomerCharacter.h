@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Features/Tools/CSHitReactable.h"
 #include "GameFramework/Character.h"
 #include "CSCustomerCharacter.generated.h"
 
@@ -14,7 +15,7 @@ class ACSCustomerShoppingBagActor;
 struct FCSSelectProduct;
 
 UCLASS()
-class CONVENIENCESTORE_API ACSCustomerCharacter : public ACharacter
+class CONVENIENCESTORE_API ACSCustomerCharacter : public ACharacter, public ICSHitReactable
 {
 	GENERATED_BODY()
 
@@ -31,6 +32,12 @@ public:
 	void SetBasketDisplayVisible(bool bShouldBeVisible);
 	// 결제가 확정된 고객에게 장바구니 대신 봉투를 보여 줍니다.
 	void ShowShoppingBag();
+
+	// 마법 투사체에 맞았을 때 공격이 진행한 방향으로 고객을 밀어냅니다.
+	virtual void ApplyMagicHit_Implementation(
+		FVector HitLocation,
+		FVector ImpactDirection,
+		float KnockbackStrength) override;
 
 
 	// 계산을 포기했을 때 상품을 내려놓기 시작할 지점 SideIndex: 0 = 왼쪽, 1 = 오른쪽
@@ -70,5 +77,10 @@ protected:
 	//떨어질 위치 화살표 컴포넌트 (오른쪽)
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Drop")
 	TObjectPtr<UArrowComponent> DropOriginRight;
+
+	// 넉백 시 약간 위로 뜨도록 더하는 수직 속도입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Magic Hit",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float MagicKnockbackUpwardStrength = 250.0f;
 
 };
