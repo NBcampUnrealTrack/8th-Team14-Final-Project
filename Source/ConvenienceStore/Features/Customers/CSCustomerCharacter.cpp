@@ -9,6 +9,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Engine/Engine.h"
 
 // Sets default values
 ACSCustomerCharacter::ACSCustomerCharacter()
@@ -122,6 +123,34 @@ void ACSCustomerCharacter::ShowShoppingBag()
 			BasketAnchor,
 			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 	}
+}
+
+void ACSCustomerCharacter::ApplyMagicHit_Implementation(
+	FVector HitLocation,
+	FVector ImpactDirection,
+	float KnockbackStrength)
+{
+	// 투사체가 배 쪽에서 들어오면 등 방향으로 밀리도록 공격 진행 방향을 사용합니다.
+	FVector LaunchVelocity = ImpactDirection.GetSafeNormal() * FMath::Max(0.0f, KnockbackStrength);
+	LaunchVelocity.Z += MagicKnockbackUpwardStrength;
+
+	// 넉백 연출을 점검하기 전까지는 실제 이동 대신 피격 정보만 출력합니다.
+	const FString DebugMessage = FString::Printf(
+		TEXT("[Magic Hit] Target: %s | Strength: %.0f | Direction: %s"),
+		*GetName(),
+		KnockbackStrength,
+		*LaunchVelocity.GetSafeNormal().ToCompactString());
+	UE_LOG(LogTemp, Warning, TEXT("%s"), *DebugMessage);
+	if (GEngine != nullptr)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			-1,
+			2.0f,
+			FColor::Cyan,
+			DebugMessage);
+	}
+
+	// LaunchCharacter(LaunchVelocity, true, true);
 }
 
 const UArrowComponent* ACSCustomerCharacter::GetDropOrigin(const int32 SideIndex) const

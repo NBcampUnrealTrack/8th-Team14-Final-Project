@@ -173,8 +173,12 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			// 진열대 위 상품들을 판단용 후보 목록으로 변환
 			const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
 
+			// 이 진열대에서 살펴본 상품 개수만큼 감소 (0 밑으로는 안 내려감)
+			State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - Candidates.Num(), 0);
+
 			// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
 			FCSPurchaseCandidate Selected;
+
 			if (Decision->DecidePurchase(Candidates, Selected))
 			{
 				// 결정된 상품을 실제로 집음 (재고 차감 + 장바구니 기록은 TakeProduct 내부 처리)
