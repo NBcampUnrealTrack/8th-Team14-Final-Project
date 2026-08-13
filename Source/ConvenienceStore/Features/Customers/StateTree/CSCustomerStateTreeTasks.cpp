@@ -7,6 +7,7 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 // =====================================================================
 // PickNextShelf
@@ -484,4 +485,33 @@ void FCSTask_ReturnProducts::ExitState(FStateTreeExecutionContext& Context,
 			Subsystem->DropCustomerItems(Data.Actor);
 		}
 	}
+}
+
+EStateTreeRunStatus FCSTask_Shoplift::EnterState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (Subsystem == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// bVillainActionDone 표시 + 경고 방송을 서브시스템이 처리
+	Subsystem->CommitShoplift(Data.Actor);
+
+	// 도주 연출. 이 값은 상태를 떠나도 유지되므로 Leave까지 빠른 걸음이 이어집니다.
+	if (UCharacterMovementComponent* Movement = Data.Actor->GetCharacterMovement())
+	{
+		Movement->MaxWalkSpeed = Data.FleeWalkSpeed;
+	}
+
+	// 이동은 Leave 상태가 담당하므로 여기서는 즉시 성공을 반환
+	return EStateTreeRunStatus::Succeeded;
 }

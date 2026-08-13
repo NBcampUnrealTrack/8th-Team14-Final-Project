@@ -300,3 +300,44 @@ struct FCSTask_ReturnProducts : public FStateTreeTaskCommonBase
 	virtual void ExitState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
 };
+
+// =====================================================================
+// Shoplift : 계산하지 않고 상품을 든 채 도주
+// 실행 표시와 방송은 서브시스템이 처리하고, 이 태스크 상태만 변경 한 뒤 즉시 성공 (속도나 애니메이션 등등)
+// 실제 퇴장 이동은 전이로 연결된 Leave 상태(LeaveAndDespawn)가 담당
+// =====================================================================
+
+USTRUCT()
+struct FCSTask_ShopliftInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	// 도주 시 걷기 속도 올라가게 함
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float FleeWalkSpeed = 400.0f;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Shoplift"))
+struct FCSTask_Shoplift : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSTask_ShopliftInstanceData;
+
+	FCSTask_Shoplift()
+	{
+		// EnterState에서 전부 끝나므로 매 틱 호출될 필요가 없음
+		bShouldCallTick = false;
+	}
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+};

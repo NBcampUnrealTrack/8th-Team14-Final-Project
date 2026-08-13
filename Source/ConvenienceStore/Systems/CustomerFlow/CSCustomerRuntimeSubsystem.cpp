@@ -15,6 +15,7 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Engine/Engine.h"
 
 TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("cs.Seed"),
@@ -452,6 +453,11 @@ void UCSCustomerRuntimeSubsystem::NotifyCustomerDespawned(ACSCustomerCharacter* 
 	// CustomerState가 없으면(비정상 상황) 빈손으로 취급
 	const bool bCheckoutDone = IsValid(CustomerState) && CustomerState->bCheckoutDone;
 
+
+	// [백무송] 절도범이 상품을 든 채 퇴장에 성공한 경우 여기서 손실이 확정
+	// 모든 경로가 반드시 지나는 이 함수에 둔다. 절도범이 아니면 내부에서 선별됨
+	ReportShopliftEscaped(Customer);
+
 	OnCustomerDespawned.Broadcast(Customer, bCheckoutDone);
 }
 
@@ -707,6 +713,85 @@ int32 UCSCustomerRuntimeSubsystem::ReturnCustomerItemsToShelf(ACSCustomerCharact
 
 	return PlacedCount;
 
+}
+
+void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return;
+	}
+
+	State->MarkVillainActionDone();
+
+	// 디버그용
+	// 들고 나가려는 상품의 판매가 합계.
+	int64 AtRiskGoldTotal = 0;
+	for (int32 i = 0; i < State->SelectProducts.Num(); i++)
+	{
+		AtRiskGoldTotal += State->SelectProducts[i].SalePriceAtPickup;
+	}
+	const int32 AtRiskGold = static_cast<int32>(FMath::Min<int64>(AtRiskGoldTotal, MAX_int32));
+
+	if (GEngine != nullptr)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Orange,
+			FString::Printf(TEXT("[빌런 발생] %s 가 계산하지 않고 나가려 합니다 (%d G)"),
+				*Customer->GetName(), AtRiskGold));
+	}
+
+	//빌런 생성 했다고 전파
+	OnShopliftStarted.Broadcast(Customer, AtRiskGold);
+}
+
+void UCSCustomerRuntimeSubsystem::ReportShopliftEscaped(ACSCustomerCharacter* Customer)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return;
+	}
+
+	// 빌런(절도범용)이 아니면 무시. 모든 손님의 퇴장 경로에서 불리므로 여기서 걸러야 함
+	if (State->PlannedVillainAction != ECSVillainAction::Shoplift)
+	{
+		return;
+	}
+
+	// 상품이 없으면 손실도 없음
+	if (State->SelectProducts.Num() == 0)
+	{
+		return;
+	}
+
+	// 디버그용
+	int64 LostGoldTotal = 0;
+	for (int32 i = 0; i < State->SelectProducts.Num(); i++)
+	{
+		LostGoldTotal += State->SelectProducts[i].SalePriceAtPickup;
+	}
+	const int32 LostGold = static_cast<int32>(FMath::Min<int64>(LostGoldTotal, MAX_int32));
+
+	if (GEngine != nullptr)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+			FString::Printf(TEXT("[빌런 도망침] %s | 손실 %d G"),
+				*Customer->GetName(), LostGold));
+	}
+
+	//빌러 도주 성공했다고 전파
+	OnShopliftEscaped.Broadcast(Customer, LostGold);
 }
 
 

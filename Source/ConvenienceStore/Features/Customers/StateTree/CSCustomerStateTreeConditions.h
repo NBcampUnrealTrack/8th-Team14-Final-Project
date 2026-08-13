@@ -7,6 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "StateTreeConditionBase.h"
+#include "Data/CSVillainTypes.h"
 #include "CSCustomerStateTreeConditions.generated.h"
 
 class ACSCustomerCharacter;
@@ -139,6 +140,41 @@ struct FCSCond_WantsMoreItems : public FStateTreeConditionCommonBase
 	GENERATED_BODY()
 
 	using FInstanceDataType = FCSCond_WantsMoreItemsInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+// =====================================================================
+// Customer: Is Villain
+// 스폰 시 확정된 빌런 행동이 무엇인지, 그리고 아직 실행 전인지를 판정.
+// =====================================================================
+USTRUCT()
+struct FCSCond_IsVillainInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	// 검사할 행동 None으로 두면 빌런이기만 하면 참으로 동작합니다.
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	ECSVillainAction ActionToTest = ECSVillainAction::None;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bInvert = false;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Is Villain"))
+struct FCSCond_IsVillain : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_IsVillainInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override
 	{

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSVillainTypes.h"
 #include "Engine/DataTable.h"
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
@@ -59,6 +60,33 @@ public:
 	// 손님이 나갈 때 걸어갈 목표 좌표
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector ExitLocation = FVector::ZeroVector;
+
+	// 빌런 -------
+
+	// 스폰 시점에 확정된 이 손님의 빌런 행동. None이면 일반 손님.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Villain")
+	ECSVillainAction PlannedVillainAction = ECSVillainAction::None;
+
+	// 계획한 빌런 행동을 했는지 확인
+	// 이 플래그가 없으면 Root를 재선택할 때마다 빌런 상태가 계속 참이라
+	// 손님이 그 상태에 갇힘
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Villain")
+	bool bVillainActionDone = false;
+
+	// 빌런 행동을 배정하는 유일한 통로. 배정 규칙을 한 곳에만 두기 위함입니다.
+	// 반환값이 false면 규칙에 걸려 배정되지 않은 것입니다.
+	bool AssignVillainAction(ECSVillainAction NewAction);
+
+	// 이 손님이 빌런인가 (행동 종류 무관)
+	UFUNCTION(BlueprintPure, Category = "Customer|Villain")
+	bool IsVillain() const;
+
+	// 아직 저지르지 않은 빌런 행동이 남아 있는가. StateTree 조건이 읽는 값
+	UFUNCTION(BlueprintPure, Category = "Customer|Villain")
+	bool HasPendingVillainAction() const;
+
+	// 빌런 행동을 실행한 뒤 호출. 안 부르면 트리가 그 상태에 갇힙니다
+	void MarkVillainActionDone();
 
 	// 예산 -------
 

@@ -130,3 +130,37 @@ bool FCSCond_WantsMoreItems::TestCondition(FStateTreeExecutionContext& Context) 
 		return bResult;
 	}
 }
+
+bool FCSCond_IsVillain::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	bool bResult = false;
+
+	if (Data.Actor != nullptr)
+	{
+		// 빌런 여부는 개인 데이터이므로 서브시스템을 안 거치고 바로 상태 컴포넌트에서 판정
+		const UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+		if (State != nullptr && State->HasPendingVillainAction())
+		{
+			if (Data.ActionToTest == ECSVillainAction::None)
+			{
+				// 행동 종류를 안 따지는 경우 (부모 상태에서 묶어 쓸 때)
+				bResult = true;
+			}
+			else
+			{
+				bResult = (State->PlannedVillainAction == Data.ActionToTest);
+			}
+		}
+	}
+
+	if (Data.bInvert)
+	{
+		return (bResult == false);
+	}
+	else
+	{
+		return bResult;
+	}
+}
