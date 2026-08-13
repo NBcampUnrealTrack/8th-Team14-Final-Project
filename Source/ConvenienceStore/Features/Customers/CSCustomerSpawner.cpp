@@ -184,6 +184,12 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		if (Decision->Archetype != nullptr)
 		{
 			ApplyCustomerVisual(Customer, Decision->Archetype->Visual);
+
+			// 이 손님의 종족 카드가 정해준 개수만큼 채워줌
+			if (State != nullptr)
+			{
+				State->RemainingEvaluationBudget = Decision->Archetype->EvaluationBudget;
+			}
 		}
 	}
 
