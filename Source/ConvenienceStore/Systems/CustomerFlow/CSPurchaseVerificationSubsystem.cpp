@@ -69,9 +69,18 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone)
 {
 	++TotalCustomersLeft;
-	const float SingleItemRatio = static_cast<float>(SingleItemCheckouts) / static_cast<float>(TotalCheckouts) * 100.0f;
 
-	if (!bCheckoutDone)
+	if (bCheckoutDone)
+	{
+		return;
+	}
+
+	const UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
+	if (IsValid(State) && State->bCheckoutAbandoned)
+	{
+		++CheckoutAbandonedDepartures;
+	}
+	else
 	{
 		++EmptyHandedDepartures;
 	}
@@ -95,8 +104,12 @@ void UCSPurchaseVerificationSubsystem::LogSummary() const
 	? (static_cast<float>(EmptyHandedDepartures) / static_cast<float>(TotalCustomersLeft) * 100.0f)
 	: 0.0f;
 
+	const float CheckoutAbandonedRatio = (TotalCustomersLeft > 0)
+	? (static_cast<float>(CheckoutAbandonedDepartures) / static_cast<float>(TotalCustomersLeft) * 100.0f)
+	: 0.0f;
+
 	// 요약 로그는 Warning 레벨로
 	UE_LOG(LogTemp, Warning,
-		TEXT("[구매검증 요약] 누적 %d명 | 평균 장바구니=%.2f개 (목표 2.5~3.0) | 1개만 구매 비율=%.1f%% (목표 37~50%%) | 빈손 퇴장률=%.1f%% (목표 10~15%%)"),
-		TotalCheckouts, AverageBasketSize, SingleItemRatio, EmptyHandedRatio);
+	TEXT("[구매검증 요약] 누적 %d명 | 평균 장바구니=%.2f개 (목표 2.5~3.0) | 1개만 구매 비율=%.1f%% (목표 37~50%%) | 빈손 퇴장률=%.1f%% (목표 10~15%%) | 계산포기율=%.1f%%"),
+	TotalCheckouts, AverageBasketSize, SingleItemRatio, EmptyHandedRatio, CheckoutAbandonedRatio);
 }
