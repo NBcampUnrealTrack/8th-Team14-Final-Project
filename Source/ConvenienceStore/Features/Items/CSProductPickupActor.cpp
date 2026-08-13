@@ -8,6 +8,7 @@
 #include "Engine/StaticMesh.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
+#include "NiagaraComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 ACSProductPickupActor::ACSProductPickupActor()
@@ -44,6 +45,39 @@ void ACSProductPickupActor::BeginPlay()
 	}
 
 	EnsureProductRuntimeStateInitialized();
+	CacheSpoiledVFXComponent();
+
+	SpoiledVFXStoreGameState = GetWorld() != nullptr
+		? GetWorld()->GetGameState<ACSStoreGameState>()
+		: nullptr;
+	if (IsValid(SpoiledVFXStoreGameState))
+	{
+		SpoiledVFXStoreGameState->OnGameTimeChanged.AddUniqueDynamic(
+			this,
+			&ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged);
+		SpoiledVFXStoreGameState->OnBusinessDayStarted.AddUniqueDynamic(
+			this,
+			&ACSProductPickupActor::HandleSpoiledVFXBusinessDayStarted);
+	}
+
+	UpdateSpoiledVFX();
+}
+
+void ACSProductPickupActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsValid(SpoiledVFXStoreGameState))
+	{
+		SpoiledVFXStoreGameState->OnGameTimeChanged.RemoveDynamic(
+			this,
+			&ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged);
+		SpoiledVFXStoreGameState->OnBusinessDayStarted.RemoveDynamic(
+			this,
+			&ACSProductPickupActor::HandleSpoiledVFXBusinessDayStarted);
+	}
+
+	SpoiledVFXStoreGameState = nullptr;
+	SpoiledVFXComponent = nullptr;
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACSProductPickupActor::Interact_Implementation(AActor* Interactor)
@@ -108,6 +142,7 @@ void ACSProductPickupActor::ApplyProductRuntimeState(
 {
 	ProductRuntimeState = InProductRuntimeState;
 	UpdateFreshnessDecayState();
+	UpdateSpoiledVFX();
 }
 
 bool ACSProductPickupActor::IsExpired() const
@@ -341,6 +376,66 @@ void ACSProductPickupActor::UpdateFreshnessDecayState()
 	}
 
 	ProductRuntimeState.StartFreshnessDecay(World->GetTimeSeconds());
+}
+
+void ACSProductPickupActor::CacheSpoiledVFXComponent()
+{
+	SpoiledVFXComponent = nullptr;
+
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (IsValid(NiagaraComponent) &&
+			NiagaraComponent->GetFName() == TEXT("SpoiledVFX"))
+		{
+			SpoiledVFXComponent = NiagaraComponent;
+			return;
+		}
+	}
+}
+
+void ACSProductPickupActor::UpdateSpoiledVFX()
+{
+	if (!IsValid(SpoiledVFXComponent))
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::UpdateSpoiledVFX"));
+	const bool bRequiresFreshnessManagement = ProductData != nullptr &&
+		(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+	const bool bHasNoFreshness = bRequiresFreshnessManagement &&
+		ProductRuntimeState.bFreshnessInitialized &&
+		GetCurrentFreshness() <= 0;
+	const bool bShouldShowSpoiledVFX = IsExpired() || bHasNoFreshness;
+	if (SpoiledVFXComponent->IsActive() == bShouldShowSpoiledVFX)
+	{
+		return;
+	}
+
+	if (bShouldShowSpoiledVFX)
+	{
+		SpoiledVFXComponent->Activate();
+	}
+	else
+	{
+		SpoiledVFXComponent->Deactivate();
+	}
+}
+
+void ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged(float NewGameMinutes)
+{
+	(void)NewGameMinutes;
+	UpdateSpoiledVFX();
+}
+
+void ACSProductPickupActor::HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay)
+{
+	(void)NewBusinessDay;
+	UpdateSpoiledVFX();
 }
 
 void ACSProductPickupActor::HandlePawnOverlap(

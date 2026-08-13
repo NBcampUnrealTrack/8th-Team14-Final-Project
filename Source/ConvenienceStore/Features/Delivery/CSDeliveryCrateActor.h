@@ -13,6 +13,8 @@ class UTexture2D;
 class UCSProductVisualRegistry;
 class ACSProductPickupActor;
 class UPrimitiveComponent;
+class UNiagaraComponent;
+class ACSStoreGameState;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnCrateQuantityChanged,
@@ -87,6 +89,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -110,6 +113,12 @@ protected:
 	UPROPERTY(Transient)
 	bool bIsHeldByPlayerForFreshness = false;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> SpoiledVFXComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACSStoreGameState> SpoiledVFXStoreGameState;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Holding")
 	FVector HeldRelativeLocation = FVector::ZeroVector;
 
@@ -126,6 +135,12 @@ protected:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
+	UFUNCTION()
+	void HandleSpoiledVFXGameTimeChanged(float NewGameMinutes);
+
+	UFUNCTION()
+	void HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay);
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Product")
 	TSubclassOf<ACSProductPickupActor> ProductActorClass;
 
@@ -133,4 +148,6 @@ protected:
 	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
 
 	void UpdateFreshnessDecayState();
+	void CacheSpoiledVFXComponent();
+	void UpdateSpoiledVFX();
 };

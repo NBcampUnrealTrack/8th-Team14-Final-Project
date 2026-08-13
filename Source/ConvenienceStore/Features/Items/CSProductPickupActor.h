@@ -12,6 +12,8 @@ class USceneComponent;
 class UStaticMesh;
 class UCSProductVisualRegistry;
 class UPrimitiveComponent;
+class UNiagaraComponent;
+class ACSStoreGameState;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
@@ -113,6 +115,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -157,6 +160,12 @@ protected:
 	UPROPERTY(Transient)
 	bool bIsHeldByPlayerForFreshness = false;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> SpoiledVFXComponent;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACSStoreGameState> SpoiledVFXStoreGameState;
+
 	UFUNCTION()
 	void HandlePawnOverlap(
 		UPrimitiveComponent* OverlappedComponent,
@@ -166,7 +175,15 @@ protected:
 		bool bFromSweep,
 		const FHitResult& SweepResult);
 
+	UFUNCTION()
+	void HandleSpoiledVFXGameTimeChanged(float NewGameMinutes);
+
+	UFUNCTION()
+	void HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay);
+
 	void ApplyProductVisual();
 	void EnsureProductRuntimeStateInitialized();
 	void UpdateFreshnessDecayState();
+	void CacheSpoiledVFXComponent();
+	void UpdateSpoiledVFX();
 };
