@@ -1,0 +1,100 @@
+#include "Features/Tools/CSMagicProjectileActor.h"
+
+#include "Components/SphereComponent.h"
+#include "Features/Tools/CSHitReactable.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+
+ACSMagicProjectileActor::ACSMagicProjectileActor()
+{
+	CollisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
+	SetRootComponent(CollisionSphere);
+	CollisionSphere->InitSphereRadius(12.0f);
+	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Block);
+	CollisionSphere->SetGenerateOverlapEvents(false);
+	CollisionSphere->OnComponentHit.AddDynamic(this, &ACSMagicProjectileActor::HandleProjectileHit);
+
+	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
+	ProjectileMovement->UpdatedComponent = CollisionSphere;
+	ProjectileMovement->InitialSpeed = 2200.0f;
+	ProjectileMovement->MaxSpeed = 2200.0f;
+	ProjectileMovement->bRotationFollowsVelocity = true;
+	ProjectileMovement->ProjectileGravityScale = 0.0f;
+}
+
+void ACSMagicProjectileActor::BeginPlay()
+{
+	Super::BeginPlay();
+	SetLifeSpan(ProjectileLifetime);
+
+	// 발사자와 투사체가 즉시 충돌하지 않도록 소유자를 충돌 대상에서 제외합니다.
+	if (AActor* ProjectileOwner = GetOwner())
+	{
+		CollisionSphere->IgnoreActorWhenMoving(ProjectileOwner, true);
+	}
+}
+
+void ACSMagicProjectileActor::InitializeProjectile(const FVector& InTravelDirection)
+{
+	TravelDirection = InTravelDirection.GetSafeNormal();
+	if (TravelDirection.IsNearlyZero())
+	{
+		TravelDirection = GetActorForwardVector();
+	}
+
+	ProjectileMovement->Velocity = TravelDirection * ProjectileMovement->InitialSpeed;
+	SetActorRotation(TravelDirection.Rotation());
+}
+
+void ACSMagicProjectileActor::AddIgnoredActor(AActor* ActorToIgnore)
+{
+	if (IsValid(ActorToIgnore))
+	{
+		// 지팡이 메시가 충돌을 사용하더라도 투사체가 발사 직후 막히지 않게 합니다.
+		CollisionSphere->IgnoreActorWhenMoving(ActorToIgnore, true);
+	}
+}
+
+void ACSMagicProjectileActor::HandleProjectileHit(
+	UPrimitiveComponent* HitComponent,
+	AActor* OtherActor,
+	UPrimitiveComponent* OtherComponent,
+	FVector NormalImpulse,
+	const FHitResult& HitResult)
+{
+	if (!IsValid(OtherActor) || OtherActor == GetOwner())
+	{
+		return;
+	}
+
+	// 캐릭터처럼 피격 반응을 구현한 대상은 각자의 방식으로 넉백을 처리합니다.
+	if (OtherActor->Implements<UCSHitReactable>())
+	{
+		ICSHitReactable::Execute_ApplyMagicHit(
+			OtherActor,
+			HitResult.ImpactPoint,
+			TravelDirection,
+			CharacterKnockbackStrength);
+	}
+	else if (IsValid(OtherComponent) && OtherComponent->IsSimulatingPhysics())
+	{
+		// 물리 오브젝트는 실제 맞은 위치에 임펄스를 가해 회전도 자연스럽게 반영합니다.
+		OtherComponent->AddImpulseAtLocation(
+			TravelDirection * PhysicsImpulseStrength,
+			HitResult.ImpactPoint);
+	}
+
+	if (IsValid(ImpactNiagaraSystem))
+	{
+		// 표면 법선을 회전값으로 사용해 피격 효과가 맞은 면 바깥쪽을 향하게 합니다.
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			GetWorld(),
+			ImpactNiagaraSystem,
+			HitResult.ImpactPoint,
+			HitResult.ImpactNormal.Rotation());
+	}
+
+	Destroy();
+}

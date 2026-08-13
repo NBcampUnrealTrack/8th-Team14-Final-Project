@@ -12,6 +12,7 @@ class USceneComponent;
 class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
+class ACSUsableToolActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
 
@@ -81,6 +82,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> DropAction;
 
+	// 좌클릭으로 현재 들고 있는 도구의 주 사용 기능을 실행합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> PrimaryUseAction;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleClockAction;
 	
@@ -106,6 +111,7 @@ private:
 	void StopCrouch();
 	void TryInteract();
 	void DropHeldItem();
+	void TryUsePrimaryTool();
 	void ToggleClock();
 	void UpdateInteractionHUD();
 	void UpdatePlacementPreview();
