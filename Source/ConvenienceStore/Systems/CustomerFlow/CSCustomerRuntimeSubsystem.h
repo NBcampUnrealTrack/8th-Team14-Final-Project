@@ -142,9 +142,17 @@ public:
 	// 인내심 / 계산 포기
 	// =====================================================================
 
-	// [임시] 인내심 시간. 소비심리 로직이 붙기 전까지 모든 손님이 이 값을 사용
+	// 폴백값
 	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0"))
 	float DefaultPatienceSeconds = 30.0f;
+
+	// 가장 침착한 손님(Impulsiveness=0)의 인내심 상한(초)
+	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0"))
+	float MaxPatienceSeconds = 45.0f;
+
+	// 가장 충동적인 손님(Impulsiveness=1)의 인내심 하한(초)
+	UPROPERTY(EditAnywhere, Category = "Store|Customer", meta = (ClampMin = "0.0"))
+	float MinPatienceSeconds = 15.0f;
 
 	// 이 손님이 계산대에서 참을 수 있는 시간.
 	// [임시] 지금은 기본값을 그대로 반환한다.
