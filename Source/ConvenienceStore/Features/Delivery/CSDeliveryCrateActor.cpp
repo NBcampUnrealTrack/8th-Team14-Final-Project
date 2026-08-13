@@ -9,6 +9,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
+#include "NiagaraComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 ACSDeliveryCrateActor::ACSDeliveryCrateActor()
@@ -37,6 +38,39 @@ void ACSDeliveryCrateActor::BeginPlay()
 		CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 		CrateMesh->SetGenerateOverlapEvents(true);
 	}
+
+	CacheSpoiledVFXComponent();
+	SpoiledVFXStoreGameState = GetWorld() != nullptr
+		? GetWorld()->GetGameState<ACSStoreGameState>()
+		: nullptr;
+	if (IsValid(SpoiledVFXStoreGameState))
+	{
+		SpoiledVFXStoreGameState->OnGameTimeChanged.AddUniqueDynamic(
+			this,
+			&ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged);
+		SpoiledVFXStoreGameState->OnBusinessDayStarted.AddUniqueDynamic(
+			this,
+			&ACSDeliveryCrateActor::HandleSpoiledVFXBusinessDayStarted);
+	}
+
+	UpdateSpoiledVFX();
+}
+
+void ACSDeliveryCrateActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsValid(SpoiledVFXStoreGameState))
+	{
+		SpoiledVFXStoreGameState->OnGameTimeChanged.RemoveDynamic(
+			this,
+			&ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged);
+		SpoiledVFXStoreGameState->OnBusinessDayStarted.RemoveDynamic(
+			this,
+			&ACSDeliveryCrateActor::HandleSpoiledVFXBusinessDayStarted);
+	}
+
+	SpoiledVFXStoreGameState = nullptr;
+	SpoiledVFXComponent = nullptr;
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACSDeliveryCrateActor::Interact_Implementation(AActor* Interactor)
@@ -102,6 +136,7 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 	RemainingQuantity = InQuantity;
 	ProductRuntimeState = NewRuntimeState;
 	UpdateFreshnessDecayState();
+	UpdateSpoiledVFX();
 	return true;
 }
 
@@ -380,6 +415,68 @@ void ACSDeliveryCrateActor::UpdateFreshnessDecayState()
 	}
 
 	ProductRuntimeState.StartFreshnessDecay(World->GetTimeSeconds());
+}
+
+void ACSDeliveryCrateActor::CacheSpoiledVFXComponent()
+{
+	SpoiledVFXComponent = nullptr;
+
+	TArray<UNiagaraComponent*> NiagaraComponents;
+	GetComponents<UNiagaraComponent>(NiagaraComponents);
+	for (UNiagaraComponent* NiagaraComponent : NiagaraComponents)
+	{
+		if (IsValid(NiagaraComponent) &&
+			NiagaraComponent->GetFName() == TEXT("SpoiledVFX"))
+		{
+			SpoiledVFXComponent = NiagaraComponent;
+			return;
+		}
+	}
+}
+
+void ACSDeliveryCrateActor::UpdateSpoiledVFX()
+{
+	if (!IsValid(SpoiledVFXComponent))
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::UpdateSpoiledVFX"));
+	const bool bRequiresFreshnessManagement = ProductData != nullptr &&
+		(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+	const bool bHasNoFreshness = bRequiresFreshnessManagement &&
+		ProductRuntimeState.bFreshnessInitialized &&
+		GetCurrentFreshness() <= 0;
+	const bool bIsExpired = IsValid(SpoiledVFXStoreGameState) &&
+		ProductRuntimeState.IsExpired(SpoiledVFXStoreGameState->CurrentBusinessDay);
+	const bool bShouldShowSpoiledVFX = bIsExpired || bHasNoFreshness;
+	if (SpoiledVFXComponent->IsActive() == bShouldShowSpoiledVFX)
+	{
+		return;
+	}
+
+	if (bShouldShowSpoiledVFX)
+	{
+		SpoiledVFXComponent->Activate();
+	}
+	else
+	{
+		SpoiledVFXComponent->Deactivate();
+	}
+}
+
+void ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged(float NewGameMinutes)
+{
+	(void)NewGameMinutes;
+	UpdateSpoiledVFX();
+}
+
+void ACSDeliveryCrateActor::HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay)
+{
+	(void)NewBusinessDay;
+	UpdateSpoiledVFX();
 }
 
 void ACSDeliveryCrateActor::HandlePawnOverlap(
