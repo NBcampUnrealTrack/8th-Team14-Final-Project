@@ -186,6 +186,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			}
 		}
 	}
+	else
+	{
+		// 진열대가 비어있어도 와서 확인하는 데는 시간이 들었다고 보고 최소 1만큼 차감
+		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
+	}
 
 	// 사든 말든 현재 진열대 확인 완료 → 다음 행동 결정
 	return EStateTreeRunStatus::Succeeded;
