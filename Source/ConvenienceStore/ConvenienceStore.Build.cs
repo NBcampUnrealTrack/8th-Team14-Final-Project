@@ -22,7 +22,7 @@ public class ConvenienceStore : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara" });
 
 		// 기능별 폴더를 포함한 모듈 루트 기준의 include 경로를 사용합니다.
 		PublicIncludePaths.Add(ModuleDirectory);
