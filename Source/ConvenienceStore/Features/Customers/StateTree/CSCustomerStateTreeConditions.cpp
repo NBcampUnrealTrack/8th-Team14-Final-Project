@@ -105,11 +105,10 @@ bool FCSCond_WantsMoreItems::TestCondition(FStateTreeExecutionContext& Context) 
 		{
 			const int32 ItemsInBasket = State->SelectProducts.Num();
 
-			// 아직 아무것도 안 담았으면(첫 진열대 방문 전 상태) 무조건 계속 쇼핑하게 둠
-			// (ContinueShoppingProbability는 1개 이상을 기준으로 감쇠가 시작)
+			// 탐색 예산까지 다 썼으면 매장에 안 가본 진열대가 남아있어도 그만 구경하게 함
 			if (ItemsInBasket == 0)
 			{
-				bResult = true;
+				bResult = (State->RemainingEvaluationBudget > 0);
 			}
 			else
 			{

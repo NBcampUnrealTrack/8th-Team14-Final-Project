@@ -79,6 +79,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Budget")
 	bool bBudgetInitialized = false;
 
+	// 체류 중 살펴볼 수 있는 남은 상품 개수
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	int32 RemainingEvaluationBudget = 8;
+
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
 

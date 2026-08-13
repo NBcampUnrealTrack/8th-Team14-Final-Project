@@ -15,6 +15,8 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Features/Customers/CSPurchaseDecisionComponent.h"
+#include "Data/CSCustomerArchetypeDataAsset.h"
 
 TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("cs.Seed"),
@@ -402,8 +404,18 @@ void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
 
 float UCSCustomerRuntimeSubsystem::GetPatienceSeconds(const ACSCustomerCharacter* Customer) const
 {
-	// ["백록담"] (소비심리 파트): 손님 따라 다른 값을 반환하도록 교체. 호출하는 WaitInQueue 태스크는 수정할 필요가 없음
-	return DefaultPatienceSeconds;
+	const UCSPurchaseDecisionComponent* Decision = IsValid(Customer)
+		? Customer->FindComponentByClass<UCSPurchaseDecisionComponent>()
+		: nullptr;
+
+	// 종족 카드가 없으면(비정상 상황) 계산할 재료가 없으니 예전처럼 고정값 그대로 반환
+	if (Decision == nullptr || Decision->Archetype == nullptr)
+	{
+		return DefaultPatienceSeconds;
+	}
+
+	// 충동성 0(침착)~1(충동적)을 MaxPatienceSeconds~MinPatienceSeconds 사이로 부드럽게 매핑
+	return FMath::Lerp(MaxPatienceSeconds, MinPatienceSeconds, Decision->Archetype->Impulsiveness);
 }
 
 void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer, const float WaitedSeconds)
@@ -613,8 +625,18 @@ ACSProductPickupActor* UCSCustomerRuntimeSubsystem::RespawnSelectProduct(const F
 
 float UCSCustomerRuntimeSubsystem::GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const
 {
-	// TODO(소비심리 파트): 손님 소비심리에 따라 다른 값을 반환하도록 교체
-	return DefaultReturnToShelfChance;
+	const UCSPurchaseDecisionComponent* Decision = IsValid(Customer)
+		? Customer->FindComponentByClass<UCSPurchaseDecisionComponent>()
+		: nullptr;
+
+	// 종족 카드가 없으면(비정상 상황) 계산할 재료가 없으니 예전처럼 고정값 그대로 반환
+	if (Decision == nullptr || Decision->Archetype == nullptr)
+	{
+		return DefaultReturnToShelfChance;
+	}
+
+	// 충동성 0(침착)~1(충동적)을 MaxReturnToShelfChance~MinReturnToShelfChance 사이로 부드럽게 매핑
+	return FMath::Lerp(MaxReturnToShelfChance, MinReturnToShelfChance, Decision->Archetype->Impulsiveness);
 }
 
 AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
