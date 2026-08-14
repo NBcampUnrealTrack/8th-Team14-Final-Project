@@ -9,6 +9,9 @@ class ACSStoreGameState;
 class UDataTable;
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
+class UCSTutorialBannerWidgetBase;
+class UCSTutorialDialogueWidgetBase;
+class UCSTutorialObjectiveWidgetBase;
 
 // 준비, 영업, 마감 업무, 다음 날 상태로 이어지는 하루 흐름을 제어합니다.
 UCLASS()
@@ -38,6 +41,24 @@ public:
 	// 이전 날의 마감 이후 08:00 AM부터 새 영업일을 시작합니다.
 	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
 	void StartNextBusinessDay();
+
+	// 이 맵에서 튜토리얼을 시작할 건지 여부
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	bool IsTutorialEnabled() const;
+
+	// 튜토리얼 서브시스템이 시작 시점에 이 값을 가져감
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	UDataTable* GetTutorialStepDataTable() const;
+
+	// 튜토리얼 배너/대화창/목표 위젯 클래스 (서브시스템이 시작 시점에 가져감)
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialBannerWidgetBase> GetTutorialBannerWidgetClass() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialDialogueWidgetBase> GetTutorialDialogueWidgetClass() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialObjectiveWidgetBase> GetTutorialObjectiveWidgetClass() const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -76,6 +97,24 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	bool bStartFlowOnBeginPlay = true;
+
+	// 이 값이 true인 게임모드(BP_TutorialGameMode)를 쓰는 맵에서만 튜토리얼이 시작됨
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	bool bTutorialEnabled = false;
+
+	// 튜토리얼 스텝 목록
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TObjectPtr<UDataTable> TutorialStepDataTable;
+
+	// 튜토리얼 위젯 3종
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialBannerWidgetBase> TutorialBannerWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialDialogueWidgetBase> TutorialDialogueWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TSubclassOf<UCSTutorialObjectiveWidgetBase> TutorialObjectiveWidgetClass;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;

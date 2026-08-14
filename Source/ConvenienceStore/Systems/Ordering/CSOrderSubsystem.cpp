@@ -169,6 +169,10 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrder(
 	Result.bSuccess = true;
 	Result.FailureReason = ECOrderFailureReason::None;
 	DeliveryPortal->OnOrderDelivered(SpawnedCrates.Num());
+
+	// 자금 차감과 배송 상자 생성까지 전부 끝난 시점에만 방송
+	OnOrderPlaced.Broadcast(Result);
+
 	return Result;
 }
 

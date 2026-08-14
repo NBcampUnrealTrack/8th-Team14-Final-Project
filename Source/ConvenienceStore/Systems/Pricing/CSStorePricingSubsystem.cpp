@@ -44,5 +44,9 @@ bool UCSStorePricingSubsystem::SetSalePrice(
 	}
 
 	SalePriceOverrides.Add(ProductRow.RowName, NewSalePrice);
+
+	// 실제로 저장에 성공했을 때만 방송
+	OnSalePriceChanged.Broadcast(ProductRow.RowName, NewSalePrice);
+
 	return true;
 }
