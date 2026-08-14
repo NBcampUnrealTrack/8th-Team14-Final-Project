@@ -35,7 +35,7 @@ protected:
 
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	
+
 protected:
 	// 플레이어 시점을 제공하는 1인칭 카메라입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -55,27 +55,27 @@ protected:
 	// 현재 생성되어 있는 표시 전용 프리뷰 액터입니다.
 	UPROPERTY(Transient)
 	TObjectPtr<ACSProductPlacementPreviewActor> PlacementPreviewActor;
-	
+
 	// 에디터에서 만든 입력 에셋을 연결합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> PlayerMappingContext;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> MoveAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> LookAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> JumpAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> SprintAction;
 
 	// Ctrl 입력으로 웅크리기 상태를 시작하고 해제하는 액션입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> CrouchAction;
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> InteractAction;
 
@@ -88,20 +88,20 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleClockAction;
-	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction",
-	meta = (ClampMin = "50.0"))
-	float InteractionDistance = 250.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction",
 	meta = (ClampMin = "50.0"))
-	float DropDistance = 150.0f;
+	float InteractionDistance = 750.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction",
 	meta = (ClampMin = "50.0"))
-	float DropTraceDepth = 400.0f;
+	float DropDistance = 450.0f;
 
-	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction",
+	meta = (ClampMin = "50.0"))
+	float DropTraceDepth = 1200.0f;
+
+
 private:
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
@@ -138,16 +138,16 @@ private:
 		ACSDeliveryCrateActor* DeliveryCrate,
 		AActor* ShelfActor,
 		FVector PlacementHint);
-	
-	
+
+
 public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
-	float WalkSpeed = 350.0f;
-	
+	float WalkSpeed = 700.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
-	float SprintSpeed = 600.0f;
+	float SprintSpeed = 1000.0f;
 
 	// 웅크린 상태에서 적용할 이동 속도입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
-	float CrouchSpeed = 180.0f;
+	float CrouchSpeed = 200.0f;
 };

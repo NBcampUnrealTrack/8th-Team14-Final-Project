@@ -9,6 +9,7 @@
 
 class UArrowComponent;
 class UPrimitiveComponent;
+class USceneComponent;
 class UStaticMeshComponent;
 class ACSProductPickupActor;
 
@@ -101,6 +102,10 @@ protected:
 		const FDataTableRowHandle& ProductRow,
 		int32 SlotIndex);
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> SlotRoot;
+
+	// 진열대 메시의 상대 스케일과 독립적으로 상품 위치 마커를 유지합니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
 
