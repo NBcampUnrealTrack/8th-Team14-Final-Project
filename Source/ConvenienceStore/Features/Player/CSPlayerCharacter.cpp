@@ -1,4 +1,4 @@
-#include "Features/Player/CSPlayerCharacter.h"
+﻿#include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
@@ -199,9 +199,6 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 			PrimaryUseAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryUsePrimaryTool);
 	}
 
-    EnhancedInputComponent->BindAction(
-        ToggleClockAction, ETriggerEvent::Started, this,
-        &ACSPlayerCharacter::ToggleClock);
 }
 
 void ACSPlayerCharacter::Move(const FInputActionValue& Value)
@@ -266,14 +263,6 @@ void ACSPlayerCharacter::StopCrouch()
 	UnCrouch();
 }
 
-void ACSPlayerCharacter::ToggleClock()
-{
-    if (ACSStorePlayerController* StorePlayerController =
-        Cast<ACSStorePlayerController>(GetController()))
-    {
-        StorePlayerController->ToggleClock();
-    }
-}
 
 void ACSPlayerCharacter::ToggleBuildMode()
 {

@@ -176,9 +176,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> PrimaryUseAction;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
-	TObjectPtr<UInputAction> ToggleClockAction;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction",
 	meta = (ClampMin = "50.0"))
 	float InteractionDistance = 750.0f;
@@ -210,7 +207,6 @@ private:
 	void UpdateBuildRotationInput(float DeltaTime);
 	void ResetBuildRotationInput();
 	void TryUsePrimaryTool();
-	void ToggleClock();
 	void UpdateInteractionHUD();
 	void UpdateBuildModeHUD();
 	void UpdatePlacementPreview();

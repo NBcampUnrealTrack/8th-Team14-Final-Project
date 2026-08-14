@@ -66,17 +66,17 @@ void ACSStoreGameMode::StartStoreFlow()
 
 	FiredScheduleEventRows.Empty();
 	StoreGameState->SetEndOfDayTask(ECEndOfDayTask::None);
+	StoreGameState->CompleteDailySummary();
 	StoreGameState->SetGameClock(
 		InitialGameTimeMinutes,
 		GameMinutesPerRealSecond,
-		true);
+		false);
 
-	UpdateStorePhaseForCurrentTime();
+	StoreGameState->SetStorePhase(MakePhaseData(
+		ECStorePhase::Preparation, NSLOCTEXT("Store", "Preparation", "준비")));
 	// 영업 시간대가 되어도 입간판 확인 전까지는 고객을 받지 않습니다.
 	StoreGameState->bIsStoreOpen = false;
 	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
-	CheckScheduleEvents(InitialGameTimeMinutes - 0.01f, InitialGameTimeMinutes);
-
 	GetWorldTimerManager().ClearTimer(GameClockTimerHandle);
 	GetWorldTimerManager().SetTimer(
 		GameClockTimerHandle,
@@ -84,6 +84,41 @@ void ACSStoreGameMode::StartStoreFlow()
 		&ACSStoreGameMode::UpdateGameClock,
 		0.1f,
 		true);
+}
+
+bool ACSStoreGameMode::RequestBusinessOpenState(bool bShouldOpen)
+{
+	if (!IsValid(StoreGameState) || !StoreGameState->CanChangeStoreOpenState())
+	{
+		return false;
+	}
+
+	if (StoreGameState->CurrentPhase == ECStorePhase::Preparation)
+	{
+		if (!bShouldOpen)
+		{
+			return false;
+		}
+
+		StoreGameState->SetGameClock(BusinessStartTimeMinutes, GameMinutesPerRealSecond, true);
+		StoreGameState->SetStorePhase(MakePhaseData(
+			ECStorePhase::Open, NSLOCTEXT("Store", "Business", "영업")));
+		CheckScheduleEvents(BusinessStartTimeMinutes - 0.01f, BusinessStartTimeMinutes);
+	}
+
+	return StoreGameState->SetStoreOpen(bShouldOpen);
+}
+
+void ACSStoreGameMode::CompleteDailySummary()
+{
+	if (!IsValid(StoreGameState) || !StoreGameState->bIsDailySummaryPending)
+	{
+		return;
+	}
+
+	StoreGameState->CompleteDailySummary();
+	StoreGameState->SetStorePhase(MakePhaseData(
+		ECStorePhase::ClosingFreeRoam, NSLOCTEXT("Store", "ClosingFreeRoam", "마감 활동")));
 }
 
 void ACSStoreGameMode::StartPhase(ECStorePhase NewPhase)
@@ -138,7 +173,6 @@ void ACSStoreGameMode::UpdateGameClock()
 
 	StoreGameState->SetCurrentGameMinutes(NewGameMinutes);
 	CheckScheduleEvents(PreviousGameMinutes, NewGameMinutes);
-	UpdateStorePhaseForCurrentTime();
 }
 
 void ACSStoreGameMode::UpdateStorePhaseForCurrentTime()
@@ -191,11 +225,8 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 	StoreGameState->bIsStoreOpen = false;
 	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
 
-	FCSStorePhaseData ClosingPhase;
-	ClosingPhase.Phase = ECStorePhase::Settlement;
-	ClosingPhase.DisplayName = NSLOCTEXT("Store", "ClosingTasks", "Closing Tasks");
-	StoreGameState->SetStorePhase(ClosingPhase);
-	StoreGameState->SetEndOfDayTask(ECEndOfDayTask::OrderReview);
+	// 통계 확인 전에는 UI만 표시하고, 확인 후에 마감 자유 활동 단계로 전환합니다.
+	StoreGameState->RequestDailySummary();
 }
 
 void ACSStoreGameMode::CompleteCurrentEndOfDayTask()
@@ -247,6 +278,18 @@ ECEndOfDayTask ACSStoreGameMode::GetNextEndOfDayTask(ECEndOfDayTask Task) const
 	default:
 		return ECEndOfDayTask::None;
 	}
+}
+
+FCSStorePhaseData ACSStoreGameMode::MakePhaseData(
+	ECStorePhase Phase, const FText& DisplayName) const
+{
+	FCSStorePhaseData PhaseData;
+	PhaseData.Phase = Phase;
+	PhaseData.DisplayName = DisplayName;
+	PhaseData.bCanRestock = Phase != ECStorePhase::Open;
+	PhaseData.bCanCheckout = Phase == ECStorePhase::Open;
+	PhaseData.bCanSpawnCustomers = Phase == ECStorePhase::Open;
+	return PhaseData;
 }
 
 const FCSStorePhaseData* ACSStoreGameMode::FindPhaseData(ECStorePhase Phase) const
