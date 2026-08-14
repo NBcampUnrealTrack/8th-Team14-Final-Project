@@ -3,13 +3,13 @@
 #include "CoreMinimal.h"
 #include "Data/CSFacilityTypes.h"
 #include "Engine/DataTable.h"
+#include "Features/Facilities/CSBuildableFacility.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "CSShelfActor.generated.h"
 
 class UArrowComponent;
 class UPrimitiveComponent;
-class USceneComponent;
 class UStaticMeshComponent;
 class ACSProductPickupActor;
 
@@ -54,7 +54,9 @@ struct FCSShelfSlot
 
 // 설정된 슬롯 위치에 상품을 정확하게 배치하는 진열대 액터입니다.
 UCLASS()
-class CONVENIENCESTORE_API ACSShelfActor : public AActor, public ICSShelfPlaceable
+class CONVENIENCESTORE_API ACSShelfActor : public AActor,
+	public ICSShelfPlaceable,
+	public ICSBuildableFacility
 {
 	GENERATED_BODY()
 
@@ -79,6 +81,11 @@ public:
 	virtual bool GetItemSlotLevel_Implementation(
 		AActor* ItemActor,
 		ECSShelfSlotLevel& OutSlotLevel) const override;
+	virtual FName GetFacilityId_Implementation() const override;
+	virtual bool IsFacilityInstalled_Implementation() const override;
+	virtual void InitializeAsUninstalledFacility_Implementation() override;
+	virtual void PrepareForBuildPickup_Implementation() override;
+	virtual void FinalizeBuildPlacement_Implementation() override;
 
 	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
 	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
@@ -103,11 +110,11 @@ protected:
 		int32 SlotIndex);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<USceneComponent> SlotRoot;
-
-	// 진열대 메시의 상대 스케일과 독립적으로 상품 위치 마커를 유지합니다.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
+
+	// 기존 레벨 배치 시설은 설치 완료 상태로 시작합니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Facility|Build")
+	bool bIsInstalled = true;
 
 	// DT_FantasyFacilityMaster의 시설 행입니다. 비어 있으면 아래 ShelfType 설정을 사용합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Facility",
@@ -133,4 +140,6 @@ protected:
 	// 외곽선 표시 전의 렌더링 설정을 보관하여 다른 기능의 Custom Depth 설정을 보존합니다.
 	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
 	TMap<TObjectPtr<UPrimitiveComponent>, int32> OriginalCustomStencilValues;
+
+	void SetFacilityPhysicsEnabled(bool bEnabled);
 };

@@ -8,13 +8,22 @@
 class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
+class UMaterialInterface;
 class USceneComponent;
+class UStaticMeshComponent;
 class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
 class ACSUsableToolActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
+
+UENUM(BlueprintType)
+enum class ECSPlayerMode : uint8
+{
+	Normal,
+	Build
+};
 
 UCLASS()
 class CONVENIENCESTORE_API ACSPlayerCharacter : public ACharacter
@@ -27,6 +36,12 @@ public:
 
 	// 상호작용한 물체를 플레이어 손 위치에 부착합니다.
 	bool TryPickUp(AActor* PickupActor);
+
+	UFUNCTION(BlueprintPure, Category = "Player|Mode")
+	bool IsBuildMode() const
+	{
+		return CurrentPlayerMode == ECSPlayerMode::Build;
+	}
 
 protected:
 	virtual void BeginPlay() override;
@@ -45,12 +60,78 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> HeldItemAnchor;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> BuildPlacementPreviewMesh;
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Interaction")
 	TObjectPtr<AActor> HeldActor;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|Mode")
+	ECSPlayerMode CurrentPlayerMode = ECSPlayerMode::Normal;
+
+	UPROPERTY(Transient)
+	FRotator HeldBuildableFacilityRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(Transient)
+	bool bBuildRotateLeftHeld = false;
+
+	UPROPERTY(Transient)
+	bool bBuildRotateRightHeld = false;
+
+	UPROPERTY(Transient)
+	float BuildRotateLeftHeldSeconds = 0.0f;
+
+	UPROPERTY(Transient)
+	float BuildRotateRightHeldSeconds = 0.0f;
+
+	UPROPERTY(Transient)
+	float BuildRotationAccumulator = 0.0f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> HeldBuildableSourceMesh;
+
+	UPROPERTY(Transient)
+	FVector CachedBuildPlacementLocation = FVector::ZeroVector;
+
+	UPROPERTY(Transient)
+	FRotator CachedBuildPlacementRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(Transient)
+	bool bHasBuildPlacementPreview = false;
+
+	UPROPERTY(Transient)
+	bool bCanPlaceHeldBuildableFacility = false;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AActor>> HeldBuildableStateActors;
+
+	UPROPERTY(Transient)
+	TArray<uint8> HeldBuildableHiddenStates;
+
+	UPROPERTY(Transient)
+	TArray<uint8> HeldBuildableCollisionStates;
 
 	// 들고 있는 상품의 외형을 진열대 슬롯에 표시할 프리뷰 액터 클래스입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction|Placement Preview")
 	TSubclassOf<ACSProductPlacementPreviewActor> PlacementPreviewActorClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Placement Preview")
+	TObjectPtr<UMaterialInterface> BuildPlacementValidMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Placement Preview")
+	TObjectPtr<UMaterialInterface> BuildPlacementInvalidMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Placement Preview",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float WallSnapSearchDistance = 50.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Rotation",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float BuildRotationHoldDelay = 0.2f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Rotation",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float BuildRotationDegreesPerSecond = 90.0f;
 
 	// 현재 생성되어 있는 표시 전용 프리뷰 액터입니다.
 	UPROPERTY(Transient)
@@ -82,6 +163,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> DropAction;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ToggleBuildModeAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> RotateBuildLeftAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> RotateBuildRightAction;
+
 	// 좌클릭으로 현재 들고 있는 도구의 주 사용 기능을 실행합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> PrimaryUseAction;
@@ -108,9 +198,36 @@ private:
 	void StopCrouch();
 	void TryInteract();
 	void DropHeldItem();
+	void ToggleBuildMode();
+	void StartRotateBuildLeft();
+	void StopRotateBuildLeft();
+	void StartRotateBuildRight();
+	void StopRotateBuildRight();
+	void ApplyBuildRotationStep(float YawDelta);
+	void UpdateBuildRotationInput(float DeltaTime);
+	void ResetBuildRotationInput();
 	void TryUsePrimaryTool();
 	void UpdateInteractionHUD();
+	void UpdateBuildModeHUD();
 	void UpdatePlacementPreview();
+	void UpdateBuildPlacementPreview();
+	void ConfigureBuildPlacementPreview(AActor* FacilityActor);
+	void ClearBuildPlacementPreview();
+	void ApplyBuildPlacementPreviewMaterial(bool bIsPlacementValid);
+	void CacheHeldBuildableActorStates(AActor* FacilityActor);
+	void HideHeldBuildableActors();
+	void RestoreHeldBuildableActorStates();
+	bool TryCalculateBuildSnapTransform(
+		const FVector& BasePlacementLocation,
+		const FRotator& ManualRotation,
+		FVector& OutSnappedLocation,
+		FRotator& OutSnappedRotation) const;
+	bool TryPickUpBuildableFacility(AActor* FacilityActor);
+	void TryPlaceHeldBuildableFacility();
+	bool TryCalculateBuildPlacementLocation(
+		AActor* FacilityActor,
+		FVector& OutPlacementLocation,
+		bool& OutIsSurfaceValid) const;
 	bool TryGetProductRowFromActor(
 		const AActor* TargetActor,
 		FDataTableRowHandle& OutProductRow) const;
