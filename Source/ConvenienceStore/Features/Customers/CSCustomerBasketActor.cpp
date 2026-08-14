@@ -63,6 +63,7 @@ bool ACSCustomerBasketActor::AddDisplayProduct(const FCSSelectProduct& SelectedP
 		return false;
 	}
 
+	DisplayProduct->SetFreshnessFrozenForDisplay(true);
 	DisplayProduct->ApplyProductRuntimeState(SelectedProduct.ProductRuntimeState);
 	DisplayProduct->FinishSpawning(SpawnTransform);
 	DisplayProduct->PrepareForPickupPhysics();
