@@ -152,6 +152,11 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 	OnGameplayUIInputLockChanged.Broadcast(RequestingWidget, bShouldLock);
 }
 
+bool ACSStorePlayerController::IsGameplayUIInputLocked() const
+{
+	return HasGameplayUIInputLock();
+}
+
 bool ACSStorePlayerController::HasGameplayUIInputLock() const
 {
 	return GameplayUIInputLockWidgets.ContainsByPredicate(

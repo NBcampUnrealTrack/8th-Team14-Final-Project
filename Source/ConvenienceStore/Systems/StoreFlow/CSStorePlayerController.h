@@ -30,6 +30,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UI|Input")
 	void SetGameplayUIInputLock(UUserWidget* RequestingWidget, bool bShouldLock);
 
+	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
+	bool IsGameplayUIInputLocked() const;
+
 	// 진열할 빈 슬롯이 없을 때 HUD에 빨간 배치 불가 안내를 표시합니다.
 	void ShowPlacementUnavailablePrompt();
 
