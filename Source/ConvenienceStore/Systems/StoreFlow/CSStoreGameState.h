@@ -59,6 +59,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	bool,
 	bNewStoreOpen);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDailySummaryRequested);
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnStoreExperienceChanged,
 	int32,
@@ -129,6 +131,10 @@ public:
 	// 오늘 영업을 한 번이라도 시작했는지 기록하여 개점 대기와 영업 종료를 구분합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Business")
 	bool bHasStoreOpenedToday = false;
+
+	// 자정 통계 창이 열려 있어 마감 자유 활동으로 넘어가기 전인지 나타냅니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Closing")
+	bool bIsDailySummaryPending = false;
 
 	// 현재 진행 중인 영업일입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
@@ -206,11 +212,16 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Business")
 	FOnStoreOpenStateChanged OnStoreOpenStateChanged;
 
+	UPROPERTY(BlueprintAssignable, Category = "Store|Closing")
+	FOnDailySummaryRequested OnDailySummaryRequested;
+
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
 	void SetCurrentGameMinutes(float NewGameMinutes);
 	void SetEndOfDayTask(ECEndOfDayTask NewTask);
+	void RequestDailySummary();
+	void CompleteDailySummary();
 
 	// 영업 시간에만 실제 영업 상태를 변경합니다. 고객 생성 규칙은 이 상태를 함께 확인합니다.
 	UFUNCTION(BlueprintCallable, Category = "Store|Business")

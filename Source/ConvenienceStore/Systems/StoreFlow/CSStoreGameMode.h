@@ -25,6 +25,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store")
 	void StartPhase(ECStorePhase NewPhase);
 
+	UFUNCTION(BlueprintCallable, Category = "Store|Business")
+	bool RequestBusinessOpenState(bool bShouldOpen);
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
+	void CompleteDailySummary();
+
 	// 현재 마감 업무를 완료하고 다음 업무를 활성화합니다.
 	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
 	void CompleteCurrentEndOfDayTask();
@@ -62,8 +68,11 @@ protected:
 
 	// 다음 날 새벽 02:00에 영업을 강제 종료하고 정산 단계로 전환합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time",
-		meta = (ClampMin = "1440.0", ClampMax = "1560.0"))
-	float AutomaticClosingTimeMinutes = 1560.0f;
+		meta = (ClampMin = "1440.0", ClampMax = "1440.0"))
+	float AutomaticClosingTimeMinutes = 1440.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time")
+	float BusinessStartTimeMinutes = 540.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	bool bStartFlowOnBeginPlay = true;
@@ -75,6 +84,7 @@ private:
 	void UpdateStorePhaseForCurrentTime();
 	void CheckScheduleEvents(float PreviousGameMinutes, float NewGameMinutes);
 	void BeginClosingCheckpoint();
+	FCSStorePhaseData MakePhaseData(ECStorePhase Phase, const FText& DisplayName) const;
 	ECEndOfDayTask GetNextEndOfDayTask(ECEndOfDayTask Task) const;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
