@@ -343,3 +343,18 @@ UDataTable* ACSStoreGameMode::GetTutorialStepDataTable() const
 {
 	return TutorialStepDataTable;
 }
+
+TSubclassOf<UCSTutorialBannerWidgetBase> ACSStoreGameMode::GetTutorialBannerWidgetClass() const
+{
+	return TutorialBannerWidgetClass;
+}
+
+TSubclassOf<UCSTutorialDialogueWidgetBase> ACSStoreGameMode::GetTutorialDialogueWidgetClass() const
+{
+	return TutorialDialogueWidgetClass;
+}
+
+TSubclassOf<UCSTutorialObjectiveWidgetBase> ACSStoreGameMode::GetTutorialObjectiveWidgetClass() const
+{
+	return TutorialObjectiveWidgetClass;
+}

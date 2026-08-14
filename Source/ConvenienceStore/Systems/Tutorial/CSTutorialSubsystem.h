@@ -6,6 +6,10 @@
 #include "CSTutorialSubsystem.generated.h"
 
 class UDataTable;
+class ACSStoreGameMode;
+class UCSTutorialBannerWidgetBase;
+class UCSTutorialDialogueWidgetBase;
+class UCSTutorialObjectiveWidgetBase;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
 // 위젯들이 이걸 구독해서 화면 내용을 갱신함
@@ -63,12 +67,18 @@ public:
 	void DebugForceAdvanceStep();
 
 protected:
-	void StartTutorial(UDataTable* InStepDataTable);
+	void StartTutorial(ACSStoreGameMode* GameMode);
 	void AdvanceStep();
 	void HandlePartFinished(ECSTutorialPart FinishedPart);
 	void HandlePart1Finished();
 	void CompleteTutorial();
 	void BroadcastCurrentStep() const;
+
+	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
+	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
+
+	// 생성했던 위젯 3종을 화면에서 내리고 참조를 정리
+	void CloseTutorialWidgets();
 
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠
@@ -77,4 +87,13 @@ private:
 
 	int32 CurrentStepIndex = INDEX_NONE;
 	bool bTutorialCompleted = false;
+
+	UPROPERTY()
+	TObjectPtr<UCSTutorialBannerWidgetBase> BannerWidgetInstance;
+
+	UPROPERTY()
+	TObjectPtr<UCSTutorialDialogueWidgetBase> DialogueWidgetInstance;
+
+	UPROPERTY()
+	TObjectPtr<UCSTutorialObjectiveWidgetBase> ObjectiveWidgetInstance;
 };
