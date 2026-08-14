@@ -2,6 +2,7 @@
 
 #include "Components/ArrowComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -10,8 +11,11 @@ ACSShelfActor::ACSShelfActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
+	SlotRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SlotRoot"));
+	SetRootComponent(SlotRoot);
+
 	ShelfMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShelfMesh"));
-	SetRootComponent(ShelfMesh);
+	ShelfMesh->SetupAttachment(SlotRoot);
 	ShelfMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
@@ -197,6 +201,16 @@ void ACSShelfActor::SyncSlotsFromMarkers()
 		int32 SlotIndex = INDEX_NONE;
 		if (TryGetSlotMarkerIndex(ArrowComponent, SlotIndex))
 		{
+			// 기존 블루프린트는 슬롯을 ShelfMesh의 자식으로 저장했었습니다.
+			// 월드 위치는 유지하되, 메시 스케일을 더 이상 상속하지 않도록 전용 루트로 분리합니다.
+			if (ArrowComponent->GetAttachParent() != SlotRoot)
+			{
+				ArrowComponent->AttachToComponent(
+					SlotRoot,
+					FAttachmentTransformRules::KeepWorldTransform);
+				ArrowComponent->SetWorldScale3D(FVector::OneVector);
+			}
+
 			SlotMarkers.Emplace(SlotIndex, ArrowComponent);
 		}
 	}
