@@ -7,6 +7,7 @@
 
 class UDataTable;
 class ACSStoreGameMode;
+class ACSTrashCanActor;
 class UCSTutorialBannerWidgetBase;
 class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
@@ -30,6 +31,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnTutorialCompleted);
 
 // 튜토리얼 진행 상태를 소유하는 서브시스템
+// 맵마다 하나씩 자동으로 생성되며, PIE를 새로 시작할 때마다 초기화됨
 UCLASS()
 class CONVENIENCESTORE_API UCSTutorialSubsystem : public UWorldSubsystem
 {
@@ -57,7 +59,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tutorial")
 	void NotifyStepCompleted(ECSTutorialStepId CompletedStepId);
 
-	// 지금 진행 중인 스텝의 목표 진행도를 갱신 (예: 쓰레기 2개째 주움)
+	// 지금 진행 중인 스텝의 목표 진행도를 갱신
+	// 목표 수치에 도달하면 자동으로 다음 스텝으로 넘어감
 	UFUNCTION(BlueprintCallable, Category = "Tutorial")
 	void NotifyObjectiveProgress(ECSTutorialStepId StepId, int32 NewCurrent);
 
@@ -80,6 +83,15 @@ protected:
 	// 생성했던 위젯 3종을 화면에서 내리고 참조를 정리
 	void CloseTutorialWidgets();
 
+	// 레벨에 있는 쓰레기통 등, 튜토리얼을 모르는 상설 시설의 방송을 찾아서 구독
+	void SubscribeToLevelDisposables();
+
+	// 구독했던 상설 시설 방송을 전부 해제
+	void UnsubscribeFromLevelDisposables();
+
+	UFUNCTION()
+	void HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount);
+
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠
 	// 이 배열의 인덱스가 곧 진행 순서
@@ -96,4 +108,8 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UCSTutorialObjectiveWidgetBase> ObjectiveWidgetInstance;
+
+	// Deinitialize/CompleteTutorial에서 RemoveDynamic으로 해제하기 위해 구독 목록을 기억해 둠
+	UPROPERTY()
+	TArray<TObjectPtr<ACSTrashCanActor>> SubscribedTrashCans;
 };

@@ -12,6 +12,7 @@
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
+#include "Features/Trash/CSTrashActor.h"
 
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
@@ -468,6 +469,11 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		// 물리 상태의 루트 메시를 부착하면 실패할 수 있으므로 부착 전에 먼저 물리를 해제합니다.
 		ToolActor->PrepareForPickupPhysics();
+	}
+	else if (ACSTrashActor* TrashActor = Cast<ACSTrashActor>(PickupActor))
+	{
+		// 튜토리얼 청소 단계에서 줍는 쓰레기 (상품과 동일한 방식으로 물리 정리)
+		TrashActor->PrepareForPickupPhysics();
 	}
 
 	PickupActor->SetActorEnableCollision(false);
@@ -1148,6 +1154,18 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
         return;
     }
 
+	// 튜토리얼용
+	if (Cast<ACSTrashActor>(HeldActor) != nullptr)
+	{
+		if (IsValid(StorePlayerController))
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "DisposePrompt", "[Q] 쓰레기 버리기"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
 	AActor* PlacementItem = HeldActor;
 	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
 	{
@@ -1300,6 +1318,7 @@ void ACSPlayerCharacter::DropHeldItem()
 	ACSProductPickupActor* ProductToDrop = Cast<ACSProductPickupActor>(ActorToDrop);
 	ACSDeliveryCrateActor* CrateToDrop = Cast<ACSDeliveryCrateActor>(ActorToDrop);
 	ACSUsableToolActor* ToolToDrop = Cast<ACSUsableToolActor>(ActorToDrop);
+	ACSTrashActor* TrashToDrop = Cast<ACSTrashActor>(ActorToDrop);
 
 	// Bounds 계산 전에 물리를 끄고 메시를 정상 SceneRoot/상대 Transform 상태로 맞춥니다.
 	if (IsValid(ProductToDrop))
@@ -1309,6 +1328,11 @@ void ACSPlayerCharacter::DropHeldItem()
 	else if (IsValid(CrateToDrop))
 	{
 		CrateToDrop->PrepareForPickupPhysics();
+	}
+	else if (IsValid(TrashToDrop))
+	{
+		// 튜토리얼 쓰레기
+		TrashToDrop->PrepareForPickupPhysics();
 	}
 
 	const FBox Bounds = ActorToDrop->GetComponentsBoundingBox(true);
@@ -1362,6 +1386,11 @@ void ACSPlayerCharacter::DropHeldItem()
 	else if (IsValid(CrateToDrop))
 	{
 		CrateToDrop->SetHeldByPlayerForFreshness(false);
+	}
+	else if (IsValid(TrashToDrop))
+	{
+		// 튜토리얼 쓰레기
+		TrashToDrop->EnableWorldDropPhysics();
 	}
 
 }

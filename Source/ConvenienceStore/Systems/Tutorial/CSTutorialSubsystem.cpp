@@ -2,6 +2,8 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Engine/DataTable.h"
+#include "EngineUtils.h"
+#include "Features/Trash/CSTrashCanActor.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
@@ -63,8 +65,7 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UCSTutorialSubsystem::Deinitialize()
 {
-	// 외부 델리게이트(진열대, UI 등)를 구독하게 되면 여기서 전부 RemoveDynamic 해야 함
-	// 화면에 떠 있던 위젯은 안전하게 여기서도 한 번 더 정리
+	UnsubscribeFromLevelDisposables();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -99,6 +100,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	}
 
 	CreateTutorialWidgets(GameMode);
+	SubscribeToLevelDisposables();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -144,6 +146,8 @@ void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
 
 void UCSTutorialSubsystem::HandlePart1Finished()
 {
+	// 새 시간 흐름에서는 입간판을 여는 것 자체가 영업 시작 신호이므로
+	// 여기서 따로 시계를 재개시키는 코드가 필요 없음
 	// 2부(영업 중) 스텝이 DataTable에 추가되면 여기서 CompleteTutorial() 대신 2부 첫 스텝으로 넘어가야 함
 	CompleteTutorial();
 }
@@ -158,6 +162,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	bTutorialCompleted = true;
 	OnTutorialCompleted.Broadcast();
 
+	UnsubscribeFromLevelDisposables();
 	CloseTutorialWidgets();
 }
 
@@ -201,7 +206,14 @@ void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int
 		return;
 	}
 
-	OnTutorialObjectiveProgress.Broadcast(NewCurrent, StepRows[CurrentStepIndex]->ObjectiveGoal);
+	const int32 Goal = StepRows[CurrentStepIndex]->ObjectiveGoal;
+	OnTutorialObjectiveProgress.Broadcast(NewCurrent, Goal);
+
+	// 목표 수치에 도달하면 자동으로 다음 스텝으로 넘어감
+	if (Goal > 0 && NewCurrent >= Goal)
+	{
+		AdvanceStep();
+	}
 }
 
 void UCSTutorialSubsystem::DebugForceAdvanceStep()
@@ -281,4 +293,44 @@ void UCSTutorialSubsystem::CloseTutorialWidgets()
 		ObjectiveWidgetInstance->RemoveFromParent();
 		ObjectiveWidgetInstance = nullptr;
 	}
+}
+
+void UCSTutorialSubsystem::SubscribeToLevelDisposables()
+{
+	if (GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	// 레벨에 배치된 쓰레기통을 전부 찾아 구독
+	// 쓰레기통은 튜토리얼의 존재를 모르므로 서브시스템이 먼저 찾아가서 연결
+	for (TActorIterator<ACSTrashCanActor> It(GetWorld()); It; ++It)
+	{
+		ACSTrashCanActor* TrashCan = *It;
+		if (!IsValid(TrashCan))
+		{
+			continue;
+		}
+
+		TrashCan->OnItemDisposed.AddDynamic(this, &UCSTutorialSubsystem::HandleTrashDisposed);
+		SubscribedTrashCans.Add(TrashCan);
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromLevelDisposables()
+{
+	for (ACSTrashCanActor* TrashCan : SubscribedTrashCans)
+	{
+		if (IsValid(TrashCan))
+		{
+			TrashCan->OnItemDisposed.RemoveDynamic(this, &UCSTutorialSubsystem::HandleTrashDisposed);
+		}
+	}
+
+	SubscribedTrashCans.Reset();
+}
+
+void UCSTutorialSubsystem::HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount)
+{
+	NotifyObjectiveProgress(ECSTutorialStepId::CleanTrash, TotalDisposedCount);
 }
