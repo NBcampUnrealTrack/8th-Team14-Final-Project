@@ -2,6 +2,7 @@
 
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Components/ArrowComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
@@ -27,6 +28,15 @@ ACSCheckoutCounterActor::ACSCheckoutCounterActor()
 	// 계산대 외형은 블루프린트에서 자유롭게 지정할 수 있도록 빈 메시 컴포넌트로 둡니다.
 	CounterMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CounterMesh"));
 	CounterMesh->SetupAttachment(SceneRoot);
+
+	// 직원 구역은 블루프린트에서 계산대 뒷편으로 옮겨 조정할 수 있도록 별도 BoxCollision Component로 구성합니다.
+	CashierInteractionZone = CreateDefaultSubobject<UBoxComponent>(TEXT("CashierInteractionZone"));
+	CashierInteractionZone->SetupAttachment(SceneRoot);
+	CashierInteractionZone->SetBoxExtent(FVector(150.0f, 160.0f, 120.0f));
+	CashierInteractionZone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	CashierInteractionZone->SetCollisionResponseToAllChannels(ECR_Ignore);
+	CashierInteractionZone->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CashierInteractionZone->SetGenerateOverlapEvents(true);
 
 	// 화살표의 시작점은 계산 중인 첫 번째 손님의 위치이며, 화살표 정면은 대기열 방향입니다.
 	QueueStartPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("QueueStartPoint"));
@@ -109,6 +119,13 @@ bool ACSCheckoutCounterActor::CanProcessCheckout() const
 	return IsValid(CurrentStoreGameState) && CurrentStoreGameState->bCanCheckout;
 }
 
+bool ACSCheckoutCounterActor::IsInCashierInteractionZone(const AActor* Actor) const
+{
+	// 계산대 블루프린트에서 구역 컴포넌트를 제거한 경우에는 실수로 어디서나 계산되지 않도록 막습니다.
+	return IsValid(CashierInteractionZone) && IsValid(Actor) &&
+		CashierInteractionZone->IsOverlappingActor(Actor);
+}
+
 void ACSCheckoutCounterActor::Interact_Implementation(AActor* Interactor)
 {
 	UWorld* World = GetWorld();
@@ -131,6 +148,14 @@ void ACSCheckoutCounterActor::Interact_Implementation(AActor* Interactor)
 	{
 		UE_LOG(LogTemp, Log,
 			TEXT("[CheckoutCounter] 현재 매장 단계에서는 계산을 진행할 수 없습니다."));
+		return;
+	}
+
+	// 손님 대기열 쪽이나 계산대 옆면에서는 계산 UI를 열 수 없게 직원 구역을 확인합니다.
+	if (!IsInCashierInteractionZone(Interactor))
+	{
+		UE_LOG(LogTemp, Log,
+			TEXT("[CheckoutCounter] 직원 구역 밖에서는 계산을 시작할 수 없습니다."));
 		return;
 	}
 
@@ -167,6 +192,31 @@ FText ACSCheckoutCounterActor::GetInteractionText_Implementation() const
 	}
 
 	return NSLOCTEXT("CheckoutCounter", "StartCheckout", "계산 시작");
+}
+
+FText ACSCheckoutCounterActor::GetInteractionTextForPlayer(const AActor* PlayerActor) const
+{
+	// 계산 불가 단계와 손님 부재 안내는 위치와 관계없이 기존 우선순위를 유지합니다.
+	const FText DefaultText = GetInteractionText_Implementation();
+	if (!CanProcessCheckout())
+	{
+		return DefaultText;
+	}
+
+	const UWorld* World = GetWorld();
+	const UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	if (!IsValid(CustomerSubsystem) || !IsValid(CustomerSubsystem->GetFrontCustomer()))
+	{
+		return DefaultText;
+	}
+
+	if (!IsInCashierInteractionZone(PlayerActor))
+	{
+		return NSLOCTEXT("CheckoutCounter", "CashierZoneRequired", "계산대 반대편 직원 구역에 서야 합니다.");
+	}
+
+	return DefaultText;
 }
 
 bool ACSCheckoutCounterActor::BuildFrontCustomerOrder(

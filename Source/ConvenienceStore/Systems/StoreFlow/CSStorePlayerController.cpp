@@ -149,6 +149,11 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 	UpdateClosingInputMode();
 }
 
+bool ACSStorePlayerController::IsGameplayUIInputLocked() const
+{
+	return HasGameplayUIInputLock();
+}
+
 bool ACSStorePlayerController::HasGameplayUIInputLock() const
 {
 	return GameplayUIInputLockWidgets.ContainsByPredicate(

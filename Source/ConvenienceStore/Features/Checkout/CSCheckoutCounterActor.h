@@ -9,6 +9,7 @@
 #include "CSCheckoutCounterActor.generated.h"
 
 class UArrowComponent;
+class UBoxComponent;
 class UDataTable;
 class USceneComponent;
 class UStaticMeshComponent;
@@ -39,6 +40,13 @@ public:
 
 	// 현재 계산대의 사용 가능 상태에 맞는 상호작용 안내 문구를 반환합니다.
 	virtual FText GetInteractionText_Implementation() const override;
+
+	// 플레이어의 직원 구역 진입 여부를 반영한 계산대 안내 문구를 반환합니다.
+	FText GetInteractionTextForPlayer(const AActor* PlayerActor) const;
+
+	// 지정한 액터가 계산을 진행할 수 있는 직원 구역에 있는지 확인합니다.
+	UFUNCTION(BlueprintPure, Category = "Checkout")
+	bool IsInCashierInteractionZone(const AActor* Actor) const;
 
 	// 대기열 맨 앞 손님의 구매 목록을 상품별 수량과 금액이 정리된 주문으로 변환합니다.
 	UFUNCTION(BlueprintCallable, Category = "Checkout")
@@ -87,6 +95,10 @@ protected:
 	// 블루프린트에서 계산대 메시를 지정할 수 있는 컴포넌트입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> CounterMesh;
+
+	// 손님 대기열 반대편의 직원 위치에서만 계산을 시작하도록 제한하는 충돌 영역입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> CashierInteractionZone;
 
 	// 첫 번째 손님이 설 위치와 대기열이 뻗어갈 방향을 지정하는 편집용 화살표입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Queue")
