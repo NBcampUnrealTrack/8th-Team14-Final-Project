@@ -3,6 +3,7 @@
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Features/Tools/CSUsableTool.h"
@@ -521,6 +522,12 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	// 매 프레임 조준 대상을 새로 확인하므로 이전 대상의 안내가 남지 않게 먼저 숨깁니다.
 	StorePlayerController->ClearInteractionContext();
 
+	// 계산·발주 UI를 조작하는 동안에는 뒤에 있는 액터의 상호작용 안내를 다시 표시하지 않습니다.
+	if (StorePlayerController->IsGameplayUIInputLocked())
+	{
+		return;
+	}
+
 	const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
 	const FVector TraceEnd =
 		TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
@@ -540,7 +547,11 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		return;
 	}
 
-	const FText InteractionText = ICSInteractable::Execute_GetInteractionText(TargetActor);
+	// 계산대는 조준 상태를 유지한 채 직원 구역 안에 있는지도 함께 안내합니다.
+	const ACSCheckoutCounterActor* CheckoutCounter = Cast<ACSCheckoutCounterActor>(TargetActor);
+	const FText InteractionText = IsValid(CheckoutCounter)
+		? CheckoutCounter->GetInteractionTextForPlayer(this)
+		: ICSInteractable::Execute_GetInteractionText(TargetActor);
 	if (InteractionText.IsEmpty())
 	{
 		return;

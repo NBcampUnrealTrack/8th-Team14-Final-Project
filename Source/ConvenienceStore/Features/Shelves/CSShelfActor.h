@@ -10,6 +10,7 @@
 
 class UArrowComponent;
 class UPrimitiveComponent;
+class USceneComponent;
 class UStaticMeshComponent;
 class ACSProductPickupActor;
 
@@ -109,6 +110,11 @@ protected:
 		const FDataTableRowHandle& ProductRow,
 		int32 SlotIndex);
 
+	// 가구 이동 모드가 바닥에 맞출 공통 기준점입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> SceneRoot;
+
+	// 개별 가구 블루프린트에서 메시 높이를 보정할 수 있도록 SceneRoot의 자식으로 둡니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
 

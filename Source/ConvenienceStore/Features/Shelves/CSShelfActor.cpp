@@ -2,6 +2,7 @@
 
 #include "Components/ArrowComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -10,8 +11,13 @@ ACSShelfActor::ACSShelfActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
+	// 가구 이동 시 바닥에 맞출 기준점과 실제 메시를 분리합니다.
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
+
+	// 메시를 자식으로 두어 블루프린트마다 피벗 높이를 보정할 수 있게 합니다.
 	ShelfMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShelfMesh"));
-	SetRootComponent(ShelfMesh);
+	ShelfMesh->SetupAttachment(SceneRoot);
 	ShelfMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
