@@ -333,3 +333,28 @@ const FCSStorePhaseData* ACSStoreGameMode::FindPhaseDataAtTime(float GameMinutes
 
 	return nullptr;
 }
+
+bool ACSStoreGameMode::IsTutorialEnabled() const
+{
+	return bTutorialEnabled;
+}
+
+UDataTable* ACSStoreGameMode::GetTutorialStepDataTable() const
+{
+	return TutorialStepDataTable;
+}
+
+TSubclassOf<UCSTutorialBannerWidgetBase> ACSStoreGameMode::GetTutorialBannerWidgetClass() const
+{
+	return TutorialBannerWidgetClass;
+}
+
+TSubclassOf<UCSTutorialDialogueWidgetBase> ACSStoreGameMode::GetTutorialDialogueWidgetClass() const
+{
+	return TutorialDialogueWidgetClass;
+}
+
+TSubclassOf<UCSTutorialObjectiveWidgetBase> ACSStoreGameMode::GetTutorialObjectiveWidgetClass() const
+{
+	return TutorialObjectiveWidgetClass;
+}

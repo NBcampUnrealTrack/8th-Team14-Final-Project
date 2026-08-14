@@ -441,6 +441,10 @@ bool ACSShelfActor::TryPlaceItem_Implementation(
 	}
 
 	SelectedSlot.OccupyingItem = ItemActor;
+
+	// 슬롯에 배치가 완료된 시점에만 방송
+	OnItemPlaced.Broadcast(ItemActor, SlotIndex);
+
 	return true;
 }
 

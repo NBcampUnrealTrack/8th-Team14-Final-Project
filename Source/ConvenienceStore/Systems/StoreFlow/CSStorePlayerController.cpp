@@ -147,6 +147,9 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 
 	// UI가 열리거나 닫히는 즉시 커서, 이동 제한, 포커스를 같은 규칙으로 갱신합니다.
 	UpdateClosingInputMode();
+
+	// 이 함수를 거쳐가는 모든 UI 열림/닫힘을 방송
+	OnGameplayUIInputLockChanged.Broadcast(RequestingWidget, bShouldLock);
 }
 
 bool ACSStorePlayerController::IsGameplayUIInputLocked() const
