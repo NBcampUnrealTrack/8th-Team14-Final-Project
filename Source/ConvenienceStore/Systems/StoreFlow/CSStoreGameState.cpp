@@ -52,10 +52,21 @@ void ACSStoreGameState::SetEndOfDayTask(ECEndOfDayTask NewTask)
 	OnEndOfDayTaskChanged.Broadcast(CurrentEndOfDayTask);
 }
 
+void ACSStoreGameState::RequestDailySummary()
+{
+	bIsDailySummaryPending = true;
+	OnDailySummaryRequested.Broadcast();
+}
+
+void ACSStoreGameState::CompleteDailySummary()
+{
+	bIsDailySummaryPending = false;
+}
+
 bool ACSStoreGameState::CanChangeStoreOpenState() const
 {
-	return CurrentPhase == ECStorePhase::Open &&
-		CurrentEndOfDayTask == ECEndOfDayTask::None;
+	return (CurrentPhase == ECStorePhase::Preparation ||
+		CurrentPhase == ECStorePhase::Open) && !bIsDailySummaryPending;
 }
 
 bool ACSStoreGameState::SetStoreOpen(bool bShouldOpen)

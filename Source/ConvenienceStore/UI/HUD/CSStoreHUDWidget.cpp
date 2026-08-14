@@ -43,7 +43,8 @@ void UCSStoreHUDWidget::NativeConstruct()
 
 	if (ClockPanel != nullptr)
 	{
-		ClockPanel->SetVisibility(ESlateVisibility::Collapsed);
+		// 시간은 준비·영업·마감 단계의 기준 정보이므로 HUD에 항상 표시합니다.
+		ClockPanel->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 
 	// HUD가 생성될 때 이전 플레이 세션의 조준 안내가 보이지 않도록 초기화합니다.
@@ -75,19 +76,6 @@ void UCSStoreHUDWidget::NativeDestruct()
 	}
 
 	Super::NativeDestruct();
-}
-
-void UCSStoreHUDWidget::ToggleClockVisibility()
-{
-	if (ClockPanel == nullptr)
-	{
-		return;
-	}
-
-	bIsClockVisible = !bIsClockVisible;
-	ClockPanel->SetVisibility(bIsClockVisible
-		? ESlateVisibility::HitTestInvisible
-		: ESlateVisibility::Collapsed);
 }
 
 void UCSStoreHUDWidget::SetInteractionPrompt(
@@ -422,14 +410,11 @@ FText UCSStoreHUDWidget::FormatGameClock(float GameMinutes) const
 	const int32 TotalMinutes = FMath::FloorToInt(GameMinutes) % 1440;
 	const int32 Hour24 = TotalMinutes / 60;
 	const int32 Minutes = TotalMinutes % 60;
-	const bool bIsPM = Hour24 >= 12;
-	const int32 Hour12 = (Hour24 % 12 == 0) ? 12 : Hour24 % 12;
 
 	return FText::FromString(FString::Printf(
-		TEXT("%02d:%02d %s"),
-		Hour12,
-		Minutes,
-		bIsPM ? TEXT("PM") : TEXT("AM")));
+		TEXT("%02d:%02d"),
+		Hour24,
+		Minutes));
 }
 
 FText UCSStoreHUDWidget::GetEndOfDayButtonText(ECEndOfDayTask Task) const

@@ -5,7 +5,7 @@
 #include "CSStorePhaseTypes.generated.h"
 
 UENUM(BlueprintType)
-enum class ECStorePhase : uint8 { Preparation, Open, Settlement, Finished };
+enum class ECStorePhase : uint8 { Preparation, Open, ClosingFreeRoam, Settlement, Finished };
 
 UENUM(BlueprintType)
 enum class ECEndOfDayTask : uint8 { None, OrderReview, Settlement, SalesReport, ReputationUpdate };

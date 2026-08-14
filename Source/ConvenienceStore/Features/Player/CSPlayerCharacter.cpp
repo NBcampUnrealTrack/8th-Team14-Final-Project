@@ -134,9 +134,6 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 			PrimaryUseAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryUsePrimaryTool);
 	}
 
-    EnhancedInputComponent->BindAction(
-        ToggleClockAction, ETriggerEvent::Started, this,
-        &ACSPlayerCharacter::ToggleClock);
 }
 
 void ACSPlayerCharacter::Move(const FInputActionValue& Value)
@@ -199,15 +196,6 @@ void ACSPlayerCharacter::StopCrouch()
 {
 	// 낮은 천장에 막힌 경우에는 Unreal 기본 UnCrouch 함수가 웅크린 상태를 유지합니다. (기본기능)
 	UnCrouch();
-}
-
-void ACSPlayerCharacter::ToggleClock()
-{
-    if (ACSStorePlayerController* StorePlayerController =
-        Cast<ACSStorePlayerController>(GetController()))
-    {
-        StorePlayerController->ToggleClock();
-    }
 }
 
 void ACSPlayerCharacter::Tick(float DeltaTime)

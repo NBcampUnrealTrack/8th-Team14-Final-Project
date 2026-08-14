@@ -17,9 +17,6 @@ class CONVENIENCESTORE_API UCSStoreHUDWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "Store|UI")
-	void ToggleClockVisibility();
-
 	// 조준점 아래의 상호작용 안내를 지정한 색상으로 표시합니다.
 	void SetInteractionPrompt(const FText& Message, const FLinearColor& TextColor);
 
@@ -137,5 +134,4 @@ private:
 	void UpdateDailySalesDisplay();
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
-	bool bIsClockVisible = false;
 };
