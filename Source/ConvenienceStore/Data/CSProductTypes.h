@@ -28,7 +28,8 @@ enum class ECSProductShelfType : uint8
 	ScrollRack,
 	SnackShelf,
 	ToolRack,
-	UtilityShelf
+	UtilityShelf,
+	None UMETA(DisplayName = "None")
 };
 
 UENUM(BlueprintType)
