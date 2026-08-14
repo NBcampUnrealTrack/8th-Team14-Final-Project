@@ -3,6 +3,8 @@
 #include "Blueprint/UserWidget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
+#include "UI/Store/CSDailySummaryWidget.h"
+#include "Systems/StoreFlow/CSStoreGameMode.h"
 
 void ACSStorePlayerController::BeginPlay()
 {
@@ -24,6 +26,7 @@ void ACSStorePlayerController::BeginPlay()
 			this, &ACSStorePlayerController::HandleEndOfDayTaskChanged);
 		StoreGameState->OnStorePhaseChanged.AddDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
+		StoreGameState->OnDailySummaryRequested.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
 		UpdateClosingInputMode();
 	}
 }
@@ -36,9 +39,31 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			this, &ACSStorePlayerController::HandleEndOfDayTaskChanged);
 		StoreGameState->OnStorePhaseChanged.RemoveDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
+		StoreGameState->OnDailySummaryRequested.RemoveDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACSStorePlayerController::HandleDailySummaryRequested()
+{
+	if (!IsLocalPlayerController() || IsValid(ActiveDailySummaryWidget) || DailySummaryWidgetClass == nullptr) return;
+	ActiveDailySummaryWidget = CreateWidget<UCSDailySummaryWidget>(this, DailySummaryWidgetClass);
+	if (!IsValid(ActiveDailySummaryWidget)) return;
+	ActiveDailySummaryWidget->OnDailySummaryConfirmed.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryConfirmed);
+	ActiveDailySummaryWidget->AddToViewport();
+	SetGameplayUIInputLock(ActiveDailySummaryWidget, true);
+}
+
+void ACSStorePlayerController::HandleDailySummaryConfirmed()
+{
+	if (IsValid(ActiveDailySummaryWidget))
+	{
+		SetGameplayUIInputLock(ActiveDailySummaryWidget, false);
+		ActiveDailySummaryWidget->RemoveFromParent();
+		ActiveDailySummaryWidget = nullptr;
+	}
+	if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode())) Mode->CompleteDailySummary();
 }
 
 void ACSStorePlayerController::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
@@ -149,14 +174,6 @@ UUserWidget* ACSStorePlayerController::GetFocusedGameplayUIWidget() const
 	}
 
 	return nullptr;
-}
-
-void ACSStorePlayerController::ToggleClock()
-{
-	if (StoreHUDWidget != nullptr)
-	{
-		StoreHUDWidget->ToggleClockVisibility();
-	}
 }
 
 void ACSStorePlayerController::ShowPlacementUnavailablePrompt()

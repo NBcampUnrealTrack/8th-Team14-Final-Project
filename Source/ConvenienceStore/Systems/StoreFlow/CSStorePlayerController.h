@@ -8,6 +8,7 @@
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UUserWidget;
+class UCSDailySummaryWidget;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
 // 튜토리얼이 어떤 UI가 열렸는지 감지하는 경로
@@ -25,9 +26,6 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "UI")
-	void ToggleClock();
-
 	// 발주·계산처럼 게임 조작을 막아야 하는 UI가 열리고 닫힐 때 입력 잠금을 갱신합니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Input")
 	void SetGameplayUIInputLock(UUserWidget* RequestingWidget, bool bShouldLock);
@@ -66,6 +64,8 @@ protected:
 
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
+	UFUNCTION() void HandleDailySummaryRequested();
+	UFUNCTION() void HandleDailySummaryConfirmed();
 
 	void UpdateClosingInputMode();
 	bool HasGameplayUIInputLock() const;
@@ -73,6 +73,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
+	TSubclassOf<UCSDailySummaryWidget> DailySummaryWidgetClass;
+	UPROPERTY(Transient) TObjectPtr<UCSDailySummaryWidget> ActiveDailySummaryWidget;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;

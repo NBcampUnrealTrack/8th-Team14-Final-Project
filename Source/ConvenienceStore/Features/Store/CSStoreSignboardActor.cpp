@@ -5,6 +5,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSStoreBusinessConfirmWidget.h"
 
@@ -141,9 +142,11 @@ void ACSStoreSignboardActor::HandleStoreOpenStateChanged(bool bNewStoreOpen)
 
 void ACSStoreSignboardActor::HandleBusinessConfirmed(bool bShouldOpen)
 {
-	if (IsValid(StoreGameState))
+	if (ACSStoreGameMode* StoreGameMode =
+		Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode()))
 	{
-		StoreGameState->SetStoreOpen(bShouldOpen);
+		// 준비 단계의 첫 개점은 09:00부터 시계를 시작해야 하므로 GameMode가 처리합니다.
+		StoreGameMode->RequestBusinessOpenState(bShouldOpen);
 	}
 	CloseConfirmWidget();
 }
