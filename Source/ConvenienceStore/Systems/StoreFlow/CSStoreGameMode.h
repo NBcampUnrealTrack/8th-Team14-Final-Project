@@ -39,6 +39,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
 	void StartNextBusinessDay();
 
+	// 이 맵에서 튜토리얼을 시작할 건지 여부
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	bool IsTutorialEnabled() const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -76,6 +80,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	bool bStartFlowOnBeginPlay = true;
+
+	// 이 값이 true인 게임모드(BP_TutorialGameMode)를 쓰는 맵에서만 튜토리얼이 시작됨
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	bool bTutorialEnabled = false;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;

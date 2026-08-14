@@ -333,3 +333,8 @@ const FCSStorePhaseData* ACSStoreGameMode::FindPhaseDataAtTime(float GameMinutes
 
 	return nullptr;
 }
+
+bool ACSStoreGameMode::IsTutorialEnabled() const
+{
+	return bTutorialEnabled;
+}
