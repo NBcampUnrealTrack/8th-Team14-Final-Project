@@ -292,6 +292,17 @@ void ACSProductPickupActor::SetHeldByPlayerForFreshness(bool bIsHeldByPlayer)
 	}
 }
 
+void ACSProductPickupActor::SetFreshnessFrozenForDisplay(bool bFrozen)
+{
+	if (bIsFreshnessFrozenForDisplay == bFrozen)
+	{
+		return;
+	}
+
+	bIsFreshnessFrozenForDisplay = bFrozen;
+	UpdateFreshnessDecayState();
+}
+
 void ACSProductPickupActor::EnsureProductRuntimeStateInitialized()
 {
 	if (ProductRow.DataTable == nullptr ||
@@ -355,6 +366,14 @@ void ACSProductPickupActor::UpdateFreshnessDecayState()
 			: nullptr;
 	if (ProductData == nullptr || !IsValid(World) || !IsValid(FreshnessSettings))
 	{
+		return;
+	}
+	if (bIsFreshnessFrozenForDisplay)
+	{
+		ProductRuntimeState.StopFreshnessDecay(
+			World->GetTimeSeconds(),
+			FreshnessSettings->DecayIntervalSeconds,
+			FreshnessSettings->DecayAmountPerInterval);
 		return;
 	}
 

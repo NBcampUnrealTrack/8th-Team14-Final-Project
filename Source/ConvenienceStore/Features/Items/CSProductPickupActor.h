@@ -100,6 +100,7 @@ public:
 	void EnterFreshnessSafeZone(ECSProductShelfType SafeStorageType);
 	void ExitFreshnessSafeZone(ECSProductShelfType SafeStorageType);
 	void SetHeldByPlayerForFreshness(bool bIsHeldByPlayer);
+	void SetFreshnessFrozenForDisplay(bool bFrozen);
 
 	// 계산대 연출처럼 실제 재고로 취급하지 않을 표시용 상품을 재고 집계에서 제외합니다.
 	void SetExcludedFromStockCount(bool bShouldExclude)
@@ -159,6 +160,9 @@ protected:
 
 	UPROPERTY(Transient)
 	bool bIsHeldByPlayerForFreshness = false;
+
+	UPROPERTY(Transient)
+	bool bIsFreshnessFrozenForDisplay = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> SpoiledVFXComponent;
