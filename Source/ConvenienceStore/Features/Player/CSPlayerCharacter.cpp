@@ -37,7 +37,7 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 
     // 이동 방향으로 자동 회전하지 않게 합니다.
     GetCharacterMovement()->bOrientRotationToMovement = false;
-    GetCharacterMovement()->MaxWalkSpeed = 350.0f;
+    GetCharacterMovement()->MaxWalkSpeed = 700.0f;
 
     // 기본 Character 웅크리기 기능이 충돌과 천장 공간을 안전하게 처리하도록 활성화합니다.
     GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
@@ -58,7 +58,7 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     // 웅크린 상태에서는 일반 걷기보다 느린 이동 속도를 적용합니다.
     GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchSpeed;
     // 점프 높이를 결정합니다.
-    GetCharacterMovement()->JumpZVelocity = 420.0f;
+    GetCharacterMovement()->JumpZVelocity = 700.0f;
     GetCharacterMovement()->AirControl = 0.35f;
 }
 
