@@ -2,7 +2,6 @@
 
 #include "Components/ArrowComponent.h"
 #include "Components/PrimitiveComponent.h"
-#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -11,11 +10,8 @@ ACSShelfActor::ACSShelfActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	SlotRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SlotRoot"));
-	SetRootComponent(SlotRoot);
-
 	ShelfMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShelfMesh"));
-	ShelfMesh->SetupAttachment(SlotRoot);
+	SetRootComponent(ShelfMesh);
 	ShelfMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
@@ -37,9 +33,36 @@ void ACSShelfActor::BeginPlay()
 	SpawnInitialProducts();
 }
 
+FName ACSShelfActor::GetFacilityId_Implementation() const
+{
+	return FacilityRow.RowName;
+}
+
+bool ACSShelfActor::IsFacilityInstalled_Implementation() const
+{
+	return bIsInstalled;
+}
+
+void ACSShelfActor::InitializeAsUninstalledFacility_Implementation()
+{
+	bIsInstalled = false;
+	SetFacilityPhysicsEnabled(true);
+}
+
+void ACSShelfActor::PrepareForBuildPickup_Implementation()
+{
+	SetFacilityPhysicsEnabled(false);
+}
+
+void ACSShelfActor::FinalizeBuildPlacement_Implementation()
+{
+	SetFacilityPhysicsEnabled(false);
+	bIsInstalled = true;
+}
+
 void ACSShelfActor::SpawnInitialProducts()
 {
-	if (InitialProducts.IsEmpty())
+	if (!bIsInstalled || InitialProducts.IsEmpty())
 	{
 		return;
 	}
@@ -201,16 +224,6 @@ void ACSShelfActor::SyncSlotsFromMarkers()
 		int32 SlotIndex = INDEX_NONE;
 		if (TryGetSlotMarkerIndex(ArrowComponent, SlotIndex))
 		{
-			// 기존 블루프린트는 슬롯을 ShelfMesh의 자식으로 저장했었습니다.
-			// 월드 위치는 유지하되, 메시 스케일을 더 이상 상속하지 않도록 전용 루트로 분리합니다.
-			if (ArrowComponent->GetAttachParent() != SlotRoot)
-			{
-				ArrowComponent->AttachToComponent(
-					SlotRoot,
-					FAttachmentTransformRules::KeepWorldTransform);
-				ArrowComponent->SetWorldScale3D(FVector::OneVector);
-			}
-
 			SlotMarkers.Emplace(SlotIndex, ArrowComponent);
 		}
 	}
@@ -252,7 +265,8 @@ void ACSShelfActor::SyncSlotsFromMarkers()
 
 bool ACSShelfActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 {
-	return IsValid(ItemActor) &&
+	return bIsInstalled &&
+		IsValid(ItemActor) &&
 		Slots.ContainsByPredicate([](const FCSShelfSlot& Slot)
 		{
 			return !IsValid(Slot.OccupyingItem);
@@ -472,6 +486,36 @@ bool ACSShelfActor::ShouldWarnStorage(AActor* ItemActor) const
 	}
 
 	return false;
+}
+
+void ACSShelfActor::SetFacilityPhysicsEnabled(bool bEnabled)
+{
+	if (!IsValid(ShelfMesh))
+	{
+		return;
+	}
+
+	if (bEnabled)
+	{
+		ShelfMesh->SetMobility(EComponentMobility::Movable);
+		ShelfMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		ShelfMesh->SetEnableGravity(true);
+		ShelfMesh->SetSimulatePhysics(true);
+		if (ShelfMesh->IsSimulatingPhysics())
+		{
+			ShelfMesh->WakeAllRigidBodies();
+		}
+		return;
+	}
+
+	if (ShelfMesh->IsSimulatingPhysics())
+	{
+		ShelfMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		ShelfMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+		ShelfMesh->PutAllRigidBodiesToSleep();
+	}
+	ShelfMesh->SetSimulatePhysics(false);
+	ShelfMesh->SetEnableGravity(false);
 }
 
 bool ACSShelfActor::GetItemSlotLevel_Implementation(

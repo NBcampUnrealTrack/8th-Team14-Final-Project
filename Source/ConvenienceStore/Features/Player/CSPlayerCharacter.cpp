@@ -1,4 +1,5 @@
-#include "Features/Player/CSPlayerCharacter.h"
+﻿#include "Features/Player/CSPlayerCharacter.h"
+#include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
@@ -19,8 +20,11 @@
 #include "GameFramework/Controller.h"
 #include "InputActionValue.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 
 ACSPlayerCharacter::ACSPlayerCharacter()
@@ -54,6 +58,17 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     HeldItemAnchor->SetupAttachment(FirstPersonCamera);
     HeldItemAnchor->SetRelativeLocation(FVector(80.0f, 20.0f, -20.0f));
 
+	BuildPlacementPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(
+		TEXT("BuildPlacementPreviewMesh"));
+	BuildPlacementPreviewMesh->SetupAttachment(GetRootComponent());
+	BuildPlacementPreviewMesh->SetAbsolute(true, true, true);
+	BuildPlacementPreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BuildPlacementPreviewMesh->SetGenerateOverlapEvents(false);
+	BuildPlacementPreviewMesh->SetCanEverAffectNavigation(false);
+	BuildPlacementPreviewMesh->SetCastShadow(false);
+	BuildPlacementPreviewMesh->SetHiddenInGame(true);
+	BuildPlacementPreviewMesh->SetVisibility(false);
+
     GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
     // 웅크린 상태에서는 일반 걷기보다 느린 이동 속도를 적용합니다.
     GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchSpeed;
@@ -83,6 +98,9 @@ void ACSPlayerCharacter::BeginPlay()
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ResetBuildRotationInput();
+	RestoreHeldBuildableActorStates();
+	ClearBuildPlacementPreview();
 	// 플레이어가 제거될 때 프리뷰 액터도 함께 정리하여 월드에 남지 않게 합니다.
 	DestroyPlacementPreview();
 
@@ -127,6 +145,53 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 
     EnhancedInputComponent->BindAction(
         DropAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::DropHeldItem);
+
+	if (ToggleBuildModeAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			ToggleBuildModeAction,
+			ETriggerEvent::Started,
+			this,
+			&ACSPlayerCharacter::ToggleBuildMode);
+	}
+
+	if (RotateBuildLeftAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			RotateBuildLeftAction,
+			ETriggerEvent::Started,
+			this,
+			&ACSPlayerCharacter::StartRotateBuildLeft);
+		EnhancedInputComponent->BindAction(
+			RotateBuildLeftAction,
+			ETriggerEvent::Completed,
+			this,
+			&ACSPlayerCharacter::StopRotateBuildLeft);
+		EnhancedInputComponent->BindAction(
+			RotateBuildLeftAction,
+			ETriggerEvent::Canceled,
+			this,
+			&ACSPlayerCharacter::StopRotateBuildLeft);
+	}
+
+	if (RotateBuildRightAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			RotateBuildRightAction,
+			ETriggerEvent::Started,
+			this,
+			&ACSPlayerCharacter::StartRotateBuildRight);
+		EnhancedInputComponent->BindAction(
+			RotateBuildRightAction,
+			ETriggerEvent::Completed,
+			this,
+			&ACSPlayerCharacter::StopRotateBuildRight);
+		EnhancedInputComponent->BindAction(
+			RotateBuildRightAction,
+			ETriggerEvent::Canceled,
+			this,
+			&ACSPlayerCharacter::StopRotateBuildRight);
+	}
 
 	if (PrimaryUseAction != nullptr)
 	{
@@ -198,9 +263,154 @@ void ACSPlayerCharacter::StopCrouch()
 	UnCrouch();
 }
 
+
+void ACSPlayerCharacter::ToggleBuildMode()
+{
+	if (IsValid(HeldActor))
+	{
+		return;
+	}
+
+	CurrentPlayerMode = IsBuildMode()
+		? ECSPlayerMode::Normal
+		: ECSPlayerMode::Build;
+	ResetBuildRotationInput();
+	ClearBuildPlacementPreview();
+	DestroyPlacementPreview();
+}
+
+void ACSPlayerCharacter::StartRotateBuildLeft()
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		return;
+	}
+
+	bBuildRotateLeftHeld = true;
+	BuildRotateLeftHeldSeconds = 0.0f;
+	BuildRotationAccumulator = 0.0f;
+	ApplyBuildRotationStep(-1.0f);
+}
+
+void ACSPlayerCharacter::StopRotateBuildLeft()
+{
+	bBuildRotateLeftHeld = false;
+	BuildRotateLeftHeldSeconds = 0.0f;
+	BuildRotationAccumulator = 0.0f;
+}
+
+void ACSPlayerCharacter::StartRotateBuildRight()
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		return;
+	}
+
+	bBuildRotateRightHeld = true;
+	BuildRotateRightHeldSeconds = 0.0f;
+	BuildRotationAccumulator = 0.0f;
+	ApplyBuildRotationStep(1.0f);
+}
+
+void ACSPlayerCharacter::StopRotateBuildRight()
+{
+	bBuildRotateRightHeld = false;
+	BuildRotateRightHeldSeconds = 0.0f;
+	BuildRotationAccumulator = 0.0f;
+}
+
+void ACSPlayerCharacter::ApplyBuildRotationStep(float YawDelta)
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>() ||
+		!FMath::IsFinite(YawDelta))
+	{
+		return;
+	}
+
+	HeldBuildableFacilityRotation.Yaw = FRotator::NormalizeAxis(
+		HeldBuildableFacilityRotation.Yaw + YawDelta);
+}
+
+void ACSPlayerCharacter::UpdateBuildRotationInput(float DeltaTime)
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		ResetBuildRotationInput();
+		return;
+	}
+
+	const float SafeDeltaTime = FMath::Max(0.0f, DeltaTime);
+	const float PreviousLeftHeldSeconds = BuildRotateLeftHeldSeconds;
+	const float PreviousRightHeldSeconds = BuildRotateRightHeldSeconds;
+	if (bBuildRotateLeftHeld)
+	{
+		BuildRotateLeftHeldSeconds += SafeDeltaTime;
+	}
+	if (bBuildRotateRightHeld)
+	{
+		BuildRotateRightHeldSeconds += SafeDeltaTime;
+	}
+
+	if (bBuildRotateLeftHeld == bBuildRotateRightHeld)
+	{
+		BuildRotationAccumulator = 0.0f;
+		return;
+	}
+
+	const bool bRotateLeft = bBuildRotateLeftHeld;
+	const float PreviousHeldSeconds = bRotateLeft
+		? PreviousLeftHeldSeconds
+		: PreviousRightHeldSeconds;
+	const float CurrentHeldSeconds = bRotateLeft
+		? BuildRotateLeftHeldSeconds
+		: BuildRotateRightHeldSeconds;
+	const float HoldDelay = FMath::Max(0.0f, BuildRotationHoldDelay);
+	const float RotationDeltaTime = FMath::Max(
+		0.0f,
+		CurrentHeldSeconds - FMath::Max(PreviousHeldSeconds, HoldDelay));
+	if (RotationDeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	BuildRotationAccumulator +=
+		FMath::Max(0.0f, BuildRotationDegreesPerSecond) * RotationDeltaTime;
+	const float StepDirection = bRotateLeft ? -1.0f : 1.0f;
+	while (BuildRotationAccumulator >= 1.0f)
+	{
+		ApplyBuildRotationStep(StepDirection);
+		BuildRotationAccumulator -= 1.0f;
+	}
+}
+
+void ACSPlayerCharacter::ResetBuildRotationInput()
+{
+	bBuildRotateLeftHeld = false;
+	bBuildRotateRightHeld = false;
+	BuildRotateLeftHeldSeconds = 0.0f;
+	BuildRotateRightHeldSeconds = 0.0f;
+	BuildRotationAccumulator = 0.0f;
+}
+
 void ACSPlayerCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+
+	if (IsBuildMode())
+	{
+		UpdateBuildRotationInput(DeltaTime);
+		UpdateBuildPlacementPreview();
+		UpdateBuildModeHUD();
+		return;
+	}
 
 	if (IsValid(HeldActor))
 	{
@@ -226,7 +436,11 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
-    if (!IsValid(PickupActor) || IsValid(HeldActor) || HeldItemAnchor == nullptr)
+    if (IsBuildMode() ||
+		!IsValid(PickupActor) ||
+		PickupActor->Implements<UCSBuildableFacility>() ||
+		IsValid(HeldActor) ||
+		HeldItemAnchor == nullptr)
     {
         return false;
     }
@@ -366,6 +580,519 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	}
 }
 
+void ACSPlayerCharacter::UpdateBuildModeHUD()
+{
+	ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController());
+	if (!IsValid(StorePlayerController))
+	{
+		return;
+	}
+
+	StorePlayerController->ClearInteractionContext();
+	if (IsValid(HeldActor))
+	{
+		if (HeldActor->Implements<UCSBuildableFacility>())
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "BuildPlaceFacilityPrompt", "[Q] 시설 배치"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
+	if (FirstPersonCamera == nullptr || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
+	const FVector TraceEnd =
+		TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	if (!GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams))
+	{
+		return;
+	}
+
+	AActor* TargetActor = HitResult.GetActor();
+	if (IsValid(TargetActor) && TargetActor->Implements<UCSBuildableFacility>())
+	{
+		StorePlayerController->SetInteractionPrompt(
+			NSLOCTEXT("Interaction", "BuildPickUpFacilityPrompt", "[E] 들기"),
+			FLinearColor::White);
+	}
+}
+
+void ACSPlayerCharacter::ConfigureBuildPlacementPreview(AActor* FacilityActor)
+{
+	ClearBuildPlacementPreview();
+	if (!IsValid(FacilityActor) || !IsValid(BuildPlacementPreviewMesh))
+	{
+		return;
+	}
+
+	HeldBuildableSourceMesh = Cast<UStaticMeshComponent>(FacilityActor->GetRootComponent());
+	if (!IsValid(HeldBuildableSourceMesh) ||
+		!IsValid(HeldBuildableSourceMesh->GetStaticMesh()))
+	{
+		TArray<UStaticMeshComponent*> StaticMeshComponents;
+		FacilityActor->GetComponents<UStaticMeshComponent>(StaticMeshComponents);
+		HeldBuildableSourceMesh = nullptr;
+		for (UStaticMeshComponent* StaticMeshComponent : StaticMeshComponents)
+		{
+			if (IsValid(StaticMeshComponent) &&
+				IsValid(StaticMeshComponent->GetStaticMesh()))
+			{
+				HeldBuildableSourceMesh = StaticMeshComponent;
+				break;
+			}
+		}
+	}
+
+	if (!IsValid(HeldBuildableSourceMesh))
+	{
+		return;
+	}
+
+	BuildPlacementPreviewMesh->SetStaticMesh(HeldBuildableSourceMesh->GetStaticMesh());
+	for (int32 MaterialIndex = 0;
+		MaterialIndex < HeldBuildableSourceMesh->GetNumMaterials();
+		++MaterialIndex)
+	{
+		BuildPlacementPreviewMesh->SetMaterial(
+			MaterialIndex,
+			HeldBuildableSourceMesh->GetMaterial(MaterialIndex));
+	}
+}
+
+void ACSPlayerCharacter::ClearBuildPlacementPreview()
+{
+	bHasBuildPlacementPreview = false;
+	bCanPlaceHeldBuildableFacility = false;
+	CachedBuildPlacementLocation = FVector::ZeroVector;
+	CachedBuildPlacementRotation = FRotator::ZeroRotator;
+	HeldBuildableSourceMesh = nullptr;
+	if (IsValid(BuildPlacementPreviewMesh))
+	{
+		BuildPlacementPreviewMesh->SetHiddenInGame(true);
+		BuildPlacementPreviewMesh->SetVisibility(false);
+		BuildPlacementPreviewMesh->SetStaticMesh(nullptr);
+	}
+}
+
+void ACSPlayerCharacter::ApplyBuildPlacementPreviewMaterial(bool bIsPlacementValid)
+{
+	if (!IsValid(BuildPlacementPreviewMesh))
+	{
+		return;
+	}
+
+	UMaterialInterface* PreviewMaterial = bIsPlacementValid
+		? BuildPlacementValidMaterial.Get()
+		: BuildPlacementInvalidMaterial.Get();
+	if (!IsValid(PreviewMaterial))
+	{
+		if (IsValid(HeldBuildableSourceMesh))
+		{
+			for (int32 MaterialIndex = 0;
+				MaterialIndex < HeldBuildableSourceMesh->GetNumMaterials();
+				++MaterialIndex)
+			{
+				BuildPlacementPreviewMesh->SetMaterial(
+					MaterialIndex,
+					HeldBuildableSourceMesh->GetMaterial(MaterialIndex));
+			}
+		}
+		return;
+	}
+
+	for (int32 MaterialIndex = 0;
+		MaterialIndex < BuildPlacementPreviewMesh->GetNumMaterials();
+		++MaterialIndex)
+	{
+		BuildPlacementPreviewMesh->SetMaterial(MaterialIndex, PreviewMaterial);
+	}
+}
+
+void ACSPlayerCharacter::CacheHeldBuildableActorStates(AActor* FacilityActor)
+{
+	HeldBuildableStateActors.Reset();
+	HeldBuildableHiddenStates.Reset();
+	HeldBuildableCollisionStates.Reset();
+	if (!IsValid(FacilityActor))
+	{
+		return;
+	}
+
+	TArray<AActor*> ActorsToCache;
+	ActorsToCache.Add(FacilityActor);
+	TArray<AActor*> AttachedActors;
+	FacilityActor->GetAttachedActors(AttachedActors, true, true);
+	ActorsToCache.Append(AttachedActors);
+	for (AActor* Actor : ActorsToCache)
+	{
+		if (!IsValid(Actor) || HeldBuildableStateActors.Contains(Actor))
+		{
+			continue;
+		}
+
+		HeldBuildableStateActors.Add(Actor);
+		HeldBuildableHiddenStates.Add(Actor->IsHidden() ? 1 : 0);
+		HeldBuildableCollisionStates.Add(Actor->GetActorEnableCollision() ? 1 : 0);
+	}
+}
+
+void ACSPlayerCharacter::HideHeldBuildableActors()
+{
+	for (AActor* Actor : HeldBuildableStateActors)
+	{
+		if (IsValid(Actor))
+		{
+			Actor->SetActorHiddenInGame(true);
+			Actor->SetActorEnableCollision(false);
+		}
+	}
+}
+
+void ACSPlayerCharacter::RestoreHeldBuildableActorStates()
+{
+	for (int32 ActorIndex = 0;
+		ActorIndex < HeldBuildableStateActors.Num() &&
+		ActorIndex < HeldBuildableHiddenStates.Num();
+		++ActorIndex)
+	{
+		if (AActor* Actor = HeldBuildableStateActors[ActorIndex]; IsValid(Actor))
+		{
+			Actor->SetActorHiddenInGame(HeldBuildableHiddenStates[ActorIndex] != 0);
+		}
+	}
+
+	for (int32 ActorIndex = 0;
+		ActorIndex < HeldBuildableStateActors.Num() &&
+		ActorIndex < HeldBuildableCollisionStates.Num();
+		++ActorIndex)
+	{
+		if (AActor* Actor = HeldBuildableStateActors[ActorIndex]; IsValid(Actor))
+		{
+			Actor->SetActorEnableCollision(HeldBuildableCollisionStates[ActorIndex] != 0);
+		}
+	}
+
+	HeldBuildableStateActors.Reset();
+	HeldBuildableHiddenStates.Reset();
+	HeldBuildableCollisionStates.Reset();
+}
+
+bool ACSPlayerCharacter::TryCalculateBuildSnapTransform(
+	const FVector& BasePlacementLocation,
+	const FRotator& ManualRotation,
+	FVector& OutSnappedLocation,
+	FRotator& OutSnappedRotation) const
+{
+	OutSnappedLocation = BasePlacementLocation;
+	OutSnappedRotation = ManualRotation;
+	if (!IsValid(BuildPlacementPreviewMesh) ||
+		!IsValid(HeldActor) ||
+		GetWorld() == nullptr ||
+		BasePlacementLocation.ContainsNaN() ||
+		ManualRotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	const FBoxSphereBounds PreviewBounds = BuildPlacementPreviewMesh->CalcBounds(
+		BuildPlacementPreviewMesh->GetComponentTransform());
+	const FVector BoundsOrigin = PreviewBounds.Origin;
+	const FVector BoundsExtent = PreviewBounds.BoxExtent;
+	const float SearchDistance = FMath::Max(0.0f, WallSnapSearchDistance);
+	const float HorizontalSearchRadius = FVector2D(
+		BoundsExtent.X,
+		BoundsExtent.Y).Size();
+	if (BoundsOrigin.ContainsNaN() ||
+		BoundsExtent.ContainsNaN() ||
+		BoundsExtent.GetMin() <= 0.0f ||
+		!FMath::IsFinite(HorizontalSearchRadius) ||
+		SearchDistance <= 0.0f)
+	{
+		return false;
+	}
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	QueryParams.AddIgnoredActor(HeldActor);
+	TArray<AActor*> AttachedActors;
+	HeldActor->GetAttachedActors(AttachedActors, true, true);
+	QueryParams.AddIgnoredActors(AttachedActors);
+
+	constexpr int32 WallTraceDirectionCount = 8;
+	constexpr float MaximumWallNormalZ = 0.25f;
+	constexpr float WallGap = 2.0f;
+	constexpr float MovementTieTolerance = 0.1f;
+	float BestMovementDistance = TNumericLimits<float>::Max();
+	float BestYawDifference = TNumericLimits<float>::Max();
+	bool bFoundWallSnap = false;
+	for (int32 DirectionIndex = 0;
+		DirectionIndex < WallTraceDirectionCount;
+		++DirectionIndex)
+	{
+		const float TraceYaw =
+			ManualRotation.Yaw + DirectionIndex * 45.0f;
+		const FVector TraceDirection = FRotator(0.0f, TraceYaw, 0.0f).Vector();
+		const FVector TraceEnd =
+			BoundsOrigin + TraceDirection * (HorizontalSearchRadius + SearchDistance);
+		TArray<FHitResult> SurfaceHits;
+		if (!GetWorld()->LineTraceMultiByObjectType(
+			SurfaceHits,
+			BoundsOrigin,
+			TraceEnd,
+			ObjectQueryParams,
+			QueryParams))
+		{
+			continue;
+		}
+
+		for (const FHitResult& SurfaceHit : SurfaceHits)
+		{
+			if (!SurfaceHit.IsValidBlockingHit())
+			{
+				continue;
+			}
+
+			AActor* SurfaceActor = SurfaceHit.GetActor();
+			UPrimitiveComponent* SurfaceComponent = SurfaceHit.GetComponent();
+			if (SurfaceActor == HeldActor || AttachedActors.Contains(SurfaceActor))
+			{
+				continue;
+			}
+			if (IsValid(SurfaceActor) &&
+				(Cast<ACSProductPickupActor>(SurfaceActor) != nullptr ||
+				Cast<ACSDeliveryCrateActor>(SurfaceActor) != nullptr ||
+				SurfaceActor->Implements<UCSUsableTool>()))
+			{
+				continue;
+			}
+
+			const bool bIsBuildableFacility =
+				IsValid(SurfaceActor) &&
+				SurfaceActor->Implements<UCSBuildableFacility>();
+			const bool bIsInstalledFacility =
+				bIsBuildableFacility &&
+				ICSBuildableFacility::Execute_IsFacilityInstalled(SurfaceActor);
+			const bool bIsWorldStaticSurface =
+				!bIsBuildableFacility &&
+				IsValid(SurfaceComponent) &&
+				SurfaceComponent->GetCollisionObjectType() == ECC_WorldStatic;
+			if (!bIsInstalledFacility && !bIsWorldStaticSurface)
+			{
+				continue;
+			}
+
+			const FVector ImpactNormal = SurfaceHit.ImpactNormal;
+			if (ImpactNormal.ContainsNaN() ||
+				SurfaceHit.ImpactPoint.ContainsNaN() ||
+				FMath::Abs(ImpactNormal.Z) > MaximumWallNormalZ)
+			{
+				continue;
+			}
+
+			FVector HorizontalSurfaceNormal(ImpactNormal.X, ImpactNormal.Y, 0.0f);
+			if (!HorizontalSurfaceNormal.Normalize())
+			{
+				continue;
+			}
+			if (FVector::DotProduct(
+				BoundsOrigin - SurfaceHit.ImpactPoint,
+				HorizontalSurfaceNormal) < 0.0f)
+			{
+				HorizontalSurfaceNormal *= -1.0f;
+			}
+
+			const float SurfaceNormalYaw = HorizontalSurfaceNormal.Rotation().Yaw;
+			float AutoYaw = SurfaceNormalYaw;
+			float YawDifference = TNumericLimits<float>::Max();
+			for (int32 YawCandidateIndex = 0;
+				YawCandidateIndex < 4;
+				++YawCandidateIndex)
+			{
+				const float CandidateYaw = FRotator::NormalizeAxis(
+					SurfaceNormalYaw + YawCandidateIndex * 90.0f);
+				const float CandidateYawDifference = FMath::Abs(
+					FMath::FindDeltaAngleDegrees(ManualRotation.Yaw, CandidateYaw));
+				if (CandidateYawDifference < YawDifference)
+				{
+					AutoYaw = CandidateYaw;
+					YawDifference = CandidateYawDifference;
+				}
+			}
+
+			FRotator CandidateRotation = ManualRotation;
+			CandidateRotation.Yaw = AutoYaw;
+			BuildPlacementPreviewMesh->SetWorldLocationAndRotation(
+				BasePlacementLocation,
+				CandidateRotation);
+			BuildPlacementPreviewMesh->UpdateBounds();
+
+			float NearestDistance = TNumericLimits<float>::Max();
+			bool bCalculatedNearestDistance = false;
+			if (const UStaticMesh* PreviewStaticMesh =
+				BuildPlacementPreviewMesh->GetStaticMesh())
+			{
+				const FBox LocalBounds = PreviewStaticMesh->GetBoundingBox();
+				if (LocalBounds.IsValid)
+				{
+					const FTransform PreviewTransform =
+						BuildPlacementPreviewMesh->GetComponentTransform();
+					for (int32 XIndex = 0; XIndex < 2; ++XIndex)
+					{
+						for (int32 YIndex = 0; YIndex < 2; ++YIndex)
+						{
+							for (int32 ZIndex = 0; ZIndex < 2; ++ZIndex)
+							{
+								const FVector LocalCorner(
+									XIndex == 0 ? LocalBounds.Min.X : LocalBounds.Max.X,
+									YIndex == 0 ? LocalBounds.Min.Y : LocalBounds.Max.Y,
+									ZIndex == 0 ? LocalBounds.Min.Z : LocalBounds.Max.Z);
+								const FVector WorldCorner =
+									PreviewTransform.TransformPosition(LocalCorner);
+								const float CornerDistance = FVector::DotProduct(
+									WorldCorner - SurfaceHit.ImpactPoint,
+									HorizontalSurfaceNormal);
+								if (!WorldCorner.ContainsNaN() &&
+									FMath::IsFinite(CornerDistance))
+								{
+									NearestDistance = FMath::Min(
+										NearestDistance,
+										CornerDistance);
+									bCalculatedNearestDistance = true;
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if (!bCalculatedNearestDistance)
+			{
+				const FBoxSphereBounds CandidateBounds =
+					BuildPlacementPreviewMesh->CalcBounds(
+						BuildPlacementPreviewMesh->GetComponentTransform());
+				const float SupportRadius =
+					FMath::Abs(HorizontalSurfaceNormal.X) * CandidateBounds.BoxExtent.X +
+					FMath::Abs(HorizontalSurfaceNormal.Y) * CandidateBounds.BoxExtent.Y;
+				NearestDistance = FVector::DotProduct(
+					CandidateBounds.Origin - SurfaceHit.ImpactPoint,
+					HorizontalSurfaceNormal) - SupportRadius;
+			}
+
+			const float MoveDistance = WallGap - NearestDistance;
+			const float MovementDistance = FMath::Abs(MoveDistance);
+			if (!FMath::IsFinite(NearestDistance) ||
+				!FMath::IsFinite(MoveDistance) ||
+				NearestDistance > SearchDistance)
+			{
+				continue;
+			}
+
+			const bool bHasBetterMovement =
+				MovementDistance < BestMovementDistance - MovementTieTolerance;
+			const bool bHasEqualMovement =
+				FMath::Abs(MovementDistance - BestMovementDistance) <=
+				MovementTieTolerance;
+			const bool bHasBetterYaw =
+				YawDifference < BestYawDifference - KINDA_SMALL_NUMBER;
+			if (!bHasBetterMovement && !(bHasEqualMovement && bHasBetterYaw))
+			{
+				continue;
+			}
+
+			FVector CandidateLocation =
+				BasePlacementLocation + HorizontalSurfaceNormal * MoveDistance;
+			CandidateLocation.Z = BasePlacementLocation.Z;
+			if (CandidateLocation.ContainsNaN())
+			{
+				continue;
+			}
+
+			BestMovementDistance = MovementDistance;
+			BestYawDifference = YawDifference;
+			OutSnappedLocation = CandidateLocation;
+			OutSnappedRotation = CandidateRotation;
+			bFoundWallSnap = true;
+		}
+	}
+
+	BuildPlacementPreviewMesh->SetWorldLocationAndRotation(
+		OutSnappedLocation,
+		OutSnappedRotation);
+	BuildPlacementPreviewMesh->UpdateBounds();
+	return bFoundWallSnap;
+}
+
+void ACSPlayerCharacter::UpdateBuildPlacementPreview()
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>() ||
+		!IsValid(BuildPlacementPreviewMesh) ||
+		!IsValid(HeldBuildableSourceMesh))
+	{
+		ClearBuildPlacementPreview();
+		return;
+	}
+
+	FVector PlacementLocation;
+	bool bIsSurfaceValid = false;
+	if (!TryCalculateBuildPlacementLocation(
+		HeldActor,
+		PlacementLocation,
+		bIsSurfaceValid))
+	{
+		bHasBuildPlacementPreview = false;
+		bCanPlaceHeldBuildableFacility = false;
+		BuildPlacementPreviewMesh->SetHiddenInGame(true);
+		BuildPlacementPreviewMesh->SetVisibility(false);
+		return;
+	}
+
+	BuildPlacementPreviewMesh->SetWorldLocationAndRotation(
+		PlacementLocation,
+		HeldBuildableFacilityRotation);
+	BuildPlacementPreviewMesh->SetWorldScale3D(
+		HeldBuildableSourceMesh->GetComponentScale());
+	BuildPlacementPreviewMesh->UpdateBounds();
+
+	FVector FinalPlacementLocation = PlacementLocation;
+	FRotator FinalPlacementRotation = HeldBuildableFacilityRotation;
+	TryCalculateBuildSnapTransform(
+		PlacementLocation,
+		HeldBuildableFacilityRotation,
+		FinalPlacementLocation,
+		FinalPlacementRotation);
+
+	BuildPlacementPreviewMesh->SetWorldLocationAndRotation(
+		FinalPlacementLocation,
+		FinalPlacementRotation);
+	BuildPlacementPreviewMesh->UpdateBounds();
+	CachedBuildPlacementLocation = FinalPlacementLocation;
+	CachedBuildPlacementRotation = FinalPlacementRotation;
+	bHasBuildPlacementPreview = true;
+	bCanPlaceHeldBuildableFacility = bIsSurfaceValid;
+	ApplyBuildPlacementPreviewMaterial(bCanPlaceHeldBuildableFacility);
+	BuildPlacementPreviewMesh->SetHiddenInGame(false);
+	BuildPlacementPreviewMesh->SetVisibility(true);
+}
+
 void ACSPlayerCharacter::UpdatePlacementPreview()
 {
 	ACSStorePlayerController* StorePlayerController =
@@ -484,6 +1211,12 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 
 void ACSPlayerCharacter::DropHeldItem()
 {
+	if (IsBuildMode())
+	{
+		TryPlaceHeldBuildableFacility();
+		return;
+	}
+
     if (!IsValid(HeldActor) || FirstPersonCamera == nullptr)
     {
         return;
@@ -633,9 +1366,176 @@ void ACSPlayerCharacter::DropHeldItem()
 
 }
 
+bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)
+{
+	if (!IsBuildMode() ||
+		IsValid(HeldActor) ||
+		!IsValid(FacilityActor) ||
+		HeldItemAnchor == nullptr ||
+		!FacilityActor->Implements<UCSBuildableFacility>())
+	{
+		return false;
+	}
+
+	ResetBuildRotationInput();
+	const bool bWasInstalled =
+		ICSBuildableFacility::Execute_IsFacilityInstalled(FacilityActor);
+	HeldBuildableFacilityRotation = FacilityActor->GetActorRotation();
+	CacheHeldBuildableActorStates(FacilityActor);
+	ICSBuildableFacility::Execute_PrepareForBuildPickup(FacilityActor);
+	FacilityActor->SetActorEnableCollision(false);
+	if (!FacilityActor->AttachToComponent(
+		HeldItemAnchor,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale))
+	{
+		FacilityActor->SetActorEnableCollision(true);
+		if (bWasInstalled)
+		{
+			ICSBuildableFacility::Execute_FinalizeBuildPlacement(FacilityActor);
+		}
+		else
+		{
+			ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(FacilityActor);
+		}
+		RestoreHeldBuildableActorStates();
+		HeldBuildableFacilityRotation = FRotator::ZeroRotator;
+		return false;
+	}
+
+	HeldActor = FacilityActor;
+	DestroyPlacementPreview();
+	ConfigureBuildPlacementPreview(FacilityActor);
+	HideHeldBuildableActors();
+	UpdateBuildPlacementPreview();
+	return true;
+}
+
+bool ACSPlayerCharacter::TryCalculateBuildPlacementLocation(
+	AActor* FacilityActor,
+	FVector& OutPlacementLocation,
+	bool& OutIsSurfaceValid) const
+{
+	OutPlacementLocation = FVector::ZeroVector;
+	OutIsSurfaceValid = false;
+	if (!IsValid(FacilityActor) || FirstPersonCamera == nullptr || GetWorld() == nullptr)
+	{
+		return false;
+	}
+
+	const FVector AimTraceStart = FirstPersonCamera->GetComponentLocation();
+	const FVector AimTraceEnd =
+		AimTraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
+
+	FCollisionQueryParams BaseQueryParams;
+	BaseQueryParams.AddIgnoredActor(this);
+	BaseQueryParams.AddIgnoredActor(FacilityActor);
+	TArray<AActor*> AttachedActors;
+	FacilityActor->GetAttachedActors(AttachedActors, true, true);
+	BaseQueryParams.AddIgnoredActors(AttachedActors);
+
+	FHitResult AimHitResult;
+	const bool bFoundAimTarget = GetWorld()->LineTraceSingleByChannel(
+		AimHitResult,
+		AimTraceStart,
+		AimTraceEnd,
+		ECC_Visibility,
+		BaseQueryParams);
+	const FVector AimPoint = bFoundAimTarget
+		? AimHitResult.ImpactPoint
+		: AimTraceEnd;
+
+	const FVector FloorTraceEnd =
+		AimPoint - FVector::UpVector * DropTraceDepth;
+	FVector FloorTraceStart = AimPoint + FVector::UpVector * 50.0f;
+	FCollisionQueryParams FloorQueryParams = BaseQueryParams;
+	FHitResult FloorHitResult;
+	bool bFoundValidFloor = false;
+	constexpr float MinimumFloorNormalZ = 0.7f;
+	constexpr int32 MaximumFloorTraceAttempts = 32;
+	for (int32 TraceAttempt = 0;
+		TraceAttempt < MaximumFloorTraceAttempts && FloorTraceStart.Z > FloorTraceEnd.Z;
+		++TraceAttempt)
+	{
+		FHitResult CandidateHit;
+		if (!GetWorld()->LineTraceSingleByChannel(
+			CandidateHit,
+			FloorTraceStart,
+			FloorTraceEnd,
+			ECC_Visibility,
+			FloorQueryParams))
+		{
+			break;
+		}
+
+		AActor* HitActor = CandidateHit.GetActor();
+		if (IsValid(HitActor) && HitActor->Implements<UCSBuildableFacility>())
+		{
+			FloorQueryParams.AddIgnoredActor(HitActor);
+			continue;
+		}
+
+		const bool bIsFloorSurface =
+			!CandidateHit.ImpactNormal.ContainsNaN() &&
+			CandidateHit.ImpactNormal.Z >= MinimumFloorNormalZ &&
+			CandidateHit.ImpactPoint.Z <= AimPoint.Z + KINDA_SMALL_NUMBER;
+		if (bIsFloorSurface)
+		{
+			FloorHitResult = CandidateHit;
+			bFoundValidFloor = true;
+			break;
+		}
+
+		FloorTraceStart =
+			CandidateHit.ImpactPoint - FVector::UpVector;
+	}
+
+	if (!bFoundValidFloor)
+	{
+		return false;
+	}
+	OutIsSurfaceValid = true;
+
+	OutPlacementLocation = FloorHitResult.ImpactPoint;
+	return !OutPlacementLocation.ContainsNaN();
+}
+
+void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
+{
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		return;
+	}
+
+	UpdateBuildPlacementPreview();
+	if (!bHasBuildPlacementPreview || !bCanPlaceHeldBuildableFacility)
+	{
+		return;
+	}
+
+	AActor* FacilityToPlace = HeldActor;
+	FacilityToPlace->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	FacilityToPlace->SetActorLocationAndRotation(
+		CachedBuildPlacementLocation,
+		CachedBuildPlacementRotation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	FacilityToPlace->SetActorEnableCollision(true);
+	ICSBuildableFacility::Execute_FinalizeBuildPlacement(FacilityToPlace);
+	RestoreHeldBuildableActorStates();
+	ResetBuildRotationInput();
+	HeldActor = nullptr;
+	HeldBuildableFacilityRotation = FRotator::ZeroRotator;
+	ClearBuildPlacementPreview();
+}
+
 void ACSPlayerCharacter::TryUsePrimaryTool()
 {
-	if (!IsValid(HeldActor) || !HeldActor->Implements<UCSUsableTool>())
+	if (IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSUsableTool>())
 	{
 		return;
 	}
@@ -1029,6 +1929,14 @@ void ACSPlayerCharacter::TryInteract()
     }
 
     AActor* HitActor = HitResult.GetActor();
+	if (IsBuildMode())
+	{
+		if (IsValid(HitActor) && HitActor->Implements<UCSBuildableFacility>())
+		{
+			TryPickUpBuildableFacility(HitActor);
+		}
+		return;
+	}
 
     if (IsValid(HitActor) && HitActor->Implements<UCSInteractable>())
     {
