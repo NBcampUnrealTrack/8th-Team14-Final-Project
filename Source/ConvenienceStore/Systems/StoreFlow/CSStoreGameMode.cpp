@@ -338,3 +338,8 @@ bool ACSStoreGameMode::IsTutorialEnabled() const
 {
 	return bTutorialEnabled;
 }
+
+UDataTable* ACSStoreGameMode::GetTutorialStepDataTable() const
+{
+	return TutorialStepDataTable;
+}

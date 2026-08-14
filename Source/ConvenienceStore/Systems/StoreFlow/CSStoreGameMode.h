@@ -43,6 +43,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
 	bool IsTutorialEnabled() const;
 
+	// 튜토리얼 서브시스템이 시작 시점에 이 값을 가져감
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	UDataTable* GetTutorialStepDataTable() const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -84,6 +88,10 @@ protected:
 	// 이 값이 true인 게임모드(BP_TutorialGameMode)를 쓰는 맵에서만 튜토리얼이 시작됨
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
 	bool bTutorialEnabled = false;
+
+	// 튜토리얼 스텝 목록
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TObjectPtr<UDataTable> TutorialStepDataTable;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;
