@@ -9,6 +9,15 @@ class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UUserWidget;
 
+// 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
+// 튜토리얼이 어떤 UI가 열렸는지 감지하는 경로
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FCSOnGameplayUIInputLockChanged,
+	UUserWidget*,
+	RequestingWidget,
+	bool,
+	bLocked);
+
 // 로컬 플레이어의 편의점 HUD와 마감 UI 입력 상태를 관리합니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
@@ -43,6 +52,10 @@ public:
 
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
+
+	// UI 입력 잠금이 걸리거나 풀릴 때마다 방송
+	UPROPERTY(BlueprintAssignable, Category = "UI|Input")
+	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;
 
 protected:
 	virtual void BeginPlay() override;

@@ -13,6 +13,14 @@ class USceneComponent;
 class UStaticMeshComponent;
 class ACSProductPickupActor;
 
+// 상품이 이 진열대의 슬롯에 실제로 배치되었을 때 방송
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FCSOnItemPlaced,
+	AActor*,
+	PlacedItem,
+	int32,
+	SlotIndex);
+
 USTRUCT(BlueprintType)
 struct FCSInitialShelfProduct
 {
@@ -82,6 +90,10 @@ public:
 
 	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
 	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
+
+	// 상품이 이 진열대에 배치될 때마다 방송
+	UPROPERTY(BlueprintAssignable, Category = "Shelf")
+	FCSOnItemPlaced OnItemPlaced;
 
 protected:
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
