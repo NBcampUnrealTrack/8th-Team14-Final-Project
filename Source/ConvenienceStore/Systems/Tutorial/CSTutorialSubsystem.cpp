@@ -4,6 +4,7 @@
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
 #include "Features/Trash/CSTrashCanActor.h"
+#include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -73,6 +74,7 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 void UCSTutorialSubsystem::Deinitialize()
 {
 	ClearAutoAdvanceTimer();
+	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
 	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
@@ -115,6 +117,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -136,6 +139,7 @@ void UCSTutorialSubsystem::AdvanceStep()
 	CurrentStepIndex = NextIndex;
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -173,6 +177,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 
 	bTutorialCompleted = true;
 	ClearAutoAdvanceTimer();
+	HideAllActiveMarkers();
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
@@ -233,6 +238,60 @@ void UCSTutorialSubsystem::ClearAutoAdvanceTimer()
 	{
 		World->GetTimerManager().ClearTimer(AutoAdvanceTimerHandle);
 	}
+}
+
+void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
+{
+	// 스텝이 바뀔 때마다 호출되므로 이전 스텝에서 켜둔 마커부터 전부 끔
+	HideAllActiveMarkers();
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 태그가 비어 있으면 이 스텝은 마커를 쓰지 않음
+	if (CurrentRow.HighlightMarkerTag.IsNone())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 같은 태그를 가진 액터가 여러 개면 전부 켬
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!IsValid(Actor) || !Actor->ActorHasTag(CurrentRow.HighlightMarkerTag))
+		{
+			continue;
+		}
+
+		if (UCSTutorialMarkerComponent* MarkerComponent = Actor->FindComponentByClass<UCSTutorialMarkerComponent>())
+		{
+			MarkerComponent->ShowMarker(CurrentRow.ObjectiveText);
+			ActiveMarkerComponents.Add(MarkerComponent);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::HideAllActiveMarkers()
+{
+	for (UCSTutorialMarkerComponent* MarkerComponent : ActiveMarkerComponents)
+	{
+		if (IsValid(MarkerComponent))
+		{
+			MarkerComponent->HideMarker();
+		}
+	}
+
+	ActiveMarkerComponents.Reset();
 }
 
 void UCSTutorialSubsystem::NotifyStepCompleted(ECSTutorialStepId CompletedStepId)

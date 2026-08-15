@@ -10,6 +10,7 @@ class ACSStoreGameMode;
 class ACSTrashCanActor;
 class ACSStorePlayerController;
 class UUserWidget;
+class UCSTutorialMarkerComponent;
 class UCSTutorialBannerWidgetBase;
 class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
@@ -81,6 +82,12 @@ protected:
 	void StartAutoAdvanceTimerIfNeeded();
 	void ClearAutoAdvanceTimer();
 
+	// 현재 스텝의 HighlightMarkerTag를 가진 액터를 레벨에서 찾아 마커를 켬
+	void UpdateHighlightMarkersForCurrentStep();
+
+	// 현재 켜져 있는 마커를 전부 끄고 목록을 비움
+	void HideAllActiveMarkers();
+
 	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
 	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
 
@@ -142,4 +149,8 @@ private:
 
 	// 무한 재시도를 막기 위한 안전장치용 카운터
 	int32 PlayerControllerSubscribeAttempts = 0;
+
+	// 현재 스텝에서 켜둔 마커 컴포넌트 목록
+	UPROPERTY()
+	TArray<TObjectPtr<UCSTutorialMarkerComponent>> ActiveMarkerComponents;
 };
