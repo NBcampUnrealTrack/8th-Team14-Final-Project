@@ -4,14 +4,22 @@
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
 #include "Features/Trash/CSTrashCanActor.h"
+#include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
 
 // 발주/장부 UI 등 다른 화면 위에서도 튜토리얼 위젯이 항상 보이도록 충분히 높은 값을 사용
 static constexpr int32 TutorialWidgetZOrder = 1000;
+
+// TrySubscribeToPlayerController가 재시도를 포기하기까지 시도할 최대 횟수
+static constexpr int32 MaxPlayerControllerSubscribeAttempts = 20;
+
+// 재시도 사이에 둘 간격(초) / 체감상 딜레이가 없을 만큼 짧게 잡음
+static constexpr float PlayerControllerSubscribeRetryInterval = 0.05f;
 
 // 1이면 게임 시작 시 튜토리얼을 건너뜀 (디버깅용)
 static int32 GSkipTutorial = 0;
@@ -65,7 +73,10 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UCSTutorialSubsystem::Deinitialize()
 {
+	ClearAutoAdvanceTimer();
+	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -101,9 +112,12 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 
 	CreateTutorialWidgets(GameMode);
 	SubscribeToLevelDisposables();
+	TrySubscribeToPlayerController();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -124,6 +138,8 @@ void UCSTutorialSubsystem::AdvanceStep()
 
 	CurrentStepIndex = NextIndex;
 	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -160,9 +176,12 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	}
 
 	bTutorialCompleted = true;
+	ClearAutoAdvanceTimer();
+	HideAllActiveMarkers();
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 }
 
@@ -180,6 +199,99 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 	{
 		OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
 	}
+}
+
+void UCSTutorialSubsystem::StartAutoAdvanceTimerIfNeeded()
+{
+	// 스텝이 바뀔 때마다 호출되므로 이전 스텝용으로 걸려 있던 타이머부터 확실히 정리
+	ClearAutoAdvanceTimer();
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 관문형(bBlocking == true)은 완료 신호를 기다려야 하므로 타이머를 걸지 않음
+	// AutoAdvanceSeconds가 0 이하인 경우도 마찬가지로 걸지 않음
+	if (CurrentRow.bBlocking || CurrentRow.AutoAdvanceSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		// AutoAdvanceSeconds초 후 AdvanceStep()을 한 번만(bLoop=false) 자동 호출
+		World->GetTimerManager().SetTimer(
+			AutoAdvanceTimerHandle,
+			this,
+			&UCSTutorialSubsystem::AdvanceStep,
+			CurrentRow.AutoAdvanceSeconds,
+			false);
+	}
+}
+
+void UCSTutorialSubsystem::ClearAutoAdvanceTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoAdvanceTimerHandle);
+	}
+}
+
+void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
+{
+	// 스텝이 바뀔 때마다 호출되므로 이전 스텝에서 켜둔 마커부터 전부 끔
+	HideAllActiveMarkers();
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 태그가 비어 있으면 이 스텝은 마커를 쓰지 않음
+	if (CurrentRow.HighlightMarkerTag.IsNone())
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 같은 태그를 가진 액터가 여러 개면 전부 켬
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (!IsValid(Actor) || !Actor->ActorHasTag(CurrentRow.HighlightMarkerTag))
+		{
+			continue;
+		}
+
+		if (UCSTutorialMarkerComponent* MarkerComponent = Actor->FindComponentByClass<UCSTutorialMarkerComponent>())
+		{
+			MarkerComponent->ShowMarker(CurrentRow.ObjectiveText);
+			ActiveMarkerComponents.Add(MarkerComponent);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::HideAllActiveMarkers()
+{
+	for (UCSTutorialMarkerComponent* MarkerComponent : ActiveMarkerComponents)
+	{
+		if (IsValid(MarkerComponent))
+		{
+			MarkerComponent->HideMarker();
+		}
+	}
+
+	ActiveMarkerComponents.Reset();
 }
 
 void UCSTutorialSubsystem::NotifyStepCompleted(ECSTutorialStepId CompletedStepId)
@@ -328,6 +440,109 @@ void UCSTutorialSubsystem::UnsubscribeFromLevelDisposables()
 	}
 
 	SubscribedTrashCans.Reset();
+}
+
+void UCSTutorialSubsystem::TrySubscribeToPlayerController()
+{
+	// 그 사이 튜토리얼이 이미 끝났다면 재시도를 멈춤 (cs.TNext 사용해서 조기 종료된 경우)
+	if (bTutorialCompleted)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(World->GetFirstPlayerController());
+	if (IsValid(PlayerController))
+	{
+		PlayerControllerSubscribeAttempts = 0;
+		SubscribeToPlayerController(PlayerController);
+		return;
+	}
+
+	// 아직 컨트롤러가 스폰되지 않음 -> 짧은 텀 후 다시 시도
+	// 정상적인 경우 한두 번 안에 찾아지지만 혹시 모를 상황을 대비해 재시도 횟수를 제한
+	++PlayerControllerSubscribeAttempts;
+	if (PlayerControllerSubscribeAttempts > MaxPlayerControllerSubscribeAttempts)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] PlayerController를 %d회 시도해도 찾지 못해 구독을 포기합니다."),
+			MaxPlayerControllerSubscribeAttempts);
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		PlayerControllerSubscribeRetryTimerHandle,
+		this,
+		&UCSTutorialSubsystem::TrySubscribeToPlayerController,
+		PlayerControllerSubscribeRetryInterval,
+		false);
+}
+
+void UCSTutorialSubsystem::SubscribeToPlayerController(ACSStorePlayerController* PlayerController)
+{
+	SubscribedPlayerController = PlayerController;
+
+	PlayerController->OnGameplayUIInputLockChanged.AddDynamic(
+		this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PlayerControllerSubscribeRetryTimerHandle);
+	}
+
+	if (IsValid(SubscribedPlayerController))
+	{
+		SubscribedPlayerController->OnGameplayUIInputLockChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+	}
+
+	SubscribedPlayerController = nullptr;
+}
+
+void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex) || !IsValid(RequestingWidget))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 이 스텝이 UI 감지를 쓰지 않으면(빈 칸이면) 신경 쓰지 않음
+	if (CurrentRow.ExpectedWidgetClass.IsNull())
+	{
+		return;
+	}
+
+	// 필요한 시점에만 실제로 로드 (평소엔 주소만 갖고 있다가 지금 처음 불러옴)
+	const UClass* ExpectedClass = CurrentRow.ExpectedWidgetClass.LoadSynchronous();
+	if (ExpectedClass == nullptr || !RequestingWidget->IsA(ExpectedClass))
+	{
+		// 지금 열리거나 닫힌 위젯이 이 스텝이 기다리는 위젯이 아니면 무시
+		return;
+	}
+
+	// bCompleteOnWidgetClosed == false면 "열릴 때"(bLocked == true) 완료
+	// bCompleteOnWidgetClosed == true면 "닫힐 때"(bLocked == false) 완료
+	const bool bWaitingForOpen = !CurrentRow.bCompleteOnWidgetClosed;
+	const bool bWidgetJustOpened = bLocked;
+	const bool bWidgetJustClosed = !bLocked;
+
+	const bool bCompletesNow =
+		(bWaitingForOpen && bWidgetJustOpened) || (!bWaitingForOpen && bWidgetJustClosed);
+
+	if (bCompletesNow)
+	{
+		NotifyStepCompleted(CurrentRow.StepId);
+	}
 }
 
 void UCSTutorialSubsystem::HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount)
