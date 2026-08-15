@@ -99,6 +99,9 @@ public:
 	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
 	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
 
+	// 선택적 손님 접근 마커가 있으면 해당 컴포넌트의 월드 위치를 반환합니다.
+	bool TryGetCustomerBrowseLocation(FVector& OutLocation) const;
+
 	// 상품이 이 진열대에 배치될 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "Shelf")
 	FCSOnItemPlaced OnItemPlaced;

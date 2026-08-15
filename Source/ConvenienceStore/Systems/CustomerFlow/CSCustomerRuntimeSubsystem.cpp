@@ -69,6 +69,15 @@ FVector UCSCustomerRuntimeSubsystem::GetShelfBrowseLocation(const AActor* ShelfA
 		return FVector::ZeroVector;
 	}
 
+	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(ShelfActor))
+	{
+		FVector BrowseLocation;
+		if (Shelf->TryGetCustomerBrowseLocation(BrowseLocation))
+		{
+			return BrowseLocation;
+		}
+	}
+
 	//진열대 위치 + 진열대 정면방향 × BrowseDistance 를 계산해 반환. 손님이 그 진열대 앞에 서는 좌표반환
 	//EQS나 진열대에서 서 있는 위치를 알려줄 수 있으면 BrowseDistance 삭제 가능
 	return ShelfActor->GetActorLocation() + ShelfActor->GetActorForwardVector() * BrowseDistance;
