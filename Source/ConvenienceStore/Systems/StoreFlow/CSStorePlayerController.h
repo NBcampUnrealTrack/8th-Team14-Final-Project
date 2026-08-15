@@ -54,6 +54,9 @@ public:
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
 
+	// 캐릭터의 건축 모드 상태를 상시 HUD에 전달합니다.
+	void SetBuildModeHUDState(bool bIsBuildMode, bool bPlayTransition);
+
 	// UI 입력 잠금이 걸리거나 풀릴 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "UI|Input")
 	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;

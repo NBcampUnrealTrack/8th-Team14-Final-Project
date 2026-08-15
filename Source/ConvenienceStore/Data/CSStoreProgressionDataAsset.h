@@ -39,6 +39,10 @@ public:
 		Category = "Store|Progression|Experience", meta = (ClampMin = "0", UIMin = "0"))
 	TArray<int32> RequiredTotalExperience;
 
+	// 배열 인덱스 + 1이 상점 레벨이며, 비어 있으면 기본 레벨 이름을 사용합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Progression|Experience")
+	TArray<FText> StoreLevelDisplayNames;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Progression|Reputation",
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 MinimumReputationScore = 0;
@@ -57,5 +61,7 @@ public:
 
 	int32 GetMaximumStoreExperience() const;
 	int32 GetStoreLevelForExperience(int32 StoreExperience) const;
+	int32 GetRequiredTotalExperienceForLevel(int32 StoreLevel) const;
+	FText GetStoreLevelDisplayName(int32 StoreLevel) const;
 	ECSReputationGrade GetReputationGradeForScore(int32 ReputationScore) const;
 };
