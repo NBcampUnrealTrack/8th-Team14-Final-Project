@@ -16,6 +16,8 @@ void ACSStorePlayerController::BeginPlay()
 		if (StoreHUDWidget != nullptr)
 		{
 			StoreHUDWidget->AddToPlayerScreen();
+			// 최초 생성 시에는 영업 모드 아이콘만 맞추고 전환 연출은 재생하지 않습니다.
+			StoreHUDWidget->SetBuildModeActive(false, false);
 		}
 	}
 
@@ -240,5 +242,15 @@ void ACSStorePlayerController::ClearInteractionContext()
 	if (IsValid(StoreHUDWidget))
 	{
 		StoreHUDWidget->ClearInteractionContext();
+	}
+}
+
+void ACSStorePlayerController::SetBuildModeHUDState(
+	bool bIsBuildMode,
+	bool bPlayTransition)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetBuildModeActive(bIsBuildMode, bPlayTransition);
 	}
 }

@@ -220,7 +220,9 @@ void ACSStoreGameMode::CheckScheduleEvents(
 void ACSStoreGameMode::BeginClosingCheckpoint()
 {
 	GetWorldTimerManager().ClearTimer(GameClockTimerHandle);
-	StoreGameState->bIsGameClockRunning = false;
+	// 시계 정지 상태를 HUD에도 알리기 위해 setter로 변경합니다.
+	// StoreGameState->bIsGameClockRunning = false;
+	StoreGameState->SetGameClockRunning(false);
 	// 새벽 02:00에는 입간판 상태와 무관하게 영업을 강제 종료합니다.
 	StoreGameState->bIsStoreOpen = false;
 	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
