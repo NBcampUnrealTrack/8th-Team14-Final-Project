@@ -26,6 +26,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	NewGameMinutes);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnStoreGameClockRunningChanged,
+	bool,
+	bNewClockRunning);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnEndOfDayTaskChanged,
 	ECEndOfDayTask,
 	NewTask);
@@ -175,6 +180,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
 	FOnStoreGameTimeChanged OnGameTimeChanged;
 
+	// 시계 진행 여부가 바뀌었을 때 시간 기반 HUD 연출에 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
+	FOnStoreGameClockRunningChanged OnGameClockRunningChanged;
+
 	// 마감 업무가 변경되었을 때 마감 UI에 알립니다.
 	UPROPERTY(BlueprintAssignable, Category = "Store|Closing")
 	FOnEndOfDayTaskChanged OnEndOfDayTaskChanged;
@@ -218,6 +227,7 @@ public:
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
+	void SetGameClockRunning(bool bNewClockRunning);
 	void SetCurrentGameMinutes(float NewGameMinutes);
 	void SetEndOfDayTask(ECEndOfDayTask NewTask);
 	void RequestDailySummary();

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Data/CSProductTypes.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "CSStoreHUDWidget.generated.h"
 
@@ -58,9 +59,18 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UWidget> ClockPanel;
 
-	// AM/PM 형식의 현재 게임 시각을 표시합니다.
+	// 기존 단일 시계 위젯을 사용하는 WBP를 위한 호환용 표시입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ClockText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ClockHourText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ClockColonText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ClockMinuteText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> BusinessDayText;
@@ -70,6 +80,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ReputationScoreText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> ReputationGradeText;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> StoreLevelText;
@@ -102,6 +115,10 @@ protected:
 	// 상태 표시는 C++에서 끝낸 뒤 WBP에는 시각 연출 재생만 요청합니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Store|HUD")
 	void OnBuildModeTransitionRequested();
+
+	// C++은 시계 상태만 전달하고 콜론의 반복 연출은 WBP가 담당합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Store|HUD")
+	void OnClockTickStateChanged(bool bShouldTick);
 
 	// 자정 이후 마감 업무가 활성화되었을 때만 표시합니다.
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -163,10 +180,16 @@ protected:
 	void HandleGameTimeChanged(float NewGameMinutes);
 
 	UFUNCTION()
+	void HandleGameClockRunningChanged(bool bNewClockRunning);
+
+	UFUNCTION()
 	void HandleFundsChanged(int32 NewFunds);
 
 	UFUNCTION()
 	void HandleReputationChanged(int32 NewReputationScore);
+
+	UFUNCTION()
+	void HandleReputationGradeChanged(ECSReputationGrade NewReputationGrade);
 
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);
@@ -190,6 +213,7 @@ protected:
 private:
 	FText FormatTime(float Seconds) const;
 	FText FormatGameClock(float GameMinutes) const;
+	FText GetReputationGradeDisplayName(ECSReputationGrade ReputationGrade) const;
 	FText GetEndOfDayButtonText(ECEndOfDayTask Task) const;
 	float GetPhaseSelectionTranslationY() const;
 	void UpdatePhaseSelection();

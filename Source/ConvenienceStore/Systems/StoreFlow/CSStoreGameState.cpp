@@ -35,8 +35,19 @@ void ACSStoreGameState::SetGameClock(
 	bool bNewClockRunning)
 {
 	GameMinutesPerRealSecond = FMath::Max(0.0f, NewGameMinutesPerRealSecond);
-	bIsGameClockRunning = bNewClockRunning;
+	SetGameClockRunning(bNewClockRunning);
 	SetCurrentGameMinutes(NewGameMinutes);
+}
+
+void ACSStoreGameState::SetGameClockRunning(bool bNewClockRunning)
+{
+	if (bIsGameClockRunning == bNewClockRunning)
+	{
+		return;
+	}
+
+	bIsGameClockRunning = bNewClockRunning;
+	OnGameClockRunningChanged.Broadcast(bIsGameClockRunning);
 }
 
 void ACSStoreGameState::SetCurrentGameMinutes(float NewGameMinutes)

@@ -27,10 +27,14 @@ void UCSStoreHUDWidget::NativeConstruct()
 		this, &UCSStoreHUDWidget::HandleRemainingTimeChanged);
 	StoreGameState->OnGameTimeChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleGameTimeChanged);
+	StoreGameState->OnGameClockRunningChanged.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleGameClockRunningChanged);
 	StoreGameState->OnFundsChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleFundsChanged);
 	StoreGameState->OnReputationChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleReputationChanged);
+	StoreGameState->OnReputationGradeChanged.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 	StoreGameState->OnBusinessDayStarted.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 	StoreGameState->OnStoreExperienceChanged.AddDynamic(
@@ -51,8 +55,10 @@ void UCSStoreHUDWidget::NativeConstruct()
 	HandlePhaseChanged(StoreGameState->CurrentPhase);
 	HandleRemainingTimeChanged(StoreGameState->RemainingSeconds);
 	HandleGameTimeChanged(StoreGameState->CurrentGameMinutes);
+	HandleGameClockRunningChanged(StoreGameState->bIsGameClockRunning);
 	HandleFundsChanged(StoreGameState->GetCurrentFunds());
 	HandleReputationChanged(StoreGameState->GetReputationScore());
+	HandleReputationGradeChanged(StoreGameState->GetReputationGrade());
 	HandleBusinessDayStarted(StoreGameState->CurrentBusinessDay);
 	UpdateStoreProgressDisplay();
 	HandleEndOfDayTaskChanged(StoreGameState->CurrentEndOfDayTask);
@@ -80,10 +86,14 @@ void UCSStoreHUDWidget::NativeDestruct()
 			this, &UCSStoreHUDWidget::HandleRemainingTimeChanged);
 		StoreGameState->OnGameTimeChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleGameTimeChanged);
+		StoreGameState->OnGameClockRunningChanged.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleGameClockRunningChanged);
 		StoreGameState->OnFundsChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleFundsChanged);
 		StoreGameState->OnReputationChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleReputationChanged);
+		StoreGameState->OnReputationGradeChanged.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 		StoreGameState->OnStoreExperienceChanged.RemoveDynamic(
@@ -316,9 +326,42 @@ void UCSStoreHUDWidget::HandleRemainingTimeChanged(float NewRemainingSeconds)
 
 void UCSStoreHUDWidget::HandleGameTimeChanged(float NewGameMinutes)
 {
+	// 실제 시간은 유지하고 HUD 숫자만 직전 10분 단위로 표시합니다.
+	const int32 DisplayMinutes =
+		(FMath::FloorToInt(FMath::Max(0.0f, NewGameMinutes)) / 10) * 10;
+	const int32 WrappedMinutes = DisplayMinutes % 1440;
+	const int32 Hour24 = WrappedMinutes / 60;
+	const int32 Minutes = WrappedMinutes % 60;
+
+	if (ClockHourText != nullptr)
+	{
+		ClockHourText->SetText(FText::FromString(FString::Printf(TEXT("%02d"), Hour24)));
+	}
+
+	if (ClockColonText != nullptr)
+	{
+		ClockColonText->SetText(FText::FromString(TEXT(":")));
+	}
+
+	if (ClockMinuteText != nullptr)
+	{
+		ClockMinuteText->SetText(FText::FromString(FString::Printf(TEXT("%02d"), Minutes)));
+	}
+
 	if (ClockText != nullptr)
 	{
 		ClockText->SetText(FormatGameClock(NewGameMinutes));
+	}
+}
+
+void UCSStoreHUDWidget::HandleGameClockRunningChanged(bool bNewClockRunning)
+{
+	OnClockTickStateChanged(bNewClockRunning);
+
+	if (!bNewClockRunning && ClockColonText != nullptr)
+	{
+		// 정지 시 애니메이션의 마지막 프레임과 무관하게 완전 불투명으로 복구합니다.
+		ClockColonText->SetRenderOpacity(1.0f);
 	}
 }
 
@@ -337,6 +380,16 @@ void UCSStoreHUDWidget::HandleReputationChanged(int32 NewReputationScore)
 	if (ReputationScoreText != nullptr)
 	{
 		ReputationScoreText->SetText(FText::AsNumber(NewReputationScore));
+	}
+}
+
+void UCSStoreHUDWidget::HandleReputationGradeChanged(
+	ECSReputationGrade NewReputationGrade)
+{
+	if (ReputationGradeText != nullptr)
+	{
+		ReputationGradeText->SetText(
+			GetReputationGradeDisplayName(NewReputationGrade));
 	}
 }
 
@@ -580,7 +633,9 @@ FText UCSStoreHUDWidget::FormatTime(float Seconds) const
 
 FText UCSStoreHUDWidget::FormatGameClock(float GameMinutes) const
 {
-	const int32 TotalMinutes = FMath::FloorToInt(GameMinutes) % 1440;
+	// 분리된 시계가 없는 기존 WBP도 동일하게 10분 단위로 표시합니다.
+	const int32 TotalMinutes =
+		(FMath::FloorToInt(FMath::Max(0.0f, GameMinutes)) / 10 * 10) % 1440;
 	const int32 Hour24 = TotalMinutes / 60;
 	const int32 Minutes = TotalMinutes % 60;
 
@@ -588,6 +643,27 @@ FText UCSStoreHUDWidget::FormatGameClock(float GameMinutes) const
 		TEXT("%02d:%02d"),
 		Hour24,
 		Minutes));
+}
+
+FText UCSStoreHUDWidget::GetReputationGradeDisplayName(
+	ECSReputationGrade ReputationGrade) const
+{
+	switch (ReputationGrade)
+	{
+	case ECSReputationGrade::VeryBad:
+		return NSLOCTEXT("StoreHUD", "ReputationVeryBad", "Very Bad");
+	case ECSReputationGrade::Bad:
+		return NSLOCTEXT("StoreHUD", "ReputationBad", "Bad");
+	case ECSReputationGrade::Normal:
+		return NSLOCTEXT("StoreHUD", "ReputationNormal", "Normal");
+	case ECSReputationGrade::Good:
+		return NSLOCTEXT("StoreHUD", "ReputationGood", "Good");
+	case ECSReputationGrade::Excellent:
+		return NSLOCTEXT("StoreHUD", "ReputationExcellent", "Excellent");
+	case ECSReputationGrade::None:
+	default:
+		return FText::GetEmpty();
+	}
 }
 
 FText UCSStoreHUDWidget::GetEndOfDayButtonText(ECEndOfDayTask Task) const
