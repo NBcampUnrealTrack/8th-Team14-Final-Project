@@ -12,6 +12,7 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMeshComponent;
 class ACSDeliveryCrateActor;
+class ACSMagicWandActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
 class ACSUsableToolActor;
@@ -89,6 +90,15 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMeshComponent> HeldBuildableSourceMesh;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> HeldBuildableSourceMeshes;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> BuildPlacementPreviewMeshes;
+
+	UPROPERTY(Transient)
+	TArray<FTransform> HeldBuildableSourceRelativeTransforms;
 
 	UPROPERTY(Transient)
 	FVector CachedBuildPlacementLocation = FVector::ZeroVector;
@@ -207,6 +217,10 @@ private:
 	void UpdateBuildRotationInput(float DeltaTime);
 	void ResetBuildRotationInput();
 	void TryUsePrimaryTool();
+	void UpdateHeldMagicWandDockHUD();
+	bool IsAimingAtMagicWandHomeDock(const ACSMagicWandActor* MagicWand) const;
+	bool RestoreMagicWandToHomeDock(ACSMagicWandActor* MagicWand);
+	void RestoreFacilityMagicWands(AActor* FacilityActor);
 	void UpdateInteractionHUD();
 	void UpdateBuildModeHUD();
 	void UpdatePlacementPreview();
@@ -214,6 +228,19 @@ private:
 	void ConfigureBuildPlacementPreview(AActor* FacilityActor);
 	void ClearBuildPlacementPreview();
 	void ApplyBuildPlacementPreviewMaterial(bool bIsPlacementValid);
+	void SetBuildPlacementPreviewVisible(bool bIsVisible);
+	void UpdateBuildPreviewComponentTransforms(
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation) const;
+	bool CalculateCombinedBuildPreviewBounds(FBox& OutBounds) const;
+	bool AlignBuildPreviewToFloor(
+		FVector& InOutFacilityLocation,
+		const FRotator& FacilityRotation,
+		float FloorZ) const;
+	bool TryCalculateNearestBuildPreviewDistance(
+		const FVector& SurfacePoint,
+		const FVector& SurfaceNormal,
+		float& OutNearestDistance) const;
 	void CacheHeldBuildableActorStates(AActor* FacilityActor);
 	void HideHeldBuildableActors();
 	void RestoreHeldBuildableActorStates();
