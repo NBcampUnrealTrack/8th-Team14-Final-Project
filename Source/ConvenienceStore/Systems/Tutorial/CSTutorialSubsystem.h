@@ -8,6 +8,8 @@
 class UDataTable;
 class ACSStoreGameMode;
 class ACSTrashCanActor;
+class ACSStorePlayerController;
+class UUserWidget;
 class UCSTutorialBannerWidgetBase;
 class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
@@ -91,8 +93,23 @@ protected:
 	// 구독했던 상설 시설 방송을 전부 해제
 	void UnsubscribeFromLevelDisposables();
 
+	// 튜토리얼이 켜진 맵에서 아직 스폰되지 않았을 수 있는 ACSStorePlayerController를 찾아 구독을 시도
+	// 찾지 못하면 짧은 텀을 두고 다시 시도
+	void TrySubscribeToPlayerController();
+
+	// 컨트롤러를 실제로 찾았을 때 호출
+	void SubscribeToPlayerController(ACSStorePlayerController* PlayerController);
+
+	// SubscribeToPlayerController에서 걸었던 구독을 해제
+	void UnsubscribeFromPlayerController();
+
 	UFUNCTION()
 	void HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount);
+
+	// PlayerController의 OnGameplayUIInputLockChanged를 구독해 호출됨
+	// 지금 스텝이 기다리는 위젯이 맞는지 확인 후 열림/닫힘 조건에 맞으면 NotifyStepCompleted 호출
+	UFUNCTION()
+	void HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked);
 
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠
@@ -115,4 +132,14 @@ private:
 	// Deinitialize/CompleteTutorial에서 RemoveDynamic으로 해제하기 위해 구독 목록을 기억해 둠
 	UPROPERTY()
 	TArray<TObjectPtr<ACSTrashCanActor>> SubscribedTrashCans;
+
+	// 지연 구독으로 찾은 플레이어 컨트롤러 / 구독 해제 시 사용
+	UPROPERTY()
+	TObjectPtr<ACSStorePlayerController> SubscribedPlayerController;
+
+	// TrySubscribeToPlayerController()가 재시도에 사용하는 타이머 핸들
+	FTimerHandle PlayerControllerSubscribeRetryTimerHandle;
+
+	// 무한 재시도를 막기 위한 안전장치용 카운터
+	int32 PlayerControllerSubscribeAttempts = 0;
 };

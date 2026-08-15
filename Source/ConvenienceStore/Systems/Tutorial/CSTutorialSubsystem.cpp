@@ -6,12 +6,19 @@
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
 
 // 발주/장부 UI 등 다른 화면 위에서도 튜토리얼 위젯이 항상 보이도록 충분히 높은 값을 사용
 static constexpr int32 TutorialWidgetZOrder = 1000;
+
+// TrySubscribeToPlayerController가 재시도를 포기하기까지 시도할 최대 횟수
+static constexpr int32 MaxPlayerControllerSubscribeAttempts = 20;
+
+// 재시도 사이에 둘 간격(초) / 체감상 딜레이가 없을 만큼 짧게 잡음
+static constexpr float PlayerControllerSubscribeRetryInterval = 0.05f;
 
 // 1이면 게임 시작 시 튜토리얼을 건너뜀 (디버깅용)
 static int32 GSkipTutorial = 0;
@@ -67,6 +74,7 @@ void UCSTutorialSubsystem::Deinitialize()
 {
 	ClearAutoAdvanceTimer();
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -102,6 +110,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 
 	CreateTutorialWidgets(GameMode);
 	SubscribeToLevelDisposables();
+	TrySubscribeToPlayerController();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -167,6 +176,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 }
 
@@ -371,6 +381,109 @@ void UCSTutorialSubsystem::UnsubscribeFromLevelDisposables()
 	}
 
 	SubscribedTrashCans.Reset();
+}
+
+void UCSTutorialSubsystem::TrySubscribeToPlayerController()
+{
+	// 그 사이 튜토리얼이 이미 끝났다면 재시도를 멈춤 (cs.TNext 사용해서 조기 종료된 경우)
+	if (bTutorialCompleted)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(World->GetFirstPlayerController());
+	if (IsValid(PlayerController))
+	{
+		PlayerControllerSubscribeAttempts = 0;
+		SubscribeToPlayerController(PlayerController);
+		return;
+	}
+
+	// 아직 컨트롤러가 스폰되지 않음 -> 짧은 텀 후 다시 시도
+	// 정상적인 경우 한두 번 안에 찾아지지만 혹시 모를 상황을 대비해 재시도 횟수를 제한
+	++PlayerControllerSubscribeAttempts;
+	if (PlayerControllerSubscribeAttempts > MaxPlayerControllerSubscribeAttempts)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] PlayerController를 %d회 시도해도 찾지 못해 구독을 포기합니다."),
+			MaxPlayerControllerSubscribeAttempts);
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		PlayerControllerSubscribeRetryTimerHandle,
+		this,
+		&UCSTutorialSubsystem::TrySubscribeToPlayerController,
+		PlayerControllerSubscribeRetryInterval,
+		false);
+}
+
+void UCSTutorialSubsystem::SubscribeToPlayerController(ACSStorePlayerController* PlayerController)
+{
+	SubscribedPlayerController = PlayerController;
+
+	PlayerController->OnGameplayUIInputLockChanged.AddDynamic(
+		this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PlayerControllerSubscribeRetryTimerHandle);
+	}
+
+	if (IsValid(SubscribedPlayerController))
+	{
+		SubscribedPlayerController->OnGameplayUIInputLockChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+	}
+
+	SubscribedPlayerController = nullptr;
+}
+
+void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex) || !IsValid(RequestingWidget))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 이 스텝이 UI 감지를 쓰지 않으면(빈 칸이면) 신경 쓰지 않음
+	if (CurrentRow.ExpectedWidgetClass.IsNull())
+	{
+		return;
+	}
+
+	// 필요한 시점에만 실제로 로드 (평소엔 주소만 갖고 있다가 지금 처음 불러옴)
+	const UClass* ExpectedClass = CurrentRow.ExpectedWidgetClass.LoadSynchronous();
+	if (ExpectedClass == nullptr || !RequestingWidget->IsA(ExpectedClass))
+	{
+		// 지금 열리거나 닫힌 위젯이 이 스텝이 기다리는 위젯이 아니면 무시
+		return;
+	}
+
+	// bCompleteOnWidgetClosed == false면 "열릴 때"(bLocked == true) 완료
+	// bCompleteOnWidgetClosed == true면 "닫힐 때"(bLocked == false) 완료
+	const bool bWaitingForOpen = !CurrentRow.bCompleteOnWidgetClosed;
+	const bool bWidgetJustOpened = bLocked;
+	const bool bWidgetJustClosed = !bLocked;
+
+	const bool bCompletesNow =
+		(bWaitingForOpen && bWidgetJustOpened) || (!bWaitingForOpen && bWidgetJustClosed);
+
+	if (bCompletesNow)
+	{
+		NotifyStepCompleted(CurrentRow.StepId);
+	}
 }
 
 void UCSTutorialSubsystem::HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount)
