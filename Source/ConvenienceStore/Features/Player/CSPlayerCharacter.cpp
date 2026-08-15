@@ -276,6 +276,12 @@ void ACSPlayerCharacter::ToggleBuildMode()
 	CurrentPlayerMode = IsBuildMode()
 		? ECSPlayerMode::Normal
 		: ECSPlayerMode::Build;
+	// 실제 모드가 바뀐 직후 HUD가 같은 상태의 아이콘과 전환 문구를 표시하게 알립니다.
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController()))
+	{
+		StorePlayerController->SetBuildModeHUDState(IsBuildMode(), true);
+	}
 	ResetBuildRotationInput();
 	ClearBuildPlacementPreview();
 	DestroyPlacementPreview();

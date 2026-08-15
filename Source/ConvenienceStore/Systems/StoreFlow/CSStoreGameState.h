@@ -255,6 +255,21 @@ public:
 	int32 GetStoreLevel() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	FText GetStoreLevelDisplayName() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetStoreExperienceInCurrentLevel() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetStoreExperienceRequiredForNextLevel() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	float GetStoreLevelProgress() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	bool IsMaximumStoreLevel() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	int32 GetReputationScore() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")

@@ -230,6 +230,72 @@ int32 ACSStoreGameState::GetStoreLevel() const
 	return CurrentStoreLevel;
 }
 
+FText ACSStoreGameState::GetStoreLevelDisplayName() const
+{
+	return IsValid(StoreProgressionDataAsset)
+		? StoreProgressionDataAsset->GetStoreLevelDisplayName(CurrentStoreLevel)
+		: FText::Format(
+			NSLOCTEXT("StoreLevel", "FallbackLevelName", "상점 레벨 {0}"),
+			FText::AsNumber(CurrentStoreLevel));
+}
+
+int32 ACSStoreGameState::GetStoreExperienceInCurrentLevel() const
+{
+	if (!IsValid(StoreProgressionDataAsset))
+	{
+		return 0;
+	}
+
+	// 누적 경험치에서 현재 레벨 시작 누적값을 빼서 레벨 내부 진행량으로 바꿉니다.
+	const int32 CurrentLevelStart =
+		StoreProgressionDataAsset->GetRequiredTotalExperienceForLevel(CurrentStoreLevel);
+	return FMath::Max(0, CurrentStoreExperience - CurrentLevelStart);
+}
+
+int32 ACSStoreGameState::GetStoreExperienceRequiredForNextLevel() const
+{
+	if (!IsValid(StoreProgressionDataAsset) || IsMaximumStoreLevel())
+	{
+		return 0;
+	}
+
+	const int32 CurrentLevelStart =
+		StoreProgressionDataAsset->GetRequiredTotalExperienceForLevel(CurrentStoreLevel);
+	const int32 NextLevelStart =
+		StoreProgressionDataAsset->GetRequiredTotalExperienceForLevel(CurrentStoreLevel + 1);
+	return FMath::Max(0, NextLevelStart - CurrentLevelStart);
+}
+
+float ACSStoreGameState::GetStoreLevelProgress() const
+{
+	if (IsMaximumStoreLevel())
+	{
+		return 1.0f;
+	}
+
+	const int32 RequiredExperience = GetStoreExperienceRequiredForNextLevel();
+	return RequiredExperience > 0
+		? FMath::Clamp(
+			static_cast<float>(GetStoreExperienceInCurrentLevel()) /
+			static_cast<float>(RequiredExperience),
+			0.0f,
+			1.0f)
+		: 0.0f;
+}
+
+bool ACSStoreGameState::IsMaximumStoreLevel() const
+{
+	if (!IsValid(StoreProgressionDataAsset))
+	{
+		return false;
+	}
+
+	const int32 MaximumLevel = FMath::Min(
+		StoreProgressionDataAsset->RequiredTotalExperience.Num(),
+		10);
+	return MaximumLevel > 0 && CurrentStoreLevel >= MaximumLevel;
+}
+
 int32 ACSStoreGameState::GetReputationScore() const
 {
 	return CurrentReputationScore;
