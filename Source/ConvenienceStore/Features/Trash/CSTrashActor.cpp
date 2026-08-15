@@ -50,7 +50,7 @@ void ACSTrashActor::PrepareForPickupPhysics()
 
 	TrashMesh->AttachToComponent(
 		SceneRoot,
-		FAttachmentTransformRules::KeepWorldTransform);
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 }
 
 void ACSTrashActor::EnableWorldDropPhysics()
