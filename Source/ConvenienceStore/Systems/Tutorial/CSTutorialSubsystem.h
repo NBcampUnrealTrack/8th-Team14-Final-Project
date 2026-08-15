@@ -76,6 +76,8 @@ protected:
 	void HandlePart1Finished();
 	void CompleteTutorial();
 	void BroadcastCurrentStep() const;
+	void StartAutoAdvanceTimerIfNeeded();
+	void ClearAutoAdvanceTimer();
 
 	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
 	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
@@ -99,6 +101,7 @@ private:
 
 	int32 CurrentStepIndex = INDEX_NONE;
 	bool bTutorialCompleted = false;
+	FTimerHandle AutoAdvanceTimerHandle;
 
 	UPROPERTY()
 	TObjectPtr<UCSTutorialBannerWidgetBase> BannerWidgetInstance;

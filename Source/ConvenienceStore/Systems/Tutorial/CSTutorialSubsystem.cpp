@@ -65,6 +65,7 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UCSTutorialSubsystem::Deinitialize()
 {
+	ClearAutoAdvanceTimer();
 	UnsubscribeFromLevelDisposables();
 	CloseTutorialWidgets();
 
@@ -104,6 +105,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -124,6 +126,7 @@ void UCSTutorialSubsystem::AdvanceStep()
 
 	CurrentStepIndex = NextIndex;
 	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -160,6 +163,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	}
 
 	bTutorialCompleted = true;
+	ClearAutoAdvanceTimer();
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
@@ -179,6 +183,45 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 	if (CurrentRow.ObjectiveGoal > 0)
 	{
 		OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
+	}
+}
+
+void UCSTutorialSubsystem::StartAutoAdvanceTimerIfNeeded()
+{
+	// 스텝이 바뀔 때마다 호출되므로 이전 스텝용으로 걸려 있던 타이머부터 확실히 정리
+	ClearAutoAdvanceTimer();
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+
+	// 관문형(bBlocking == true)은 완료 신호를 기다려야 하므로 타이머를 걸지 않음
+	// AutoAdvanceSeconds가 0 이하인 경우도 마찬가지로 걸지 않음
+	if (CurrentRow.bBlocking || CurrentRow.AutoAdvanceSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		// AutoAdvanceSeconds초 후 AdvanceStep()을 한 번만(bLoop=false) 자동 호출
+		World->GetTimerManager().SetTimer(
+			AutoAdvanceTimerHandle,
+			this,
+			&UCSTutorialSubsystem::AdvanceStep,
+			CurrentRow.AutoAdvanceSeconds,
+			false);
+	}
+}
+
+void UCSTutorialSubsystem::ClearAutoAdvanceTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutoAdvanceTimerHandle);
 	}
 }
 
