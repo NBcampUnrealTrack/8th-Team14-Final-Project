@@ -101,4 +101,10 @@ struct FCSTutorialStepRow : public FTableRowBase
 	// 필요할 때만 실제로 로드되도록 소프트 참조로
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
 	TSoftClassPtr<UUserWidget> ExpectedWidgetClass;
+
+	// ExpectedWidgetClass로 완료를 판단할 때 "열릴 때" 완료로 볼지 "닫힐 때" 완료로 볼지
+	// false(기본값) = 위젯이 열릴 때 완료
+	// true = 위젯이 닫힐 때 완료
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
+	bool bCompleteOnWidgetClosed = false;
 };
