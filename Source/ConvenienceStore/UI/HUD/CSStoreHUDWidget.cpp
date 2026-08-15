@@ -8,6 +8,7 @@
 #include "Engine/Texture2D.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "UI/HUD/CSInteractionPanelWidget.h"
 
 void UCSStoreHUDWidget::NativeConstruct()
 {
@@ -119,151 +120,64 @@ void UCSStoreHUDWidget::SetInteractionPrompt(
 	const FText& Message,
 	const FLinearColor& TextColor)
 {
-	if (!IsValid(InteractionPromptText))
+	if (IsValid(InteractionPanel))
 	{
-		return;
+		InteractionPanel->SetInteractionPrompt(Message, TextColor);
 	}
-
-	if (Message.IsEmpty())
-	{
-		InteractionPromptText->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	InteractionPromptText->SetText(Message);
-	InteractionPromptText->SetColorAndOpacity(FSlateColor(TextColor));
-	InteractionPromptText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
 {
-	// 빈 슬롯이 없을 때는 상품 상세 정보가 판단을 방해하지 않도록 함께 숨깁니다.
-	if (IsValid(ProductPriceText))
+	if (IsValid(InteractionPanel))
 	{
-		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
+		InteractionPanel->ClearInteractionContext();
+		InteractionPanel->SetInteractionPrompt(
+			NSLOCTEXT("Interaction", "ShelfFull", "진열할 빈 슬롯이 없습니다."),
+			FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
 	}
-
-	if (IsValid(ProductShelfLifeText))
-	{
-		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(ProductFreshnessText))
-	{
-		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(StorageWarningText))
-	{
-		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	SetInteractionPrompt(
-		NSLOCTEXT("Interaction", "ShelfFull", "진열할 빈 슬롯이 없습니다."),
-		FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
 }
 
 void UCSStoreHUDWidget::SetProductPrice(const FText& Message)
 {
-	if (!IsValid(ProductPriceText))
+	if (IsValid(InteractionPanel))
 	{
-		return;
+		InteractionPanel->SetProductPrice(Message);
 	}
-
-	if (Message.IsEmpty())
-	{
-		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	ProductPriceText->SetText(Message);
-	ProductPriceText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.85f, 0.35f, 1.0f)));
-	ProductPriceText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UCSStoreHUDWidget::SetProductShelfLife(
 	const FText& Message,
 	const FLinearColor& TextColor)
 {
-	if (!IsValid(ProductShelfLifeText))
+	if (IsValid(InteractionPanel))
 	{
-		return;
+		InteractionPanel->SetProductShelfLife(Message, TextColor);
 	}
-
-	if (Message.IsEmpty())
-	{
-		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	ProductShelfLifeText->SetText(Message);
-	ProductShelfLifeText->SetColorAndOpacity(FSlateColor(TextColor));
-	ProductShelfLifeText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UCSStoreHUDWidget::SetProductFreshness(
 	const FText& Message,
 	const FLinearColor& TextColor)
 {
-	if (!IsValid(ProductFreshnessText))
+	if (IsValid(InteractionPanel))
 	{
-		return;
+		InteractionPanel->SetProductFreshness(Message, TextColor);
 	}
-
-	if (Message.IsEmpty())
-	{
-		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	ProductFreshnessText->SetText(Message);
-	ProductFreshnessText->SetColorAndOpacity(FSlateColor(TextColor));
-	ProductFreshnessText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UCSStoreHUDWidget::SetStorageWarning(const FText& Message)
 {
-	if (!IsValid(StorageWarningText))
+	if (IsValid(InteractionPanel))
 	{
-		return;
+		InteractionPanel->SetStorageWarning(Message);
 	}
-
-	if (Message.IsEmpty())
-	{
-		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
-		return;
-	}
-
-	StorageWarningText->SetText(Message);
-	StorageWarningText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.8f, 0.1f, 1.0f)));
-	StorageWarningText->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 
 void UCSStoreHUDWidget::ClearInteractionContext()
 {
-	if (IsValid(InteractionPromptText))
+	if (IsValid(InteractionPanel))
 	{
-		InteractionPromptText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(ProductPriceText))
-	{
-		ProductPriceText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(ProductShelfLifeText))
-	{
-		ProductShelfLifeText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(ProductFreshnessText))
-	{
-		ProductFreshnessText->SetVisibility(ESlateVisibility::Collapsed);
-	}
-
-	if (IsValid(StorageWarningText))
-	{
-		StorageWarningText->SetVisibility(ESlateVisibility::Collapsed);
+		InteractionPanel->ClearInteractionContext();
 	}
 }
 

@@ -7,6 +7,7 @@
 #include "CSStoreHUDWidget.generated.h"
 
 class ACSStoreGameState;
+class UCSInteractionPanelWidget;
 class UButton;
 class UImage;
 class UProgressBar;
@@ -96,6 +97,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> StoreExperienceText;
 
+	// 메인 HUD 안에 배치된 전용 상호작용 패널입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UCSInteractionPanelWidget> InteractionPanel;
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> BuildModeIconImage;
 
@@ -145,26 +150,6 @@ protected:
 	// 오늘 결제 완료된 상품의 총수량을 표시합니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> DailySoldQuantityText;
-
-	// 조준한 대상에 대해 E 또는 Q로 실행할 행동을 안내합니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> InteractionPromptText;
-
-	// 이후 상품 조준 시 판매가를 표시할 영역입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ProductPriceText;
-
-	// 개별 상품 RuntimeState의 남은 유통기한을 표시할 영역입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ProductShelfLifeText;
-
-	// 냉장·냉동 상품 RuntimeState의 현재 신선도를 표시할 영역입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ProductFreshnessText;
-
-	// 냉장·냉동 보관 경고를 표시할 영역입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> StorageWarningText;
 
 	UFUNCTION()
 	void HandlePhaseChanged(ECStorePhase NewPhase);
