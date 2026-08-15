@@ -179,6 +179,31 @@ void ACSShelfActor::SyncFacilityData()
 	}
 }
 
+bool ACSShelfActor::TryGetCustomerBrowseLocation(FVector& OutLocation) const
+{
+	TArray<UArrowComponent*> ArrowComponents;
+	GetComponents<UArrowComponent>(ArrowComponents);
+
+	static const FString BrowsePointName = TEXT("CustomerBrowsePoint");
+	static const FString BrowsePointPrefix = BrowsePointName + TEXT("_");
+	for (const UArrowComponent* ArrowComponent : ArrowComponents)
+	{
+		if (!IsValid(ArrowComponent))
+		{
+			continue;
+		}
+
+		const FString ComponentName = ArrowComponent->GetName();
+		if (ComponentName == BrowsePointName || ComponentName.StartsWith(BrowsePointPrefix))
+		{
+			OutLocation = ArrowComponent->GetComponentLocation();
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool ACSShelfActor::TryGetSlotMarkerIndex(
 	const UArrowComponent* SlotMarker,
 	int32& OutSlotIndex) const
