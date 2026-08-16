@@ -32,7 +32,7 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	bUseControllerRotationYaw = false; //컨트롤러의 회전을 안받게 false로 설정
 	GetCharacterMovement()->bOrientRotationToMovement = true; // 이동하는 방향으로 몸을 자연스럽게 돌림 (걸어가는 방향을 보고 걷게)
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 360.0f, 0.0f); //방향 전환 속도
-	GetCharacterMovement()->MaxWalkSpeed = 250.0f; //기본 걷기 속도
+	GetCharacterMovement()->MaxWalkSpeed = 300.0f; //기본 걷기 속도
 
 	//일단 서로 겹치게 테스트용으로 잘 굴러가는지 확인용 [나중에 처리 예정]
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
