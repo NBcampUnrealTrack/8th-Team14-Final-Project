@@ -341,3 +341,46 @@ struct FCSTask_Shoplift : public FStateTreeTaskCommonBase
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
 };
+
+// =====================================================================
+// PrepareForcedLeave : 영업 종료 강제 퇴장 직전 정리
+//
+// 줄에서 빠지고 미결제 상품을 바닥에 떨어뜨린 뒤 즉시 성공.
+// 실제 퇴장 이동은 전이로 연결된 Leave 상태가 담당합니다.
+//
+// 이동 정지를 여기서 하지 않는 이유:
+//   MoveToLocation / WaitInQueue / ReturnProducts 세 태스크가 전부
+//   ExitState에서 StopMovement()를 부르고, StateTree는 새 상태의 EnterState보다
+//   이전 상태의 ExitState를 먼저 실행하므로 여기 도달 시점엔 이미 멈춰 있습니다.
+// =====================================================================
+
+USTRUCT()
+struct FCSTask_PrepareForcedLeaveInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Prepare Forced Leave"))
+struct FCSTask_PrepareForcedLeave : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSTask_PrepareForcedLeaveInstanceData;
+
+	FCSTask_PrepareForcedLeave()
+	{
+		// EnterState에서 전부 끝나므로 매 틱 호출될 필요가 없음
+		bShouldCallTick = false;
+	}
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+};

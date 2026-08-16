@@ -34,6 +34,12 @@ void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	ShelfRandomStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
+
+	ACSStoreGameState* StoreState = InWorld.GetGameState<ACSStoreGameState>();
+	if (StoreState != nullptr)
+	{
+		StoreState->OnBusinessDayStarted.AddDynamic(this, &UCSCustomerRuntimeSubsystem::HandleBusinessDayStarted);
+	}
 }
 
 void UCSCustomerRuntimeSubsystem::RefreshShelves()
@@ -746,6 +752,175 @@ int32 UCSCustomerRuntimeSubsystem::ReturnCustomerItemsToShelf(ACSCustomerCharact
 
 }
 
+bool UCSCustomerRuntimeSubsystem::IsBusinessHoursOver() const
+{
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	const ACSStoreGameState* StoreState = World->GetGameState<ACSStoreGameState>();
+	if (StoreState == nullptr)
+	{
+		return false;
+	}
+
+	// 24:00 강제 마감 판정
+	// 입간판을 돌려 폐점한 경우, 손님은 하던 쇼핑을 끝내고 나감
+	// 구분하기 위해 자정 마감 시에만 활성화되는 변수 확인
+	if (StoreState->bIsDailySummaryPending)
+	{
+		return true;
+	}
+
+	// 정산 확인 이후. 마감 자유활동 구간
+	// 마감 구간 내내 true를 유지
+	// 단계는 Open → ClosingFreeRoam → Settlement → Finished 순으로만 진행된다.
+	// ClosingFreeRoam에서 이미 손님을 내보냈으므로 그 뒤엔 손님이 남을 수 없다.
+	const ECStorePhase Phase = StoreState->CurrentPhase;
+	return (Phase == ECStorePhase::ClosingFreeRoam);
+}
+
+bool UCSCustomerRuntimeSubsystem::ShouldForceLeaveStore(const ACSCustomerCharacter* Customer) const
+{
+	if (IsValid(Customer) == false)
+	{
+		return false;
+	}
+
+	const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	// 이미 강제 퇴장이 확정된 손님은 다시 판정하지 X
+	// 이게 없으면 Root의 On Tick 매 틱마다 확인해 손님이 퇴장 상태에 재진입하며 제자리에서 좌우로 움직인다.
+	if (State->IsForcedToLeave())
+	{
+		return false;
+	}
+
+	// 계산을 마친 손님은 어차피 나가는 중이다.
+	// 체크를 해야 이미 계산완료한 손님은 봉투를 든 채 나간다.
+	if (State->bCheckoutDone)
+	{
+		return false;
+	}
+
+	//    절도를 하고있는 빌런은 도주 중이므로 건드리지 않는다.(고민중)
+	//    이 검사가 빠지면 자정마다 절도범이 훔친 물건을 스스로 내려놓고 걸어 나가
+	//    빌런 시스템이 무력화된다.
+	if (State->PlannedVillainAction == ECSVillainAction::Shoplift
+		&& State->bVillainActionDone)
+	{
+		return false;
+	}
+
+	return IsBusinessHoursOver();
+}
+
+void UCSCustomerRuntimeSubsystem::PrepareForcedLeave(ACSCustomerCharacter* Customer)
+{
+	if (IsValid(Customer) == false)
+	{
+		return;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return;
+	}
+
+	// 중복 정리 방지. 상품이 두 번 떨어져 재고가 늘어나는 사고를 막는다.
+	if (State->IsForcedToLeave())
+	{
+		return;
+	}
+
+	State->MarkForcedToLeave();
+
+	// 줄에서 빠진다.
+	LeaveQueue(Customer);
+
+	// 진열대로 되돌리지 않고 손님 발밑에 그대로 떨어뜨린다.
+	DropCustomerItems(Customer);
+
+	OnCustomerForcedToLeave.Broadcast(Customer);
+
+}
+
+void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 순회 중 파괴하면 이터레이터가 깨지므로 먼저 전부 모은 뒤 두 번째 루프에서 처리
+	// RefreshShelves()와 같은 TActorIterator 방식이라 추가 include가 필요 없다.
+	TArray<ACSCustomerCharacter*> RemainingCustomers;
+	for (TActorIterator<ACSCustomerCharacter> It(World); It; ++It)
+	{
+		ACSCustomerCharacter* Customer = *It;
+		if (IsValid(Customer))
+		{
+			RemainingCustomers.Add(Customer);
+		}
+	}
+
+	for (int32 Index = 0; Index < RemainingCustomers.Num(); Index++)
+	{
+		ACSCustomerCharacter* Customer = RemainingCustomers[Index];
+		if (IsValid(Customer) == false)
+		{
+			continue;
+		}
+
+		const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+
+		// 절도를 실행하고 아직 도주 중인 손님인가.
+		const bool bIsEscapingThief = (State != nullptr)
+			&& State->PlannedVillainAction == ECSVillainAction::Shoplift
+			&& State->bVillainActionDone;
+
+		if (bIsEscapingThief)
+		{
+			// [고민중] 훔친 물건을 떨어뜨리지 않는다.
+			//
+			// NotifyCustomerDespawned는 내부에서 ReportShopliftEscaped를 부르는데,
+			// 그 함수는 SelectProducts가 비어 있으면 조기 return한다.
+			// 여기서 DropCustomerItems를 먼저 부르면 목록이 비워져
+			// 절도 손실이 아예 집계되지 않는다.
+			//
+			// 마감까지 잡히지 않았으면 "도주 성공"으로 보는 것이
+			// ShouldForceLeaveStore에서 절도범을 제외한 것과 일관된다.
+			// 물건을 회수하고 손실을 없애려면 이 분기도 PrepareForcedLeave로 바꾸면 된다.
+			LeaveQueue(Customer);
+		}
+		else
+		{
+			// 파괴 전에 반드시 정리부터. 이 호출 없이 Destroy하면
+			// 장바구니에 붙어 있던 상품이 함께 사라져 재고가 증발한다.
+			PrepareForcedLeave(Customer);
+		}
+
+		NotifyCustomerDespawned(Customer);
+		Customer->Destroy();
+	}
+
+	if (RemainingCustomers.Num() > 0)
+	{
+		// 정상 흐름이라면 0이어야 한다. 0이 아니면 퇴장 경로가 막힌 것이다.
+		UE_LOG(LogTemp, Warning, TEXT("[영업일전환] 남아 있던 손님 %d명 정리"),
+			RemainingCustomers.Num());
+	}
+
+}
+
 void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)
 {
 	if (Customer == nullptr)
@@ -823,6 +998,11 @@ void UCSCustomerRuntimeSubsystem::ReportShopliftEscaped(ACSCustomerCharacter* Cu
 
 	//빌러 도주 성공했다고 전파
 	OnShopliftEscaped.Broadcast(Customer, LostGold);
+}
+
+void UCSCustomerRuntimeSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
+{
+	DespawnAllCustomers();
 }
 
 
