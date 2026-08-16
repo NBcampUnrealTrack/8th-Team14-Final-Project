@@ -528,6 +528,14 @@ void ACSShelfActor::SetFacilityPhysicsEnabled(bool bEnabled)
 
 	if (bEnabled)
 	{
+		// Blueprint에서 조정한 메시 피벗과 높이를 물리가 분리하기 전에 그대로 저장합니다.
+		if (!ShelfMesh->IsSimulatingPhysics() &&
+			ShelfMesh->GetAttachParent() == SceneRoot)
+		{
+			ShelfMeshRelativeTransformBeforePhysics = ShelfMesh->GetRelativeTransform();
+			bHasCachedShelfMeshRelativeTransform = true;
+		}
+
 		ShelfMesh->SetMobility(EComponentMobility::Movable);
 		ShelfMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		ShelfMesh->SetEnableGravity(true);
@@ -547,6 +555,23 @@ void ACSShelfActor::SetFacilityPhysicsEnabled(bool bEnabled)
 	}
 	ShelfMesh->SetSimulatePhysics(false);
 	ShelfMesh->SetEnableGravity(false);
+
+	bool bAttachedToSceneRoot = ShelfMesh->GetAttachParent() == SceneRoot;
+	if (!bAttachedToSceneRoot && IsValid(SceneRoot))
+	{
+		bAttachedToSceneRoot = ShelfMesh->AttachToComponent(
+			SceneRoot,
+			FAttachmentTransformRules::KeepWorldTransform);
+	}
+
+	if (bAttachedToSceneRoot && bHasCachedShelfMeshRelativeTransform)
+	{
+		ShelfMesh->SetRelativeTransform(
+			ShelfMeshRelativeTransformBeforePhysics,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
 }
 
 bool ACSShelfActor::GetItemSlotLevel_Implementation(

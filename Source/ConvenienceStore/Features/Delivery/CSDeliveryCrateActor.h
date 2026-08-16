@@ -4,6 +4,7 @@
 #include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "Features/Interaction/CSInteractable.h"
+#include "Features/Trash/CSTrashable.h"
 #include "GameFramework/Actor.h"
 #include "CSDeliveryCrateActor.generated.h"
 
@@ -22,7 +23,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	NewQuantity);
 
 UCLASS()
-class CONVENIENCESTORE_API ACSDeliveryCrateActor : public AActor, public ICSInteractable
+class CONVENIENCESTORE_API ACSDeliveryCrateActor : public AActor,
+	public ICSInteractable,
+	public ICSTrashable
 {
 	GENERATED_BODY()
 
@@ -119,6 +122,8 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> SpoiledVFXStoreGameState;
 
+	FTimerHandle SpoiledVFXRefreshTimerHandle;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Holding")
 	FVector HeldRelativeLocation = FVector::ZeroVector;
 
@@ -136,9 +141,6 @@ protected:
 		const FHitResult& SweepResult);
 
 	UFUNCTION()
-	void HandleSpoiledVFXGameTimeChanged(float NewGameMinutes);
-
-	UFUNCTION()
 	void HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Product")
@@ -147,7 +149,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery|Visual")
 	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
 
+	void EnsureFreshnessRuntimeStateInitialized();
 	void UpdateFreshnessDecayState();
 	void CacheSpoiledVFXComponent();
+	void RefreshSpoiledVFXTimer();
+	void HandleSpoiledVFXRefreshTimer();
 	void UpdateSpoiledVFX();
 };

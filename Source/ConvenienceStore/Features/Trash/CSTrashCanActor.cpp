@@ -1,6 +1,8 @@
-﻿#include "Features/Trash/CSTrashCanActor.h"
+#include "Features/Trash/CSTrashCanActor.h"
+
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Features/Trash/CSTrashable.h"
 
 ACSTrashCanActor::ACSTrashCanActor()
 {
@@ -14,45 +16,48 @@ ACSTrashCanActor::ACSTrashCanActor()
 	TrashCanMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 }
 
-bool ACSTrashCanActor::CanPlaceItem_Implementation(AActor* ItemActor) const
+FName ACSTrashCanActor::GetFacilityId_Implementation() const
 {
-	// 지금은 무엇이든 버릴 수 있게 허용
-	// 나중에 상품이 여기 버려지면 매입가만큼 매출 손실로 기록하면 실수로 버리는 것도 플레이어의 실수로 이어지는 재미 요소가 될 수 있음
-	return IsValid(ItemActor);
+	return FacilityRow.RowName;
 }
 
-bool ACSTrashCanActor::GetPlacementPreview_Implementation(
-	AActor* ItemActor,
-	FVector PlacementHint,
-	FTransform& OutSlotWorldTransform) const
+bool ACSTrashCanActor::IsFacilityInstalled_Implementation() const
 {
-	if (!CanPlaceItem_Implementation(ItemActor))
-	{
-		return false;
-	}
-
-	// 슬롯이라는 개념이 없어 조준한 지점에 고스트가 표시되도록 그대로 반환
-	OutSlotWorldTransform = FTransform(GetActorRotation(), PlacementHint);
-	return true;
+	return bIsInstalled;
 }
 
-ECSShelfPlacementPreviewState ACSTrashCanActor::GetPlacementPreviewState_Implementation(
-	AActor* ItemActor,
-	FVector PlacementHint,
-	FTransform& OutSlotWorldTransform) const
+void ACSTrashCanActor::InitializeAsUninstalledFacility_Implementation()
 {
-	if (!GetPlacementPreview_Implementation(ItemActor, PlacementHint, OutSlotWorldTransform))
-	{
-		return ECSShelfPlacementPreviewState::Invalid;
-	}
-
-	// 보관 환경 경고 같은 개념이 없으므로 항상 정상(Valid)으로 표시
-	return ECSShelfPlacementPreviewState::Valid;
+	bIsInstalled = false;
+	SetFacilityPhysicsEnabled(true);
 }
 
-bool ACSTrashCanActor::TryPlaceItem_Implementation(AActor* ItemActor, FVector PlacementHint)
+void ACSTrashCanActor::PrepareForBuildPickup_Implementation()
 {
-	if (!CanPlaceItem_Implementation(ItemActor))
+	SetFacilityPhysicsEnabled(false);
+}
+
+void ACSTrashCanActor::FinalizeBuildPlacement_Implementation()
+{
+	SetFacilityPhysicsEnabled(false);
+	bIsInstalled = true;
+}
+
+bool ACSTrashCanActor::CanDisposeItem(AActor* ItemActor) const
+{
+	return IsValid(this) &&
+		!IsActorBeingDestroyed() &&
+		bIsInstalled &&
+		GetActorEnableCollision() &&
+		IsValid(ItemActor) &&
+		ItemActor != this &&
+		ItemActor->Implements<UCSTrashable>() &&
+		!ItemActor->Implements<UCSBuildableFacility>();
+}
+
+bool ACSTrashCanActor::TryDisposeItem(AActor* ItemActor)
+{
+	if (!CanDisposeItem(ItemActor))
 	{
 		return false;
 	}
@@ -62,23 +67,62 @@ bool ACSTrashCanActor::TryPlaceItem_Implementation(AActor* ItemActor, FVector Pl
 		++TotalDisposedCount;
 	}
 
-	// 파괴하기 전에 먼저 방송
 	OnItemDisposed.Broadcast(ItemActor, TotalDisposedCount);
-
 	ItemActor->Destroy();
 	return true;
 }
 
-void ACSTrashCanActor::RemovePlacedItem_Implementation(AActor* ItemActor)
+void ACSTrashCanActor::SetFacilityPhysicsEnabled(bool bEnabled)
 {
-	// 파괴와 동시에 처리가 끝나므로 되돌릴 점유 슬롯이 없음
-}
+	if (!IsValid(TrashCanMesh))
+	{
+		return;
+	}
 
-bool ACSTrashCanActor::GetItemSlotLevel_Implementation(
-	AActor* ItemActor,
-	ECSShelfSlotLevel& OutSlotLevel) const
-{
-	// 손님 AI 등이 잘못 호출해도 안전하게 실패를 반환
-	OutSlotLevel = ECSShelfSlotLevel::Middle;
-	return false;
+	if (bEnabled)
+	{
+		if (!TrashCanMesh->IsSimulatingPhysics() &&
+			TrashCanMesh->GetAttachParent() == SceneRoot)
+		{
+			TrashCanMeshRelativeTransformBeforePhysics =
+				TrashCanMesh->GetRelativeTransform();
+			bHasCachedTrashCanMeshRelativeTransform = true;
+		}
+
+		TrashCanMesh->SetMobility(EComponentMobility::Movable);
+		TrashCanMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		TrashCanMesh->SetEnableGravity(true);
+		TrashCanMesh->SetSimulatePhysics(true);
+		if (TrashCanMesh->IsSimulatingPhysics())
+		{
+			TrashCanMesh->WakeAllRigidBodies();
+		}
+		return;
+	}
+
+	if (TrashCanMesh->IsSimulatingPhysics())
+	{
+		TrashCanMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		TrashCanMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+		TrashCanMesh->PutAllRigidBodiesToSleep();
+	}
+	TrashCanMesh->SetSimulatePhysics(false);
+	TrashCanMesh->SetEnableGravity(false);
+
+	bool bAttachedToSceneRoot = TrashCanMesh->GetAttachParent() == SceneRoot;
+	if (!bAttachedToSceneRoot && IsValid(SceneRoot))
+	{
+		bAttachedToSceneRoot = TrashCanMesh->AttachToComponent(
+			SceneRoot,
+			FAttachmentTransformRules::KeepWorldTransform);
+	}
+
+	if (bAttachedToSceneRoot && bHasCachedTrashCanMeshRelativeTransform)
+	{
+		TrashCanMesh->SetRelativeTransform(
+			TrashCanMeshRelativeTransformBeforePhysics,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
 }

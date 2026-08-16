@@ -10,6 +10,7 @@
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "TimerManager.h"
 
 ACSProductPickupActor::ACSProductPickupActor()
 {
@@ -52,24 +53,21 @@ void ACSProductPickupActor::BeginPlay()
 		: nullptr;
 	if (IsValid(SpoiledVFXStoreGameState))
 	{
-		SpoiledVFXStoreGameState->OnGameTimeChanged.AddUniqueDynamic(
-			this,
-			&ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged);
 		SpoiledVFXStoreGameState->OnBusinessDayStarted.AddUniqueDynamic(
 			this,
 			&ACSProductPickupActor::HandleSpoiledVFXBusinessDayStarted);
 	}
 
+	RefreshSpoiledVFXTimer();
 	UpdateSpoiledVFX();
 }
 
 void ACSProductPickupActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(SpoiledVFXRefreshTimerHandle);
+
 	if (IsValid(SpoiledVFXStoreGameState))
 	{
-		SpoiledVFXStoreGameState->OnGameTimeChanged.RemoveDynamic(
-			this,
-			&ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged);
 		SpoiledVFXStoreGameState->OnBusinessDayStarted.RemoveDynamic(
 			this,
 			&ACSProductPickupActor::HandleSpoiledVFXBusinessDayStarted);
@@ -133,6 +131,8 @@ bool ACSProductPickupActor::InitializeProduct(FDataTableRowHandle InProductRow)
 	if (HasActorBegunPlay())
 	{
 		EnsureProductRuntimeStateInitialized();
+		RefreshSpoiledVFXTimer();
+		UpdateSpoiledVFX();
 	}
 	return true;
 }
@@ -142,6 +142,10 @@ void ACSProductPickupActor::ApplyProductRuntimeState(
 {
 	ProductRuntimeState = InProductRuntimeState;
 	UpdateFreshnessDecayState();
+	if (HasActorBegunPlay())
+	{
+		RefreshSpoiledVFXTimer();
+	}
 	UpdateSpoiledVFX();
 }
 
@@ -430,27 +434,65 @@ void ACSProductPickupActor::UpdateSpoiledVFX()
 		ProductRuntimeState.bFreshnessInitialized &&
 		GetCurrentFreshness() <= 0;
 	const bool bShouldShowSpoiledVFX = IsExpired() || bHasNoFreshness;
-	if (SpoiledVFXComponent->IsActive() == bShouldShowSpoiledVFX)
+	if (bShouldShowSpoiledVFX)
 	{
+		if (!SpoiledVFXComponent->IsActive() || SpoiledVFXComponent->IsComplete())
+		{
+			SpoiledVFXComponent->Activate(true);
+		}
+
 		return;
 	}
 
-	if (bShouldShowSpoiledVFX)
-	{
-		SpoiledVFXComponent->Activate();
-	}
-	else
+	if (SpoiledVFXComponent->IsActive() && !SpoiledVFXComponent->IsComplete())
 	{
 		SpoiledVFXComponent->Deactivate();
 	}
 }
 
-void ACSProductPickupActor::HandleSpoiledVFXGameTimeChanged(float NewGameMinutes)
+void ACSProductPickupActor::RefreshSpoiledVFXTimer()
 {
-	(void)NewGameMinutes;
+	GetWorldTimerManager().ClearTimer(SpoiledVFXRefreshTimerHandle);
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSProductPickupActor::RefreshSpoiledVFXTimer"));
+	const bool bRequiresFreshnessManagement = ProductData != nullptr &&
+		(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+	if (!bRequiresFreshnessManagement)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(CurrentStoreGameState)
+			? CurrentStoreGameState->GetFreshnessSettings()
+			: nullptr;
+	const float RefreshIntervalSeconds = IsValid(FreshnessSettings)
+		? FMath::Max(0.1f, FreshnessSettings->DecayIntervalSeconds)
+		: 1.0f;
+
+	GetWorldTimerManager().SetTimer(
+		SpoiledVFXRefreshTimerHandle,
+		this,
+		&ACSProductPickupActor::HandleSpoiledVFXRefreshTimer,
+		RefreshIntervalSeconds,
+		true);
+}
+
+void ACSProductPickupActor::HandleSpoiledVFXRefreshTimer()
+{
+	const bool bWasFreshnessInitialized = ProductRuntimeState.bFreshnessInitialized;
 	if (!ProductRuntimeState.bFreshnessInitialized)
 	{
 		EnsureProductRuntimeStateInitialized();
+	}
+	if (!bWasFreshnessInitialized && ProductRuntimeState.bFreshnessInitialized)
+	{
+		RefreshSpoiledVFXTimer();
 	}
 
 	UpdateSpoiledVFX();

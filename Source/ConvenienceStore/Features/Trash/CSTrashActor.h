@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
+#include "Features/Trash/CSTrashable.h"
 #include "CSTrashActor.generated.h"
 
 class USceneComponent;
@@ -10,7 +11,9 @@ class UStaticMeshComponent;
 
 // 튜토리얼 청소 단계에서 플레이어가 E로 줍는 쓰레기
 UCLASS()
-class CONVENIENCESTORE_API ACSTrashActor : public AActor, public ICSInteractable
+class CONVENIENCESTORE_API ACSTrashActor : public AActor,
+	public ICSInteractable,
+	public ICSTrashable
 {
 	GENERATED_BODY()
 
