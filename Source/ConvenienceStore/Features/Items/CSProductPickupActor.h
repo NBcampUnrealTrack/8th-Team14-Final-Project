@@ -5,6 +5,7 @@
 #include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
+#include "Features/Trash/CSTrashable.h"
 #include "CSProductPickupActor.generated.h"
 
 class UStaticMeshComponent;
@@ -17,7 +18,9 @@ class ACSStoreGameState;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
-class CONVENIENCESTORE_API ACSProductPickupActor : public AActor, public ICSInteractable
+class CONVENIENCESTORE_API ACSProductPickupActor : public AActor,
+	public ICSInteractable,
+	public ICSTrashable
 {
 	GENERATED_BODY()
 
@@ -170,6 +173,8 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> SpoiledVFXStoreGameState;
 
+	FTimerHandle SpoiledVFXRefreshTimerHandle;
+
 	UFUNCTION()
 	void HandlePawnOverlap(
 		UPrimitiveComponent* OverlappedComponent,
@@ -180,14 +185,13 @@ protected:
 		const FHitResult& SweepResult);
 
 	UFUNCTION()
-	void HandleSpoiledVFXGameTimeChanged(float NewGameMinutes);
-
-	UFUNCTION()
 	void HandleSpoiledVFXBusinessDayStarted(int32 NewBusinessDay);
 
 	void ApplyProductVisual();
 	void EnsureProductRuntimeStateInitialized();
 	void UpdateFreshnessDecayState();
 	void CacheSpoiledVFXComponent();
+	void RefreshSpoiledVFXTimer();
+	void HandleSpoiledVFXRefreshTimer();
 	void UpdateSpoiledVFX();
 };
