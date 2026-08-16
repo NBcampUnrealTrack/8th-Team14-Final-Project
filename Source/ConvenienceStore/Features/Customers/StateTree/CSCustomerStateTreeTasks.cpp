@@ -524,3 +524,31 @@ EStateTreeRunStatus FCSTask_Shoplift::EnterState(FStateTreeExecutionContext& Con
 	// 이동은 Leave 상태가 담당하므로 여기서는 즉시 성공을 반환
 	return EStateTreeRunStatus::Succeeded;
 }
+
+// =====================================================================
+// PrepareForcedLeave
+// =====================================================================
+
+EStateTreeRunStatus FCSTask_PrepareForcedLeave::EnterState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem =
+		Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+
+	if (Subsystem != nullptr)
+	{
+		Subsystem->PrepareForcedLeave(Data.Actor);
+	}
+
+	// 서브시스템이 없어도 성공으로 넘김
+	UE_LOG(LogTemp, Log, TEXT("[영업종료퇴장] %s"), *Data.Actor->GetName());
+
+	return EStateTreeRunStatus::Succeeded;
+}

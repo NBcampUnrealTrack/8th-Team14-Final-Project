@@ -183,3 +183,36 @@ struct FCSCond_IsVillain : public FStateTreeConditionCommonBase
 
 	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
 };
+
+// =====================================================================
+// Customer: Should Force Leave
+// 영업시간 종료로 이 손님을  내보내야 하는지 판정.
+//
+// Root의 On Tick 전이 조건이자 ForceLeaveGate 상태의 진입 조건으로 함께 씁니다.
+// 판정 근거는 전부 서브시스템에 있고 이 구조체는 물어보기만 합니다.
+// =====================================================================
+USTRUCT()
+struct FCSCond_ShouldForceLeaveInstanceData
+{
+	GENERATED_BODY()
+
+	// 매장 상태(서브시스템)와 개인 상태(플래그, 빌런 여부)를 둘 다 봐야 하므로
+	// 판정 대상 손님 Actor를 받습니다.
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Should Force Leave"))
+struct FCSCond_ShouldForceLeave : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_ShouldForceLeaveInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};

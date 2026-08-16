@@ -163,3 +163,24 @@ bool FCSCond_IsVillain::TestCondition(FStateTreeExecutionContext& Context) const
 		return bResult;
 	}
 }
+
+bool FCSCond_ShouldForceLeave::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	bool bResult = false;
+
+	if (Data.Actor != nullptr)
+	{
+		// 매장 단계 판정과 예외 처리를 전부 서브시스템이 갖고 있으므로 물어보기만 한다.
+		const UCSCustomerRuntimeSubsystem* Subsystem =
+			Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+
+		if (Subsystem != nullptr)
+		{
+			bResult = Subsystem->ShouldForceLeaveStore(Data.Actor);
+		}
+	}
+
+	return bResult;
+}

@@ -61,6 +61,25 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector ExitLocation = FVector::ZeroVector;
 
+	// 가게 앞 판정 지점의 좌표. 스포너가 스폰 시점에 채워줍니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	FVector StorefrontLocation = FVector::ZeroVector;
+
+	// 영업시간 종료로 강제 퇴장이 확정된 손님인지.
+	// 이 플래그가 필요한 이유는 두 가지
+	//  1) 정리 작업(줄 이탈 / 상품 낙하)을 딱 한 번만 실행하기 위해서
+	//     Root의 On Tick 전이는 매 틱 평가되므로, 없으면 상품이 매 틱 떨어짐
+	//  2) 통계 파트가 "살 게 없어 빈손으로 나간 손님"과
+	//     "영업이 끝나서 못 산 손님"을 구분할 근거.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	bool bForcedToLeave = false;
+
+	UFUNCTION(BlueprintPure, Category = "Customer")
+	bool IsForcedToLeave() const;
+
+	// 강제 퇴장 확정 시 호출.
+	void MarkForcedToLeave();
+
 	// 빌런 -------
 
 	// 스폰 시점에 확정된 이 손님의 빌런 행동. None이면 일반 손님.
