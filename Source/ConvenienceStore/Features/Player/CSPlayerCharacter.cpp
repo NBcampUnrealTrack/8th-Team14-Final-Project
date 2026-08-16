@@ -15,6 +15,7 @@
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Trash/CSTrashActor.h"
+#include "Features/Trash/CSTrashCanActor.h"
 
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
@@ -278,12 +279,6 @@ void ACSPlayerCharacter::ToggleBuildMode()
 	CurrentPlayerMode = IsBuildMode()
 		? ECSPlayerMode::Normal
 		: ECSPlayerMode::Build;
-	// 실제 모드가 바뀐 직후 HUD가 같은 상태의 아이콘과 전환 문구를 표시하게 알립니다.
-	if (ACSStorePlayerController* StorePlayerController =
-		Cast<ACSStorePlayerController>(GetController()))
-	{
-		StorePlayerController->SetBuildModeHUDState(IsBuildMode(), true);
-	}
 	ResetBuildRotationInput();
 	ClearBuildPlacementPreview();
 	DestroyPlacementPreview();
@@ -1551,20 +1546,33 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
     }
 
     AActor* TargetActor = HitResult.GetActor();
-    if (!IsValid(TargetActor) || !TargetActor->Implements<UCSShelfPlaceable>())
+    if (!IsValid(TargetActor))
     {
         return;
     }
 
-	// 튜토리얼용
-	if (Cast<ACSTrashActor>(HeldActor) != nullptr)
+	if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(TargetActor))
 	{
-		if (IsValid(StorePlayerController))
+		if (TrashCan->CanDisposeItem(HeldActor) && IsValid(StorePlayerController))
 		{
+			const FText DisposePrompt = Cast<ACSTrashActor>(HeldActor) != nullptr
+				? NSLOCTEXT("Interaction", "DisposeTrashPrompt", "[Q] 쓰레기 버리기")
+				: NSLOCTEXT("Interaction", "DisposeItemPrompt", "[Q] 버리기");
 			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "DisposePrompt", "[Q] 쓰레기 버리기"),
+				DisposePrompt,
 				FLinearColor::White);
 		}
+		return;
+	}
+
+	// 튜토리얼 쓰레기는 쓰레기통 외 일반 진열대에 배치하지 않습니다.
+	if (Cast<ACSTrashActor>(HeldActor) != nullptr)
+	{
+		return;
+	}
+
+	if (!TargetActor->Implements<UCSShelfPlaceable>())
+	{
 		return;
 	}
 
@@ -1677,8 +1685,24 @@ void ACSPlayerCharacter::DropHeldItem()
 
 	if (bHitShelfTarget)
 	{
-		if (AActor* TargetActor = AimHitResult.GetActor();
-			IsValid(TargetActor) && TargetActor->Implements<UCSShelfPlaceable>())
+		AActor* TargetActor = AimHitResult.GetActor();
+		if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(TargetActor);
+			IsValid(TrashCan) && TrashCan->TryDisposeItem(HeldActor))
+		{
+			HeldActor = nullptr;
+			DestroyPlacementPreview();
+			ClearShelfPlacementHighlights();
+			if (ACSStorePlayerController* StorePlayerController =
+				Cast<ACSStorePlayerController>(GetController()))
+			{
+				StorePlayerController->ClearInteractionContext();
+			}
+			return;
+		}
+
+		if (IsValid(TargetActor) &&
+			Cast<ACSTrashActor>(HeldActor) == nullptr &&
+			TargetActor->Implements<UCSShelfPlaceable>())
 		{
 			if (ACSDeliveryCrateActor* DeliveryCrate =
 				Cast<ACSDeliveryCrateActor>(HeldActor))
@@ -1826,11 +1850,19 @@ bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)
 
 	ResetBuildRotationInput();
 	RestoreFacilityMagicWands(FacilityActor);
+	const FRotator CurrentFacilityRotation = FacilityActor->GetActorRotation();
+	const FRotator UprightFacilityRotation(
+		0.0f,
+		CurrentFacilityRotation.Yaw,
+		0.0f);
 	const bool bWasInstalled =
 		ICSBuildableFacility::Execute_IsFacilityInstalled(FacilityActor);
-	HeldBuildableFacilityRotation = FacilityActor->GetActorRotation();
-	CacheHeldBuildableActorStates(FacilityActor);
 	ICSBuildableFacility::Execute_PrepareForBuildPickup(FacilityActor);
+	FacilityActor->SetActorRotation(
+		UprightFacilityRotation,
+		ETeleportType::TeleportPhysics);
+	HeldBuildableFacilityRotation = UprightFacilityRotation;
+	CacheHeldBuildableActorStates(FacilityActor);
 	FacilityActor->SetActorEnableCollision(false);
 	if (!FacilityActor->AttachToComponent(
 		HeldItemAnchor,

@@ -124,6 +124,7 @@ private:
 	TArray<FCSTutorialStepRow*> StepRows;
 
 	int32 CurrentStepIndex = INDEX_NONE;
+	int32 CleanTrashDisposedCount = 0;
 	bool bTutorialCompleted = false;
 	FTimerHandle AutoAdvanceTimerHandle;
 

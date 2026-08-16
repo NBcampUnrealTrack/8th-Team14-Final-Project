@@ -3,6 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
+#include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
@@ -85,6 +86,7 @@ void UCSTutorialSubsystem::Deinitialize()
 void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 {
 	StepRows.Reset();
+	CleanTrashDisposedCount = 0;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -547,5 +549,21 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 
 void UCSTutorialSubsystem::HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount)
 {
-	NotifyObjectiveProgress(ECSTutorialStepId::CleanTrash, TotalDisposedCount);
+	(void)TotalDisposedCount;
+
+	if (Cast<ACSTrashActor>(DisposedItem) == nullptr ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::CleanTrash)
+	{
+		return;
+	}
+
+	if (CleanTrashDisposedCount < MAX_int32)
+	{
+		++CleanTrashDisposedCount;
+	}
+
+	NotifyObjectiveProgress(
+		ECSTutorialStepId::CleanTrash,
+		CleanTrashDisposedCount);
 }

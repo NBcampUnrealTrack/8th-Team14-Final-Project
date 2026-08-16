@@ -133,6 +133,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
 
+	// 미설치 물리를 켜기 직전의 Blueprint 상대 위치·회전·스케일을 보존합니다.
+	UPROPERTY(Transient)
+	FTransform ShelfMeshRelativeTransformBeforePhysics = FTransform::Identity;
+
+	UPROPERTY(Transient)
+	bool bHasCachedShelfMeshRelativeTransform = false;
+
 	// 기존 레벨 배치 시설은 설치 완료 상태로 시작합니다.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Facility|Build")
 	bool bIsInstalled = true;

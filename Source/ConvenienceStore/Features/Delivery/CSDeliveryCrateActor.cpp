@@ -11,6 +11,7 @@
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "TimerManager.h"
 
 ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 {
@@ -39,30 +40,28 @@ void ACSDeliveryCrateActor::BeginPlay()
 		CrateMesh->SetGenerateOverlapEvents(true);
 	}
 
+	EnsureFreshnessRuntimeStateInitialized();
 	CacheSpoiledVFXComponent();
 	SpoiledVFXStoreGameState = GetWorld() != nullptr
 		? GetWorld()->GetGameState<ACSStoreGameState>()
 		: nullptr;
 	if (IsValid(SpoiledVFXStoreGameState))
 	{
-		SpoiledVFXStoreGameState->OnGameTimeChanged.AddUniqueDynamic(
-			this,
-			&ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged);
 		SpoiledVFXStoreGameState->OnBusinessDayStarted.AddUniqueDynamic(
 			this,
 			&ACSDeliveryCrateActor::HandleSpoiledVFXBusinessDayStarted);
 	}
 
+	RefreshSpoiledVFXTimer();
 	UpdateSpoiledVFX();
 }
 
 void ACSDeliveryCrateActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(SpoiledVFXRefreshTimerHandle);
+
 	if (IsValid(SpoiledVFXStoreGameState))
 	{
-		SpoiledVFXStoreGameState->OnGameTimeChanged.RemoveDynamic(
-			this,
-			&ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged);
 		SpoiledVFXStoreGameState->OnBusinessDayStarted.RemoveDynamic(
 			this,
 			&ACSDeliveryCrateActor::HandleSpoiledVFXBusinessDayStarted);
@@ -136,6 +135,10 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 	RemainingQuantity = InQuantity;
 	ProductRuntimeState = NewRuntimeState;
 	UpdateFreshnessDecayState();
+	if (HasActorBegunPlay())
+	{
+		RefreshSpoiledVFXTimer();
+	}
 	UpdateSpoiledVFX();
 	return true;
 }
@@ -417,6 +420,37 @@ void ACSDeliveryCrateActor::UpdateFreshnessDecayState()
 	ProductRuntimeState.StartFreshnessDecay(World->GetTimeSeconds());
 }
 
+void ACSDeliveryCrateActor::EnsureFreshnessRuntimeStateInitialized()
+{
+	if (ProductRuntimeState.bFreshnessInitialized ||
+		ProductRow.DataTable == nullptr ||
+		ProductRow.RowName.IsNone())
+	{
+		return;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::EnsureFreshnessRuntimeStateInitialized"));
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(StoreGameState) ? StoreGameState->GetFreshnessSettings() : nullptr;
+	if (ProductData == nullptr || !IsValid(World) || !IsValid(FreshnessSettings))
+	{
+		return;
+	}
+
+	const bool bRequiresFreshnessManagement =
+		ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
+	ProductRuntimeState.InitializeFreshness(
+		FreshnessSettings->InitialFreshness,
+		bRequiresFreshnessManagement,
+		World->GetTimeSeconds());
+	UpdateFreshnessDecayState();
+}
+
 void ACSDeliveryCrateActor::CacheSpoiledVFXComponent()
 {
 	SpoiledVFXComponent = nullptr;
@@ -452,24 +486,65 @@ void ACSDeliveryCrateActor::UpdateSpoiledVFX()
 	const bool bIsExpired = IsValid(SpoiledVFXStoreGameState) &&
 		ProductRuntimeState.IsExpired(SpoiledVFXStoreGameState->CurrentBusinessDay);
 	const bool bShouldShowSpoiledVFX = bIsExpired || bHasNoFreshness;
-	if (SpoiledVFXComponent->IsActive() == bShouldShowSpoiledVFX)
+	if (bShouldShowSpoiledVFX)
 	{
+		if (!SpoiledVFXComponent->IsActive() || SpoiledVFXComponent->IsComplete())
+		{
+			SpoiledVFXComponent->Activate(true);
+		}
+
 		return;
 	}
 
-	if (bShouldShowSpoiledVFX)
-	{
-		SpoiledVFXComponent->Activate();
-	}
-	else
+	if (SpoiledVFXComponent->IsActive() && !SpoiledVFXComponent->IsComplete())
 	{
 		SpoiledVFXComponent->Deactivate();
 	}
 }
 
-void ACSDeliveryCrateActor::HandleSpoiledVFXGameTimeChanged(float NewGameMinutes)
+void ACSDeliveryCrateActor::RefreshSpoiledVFXTimer()
 {
-	(void)NewGameMinutes;
+	GetWorldTimerManager().ClearTimer(SpoiledVFXRefreshTimerHandle);
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(TEXT("ACSDeliveryCrateActor::RefreshSpoiledVFXTimer"));
+	const bool bRequiresFreshnessManagement = ProductData != nullptr &&
+		(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+			ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+	if (!bRequiresFreshnessManagement)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		IsValid(StoreGameState) ? StoreGameState->GetFreshnessSettings() : nullptr;
+	const float RefreshIntervalSeconds = IsValid(FreshnessSettings)
+		? FMath::Max(0.1f, FreshnessSettings->DecayIntervalSeconds)
+		: 1.0f;
+
+	GetWorldTimerManager().SetTimer(
+		SpoiledVFXRefreshTimerHandle,
+		this,
+		&ACSDeliveryCrateActor::HandleSpoiledVFXRefreshTimer,
+		RefreshIntervalSeconds,
+		true);
+}
+
+void ACSDeliveryCrateActor::HandleSpoiledVFXRefreshTimer()
+{
+	const bool bWasFreshnessInitialized = ProductRuntimeState.bFreshnessInitialized;
+	if (!ProductRuntimeState.bFreshnessInitialized)
+	{
+		EnsureFreshnessRuntimeStateInitialized();
+	}
+	if (!bWasFreshnessInitialized && ProductRuntimeState.bFreshnessInitialized)
+	{
+		RefreshSpoiledVFXTimer();
+	}
+
 	UpdateSpoiledVFX();
 }
 
