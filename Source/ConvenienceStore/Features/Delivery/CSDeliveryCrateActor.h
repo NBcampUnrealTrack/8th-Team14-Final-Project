@@ -100,6 +100,15 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> CrateMesh;
 
+	// 발주 시스템과 무관하게 레벨에 직접 배치한 상자의 초기 상품과 수량을 지정합니다.
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Delivery|Placed Initial",
+		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
+	FDataTableRowHandle PlacedProductRow;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Delivery|Placed Initial",
+		meta = (ClampMin = "0", UIMin = "0"))
+	int32 PlacedQuantity = 0;
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery",
 		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
 	FDataTableRowHandle ProductRow;
