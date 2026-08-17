@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Components/SlateWrapperTypes.h"
 #include "GameFramework/PlayerController.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "CSStorePlayerController.generated.h"
@@ -85,6 +86,11 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
+
+	// 정산 모달을 닫을 때 기존 HUD 표시 상태를 정확히 복구합니다.
+	ESlateVisibility StoreHUDVisibilityBeforeDailySummary =
+		ESlateVisibility::HitTestInvisible;
+	bool bHasStoredHUDVisibilityForDailySummary = false;
 
 	// 현재 게임 조작을 막아야 하는 발주·계산 UI 목록입니다.
 	UPROPERTY(Transient)
