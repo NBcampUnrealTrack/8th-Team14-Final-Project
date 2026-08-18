@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Features/Customers/CSCustomerSpawner.h"
 #include "Features/Customers/CSCustomerCharacter.h"
@@ -10,6 +10,8 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/CSCustomerVisualDataAsset.h"
 #include "Data/CSVillainTypes.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+
 
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
 
@@ -162,9 +164,19 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	// (준비 08:00~09:00 = 스폰 X, 영업 09:00~ = 스폰 O — 데이터 테이블이 결정)
 	// TODO(확장): GameState의 OnScheduleEventFired를 구독해서
 	//             PeakStart/PeakEnd에 SpawnInterval을 바꾸면 피크타임 웨이브 구현 가능.
+
+	// 영업 시간대(bCanSpawnCustomers)면 문이 닫혀 있어도 손님을 만든다.
+	// 문이 닫혀 있는 동안에는 이들이 거리를 지나가기만 하고,
+	// 열려 있으면 가게 앞에서 판정을 거쳐 매장에 들어온다.
 	const ACSStoreGameState* StoreState = GetWorld()->GetGameState<ACSStoreGameState>();
-	if (StoreState != nullptr &&
-		(StoreState->bCanSpawnCustomers == false || StoreState->bIsStoreOpen == false))
+	if (StoreState != nullptr && StoreState->bCanSpawnCustomers == false)
+	{
+		return;
+	}
+
+	const UCSCustomerRuntimeSubsystem* Subsystem =
+		GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (Subsystem != nullptr && Subsystem->IsBusinessHoursOver())
 	{
 		return;
 	}
@@ -201,19 +213,19 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	const float CharacterScale = SelectedArchetype != nullptr
 		? FMath::Max(SelectedArchetype->CharacterScale, 0.1f)
 		: 4.0f;
-	const FTransform SpawnTransform(
-		FRotator::ZeroRotator,
-		SpawnLocation,
-		FVector(CharacterScale));
 
-	FActorSpawnParameters Params;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-	//스폰 지점에 다른 액터와 겹쳐도 밀어내서라도 무조건 스폰되게 함 (스폰 실패로 조용히 스폰 안되는 상황 방지)
+	// SpawnActorDeferred와 FinishSpawning 양쪽에 같은 값으로 넘긴다.
+	// 스케일도 여기 담겨 있으므로 종족별 크기가 그대로 적용된다.
+	const FTransform SpawnTransform(FRotator::ZeroRotator,SpawnLocation,FVector(CharacterScale));
 
-
-	ACSCustomerCharacter* Customer = GetWorld()->SpawnActor<ACSCustomerCharacter>(
-		CustomerClass, SpawnTransform, Params);
-	//Params로 정한 규칙을 기준으로 생성
+	// =================================================================================
+	// [초기화 순서: SpawnActorDeferred 사용 이유]
+	// SpawnActor는 1) 액터/컴포넌트 생성 후 2) 즉시 BeginPlay()를 동기로 호출
+	// 이 경우 스포너가 StorefrontLocation, Archetype 등의 초기값을 셋팅하기도 전에 손님의 StateTree가 시작됨
+	// 그 결과, 아직 비어있는(ZeroVector) StorefrontLocation을 읽고 판정 지점 미배치로 오인해 개폐 여부와 무관하게 전원 입장하는 버그가 발생
+	// 이를 방지하기 위해 SpawnActorDeferred를 사용하여 액터 메모리 할당만 하고 BeginPlay() 실행은 보류시킵니다.
+	// =================================================================================
+	ACSCustomerCharacter* Customer = GetWorld()->SpawnActorDeferred<ACSCustomerCharacter>(CustomerClass,SpawnTransform,nullptr,nullptr,ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
 
 	// 생성 실패면 리턴
 	if (Customer == nullptr)
@@ -233,6 +245,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		{
 			State->ExitLocation = SpawnLocation;
 		}
+
+		// 가게 앞 판정 지점.
+		// 비어 있으면 기본 지정했던 값 ZeroVector로 변경
+		if (StorefrontPoint != nullptr)
+		{
+			State->StorefrontLocation = StorefrontPoint->GetActorLocation();
+		}
+
 	}
 
 	// 스폰된 손님에게 종족(Archetype)을 확률적으로 배정
@@ -280,6 +300,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 			}
 		}
 	}
+
+	// =================================================================================
+	// -필수!!- 새로운 초기값(예: 소지품, 기분 상태 등)을 세팅 할 일이 생긴다면, 무조건 FinishSpawning을 호출하기 전에 선언
+	// [초기화 완료 및 시작]
+	// 손님의 목적지, 종족, 시드, 빌런 여부, 외형 등 모든 셋팅이 끝
+	// FinishSpawning을 호출하여 보류해두었던 BeginPlay()를 실행하고 StateTree를 실행
+	// =================================================================================
+	Customer->FinishSpawning(SpawnTransform);
 
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열에 추가
 	SpawnedCustomers.Add(Customer);

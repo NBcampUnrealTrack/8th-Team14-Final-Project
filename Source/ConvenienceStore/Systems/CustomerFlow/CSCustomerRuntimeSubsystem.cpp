@@ -510,6 +510,14 @@ void UCSCustomerRuntimeSubsystem::NotifyCustomerDespawned(ACSCustomerCharacter* 
 	// 모든 경로가 반드시 지나는 이 함수에 둔다. 절도범이 아니면 내부에서 선별됨
 	ReportShopliftEscaped(Customer);
 
+	// 매장에 들어온 적이 없는 손님은 구매 통계 대상이 아니므로 방송 X
+	// 이 검사가 없으면 가게에 들어오지도 않은 사람이 빈손 퇴장률에 잡힌다.
+	if (CustomerState != nullptr && CustomerState->HasEnteredStore() == false)
+	{
+		return;
+	}
+
+
 	OnCustomerDespawned.Broadcast(Customer, bCheckoutDone);
 }
 
@@ -946,6 +954,41 @@ void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 			RemainingCustomers.Num());
 	}
 
+}
+
+bool UCSCustomerRuntimeSubsystem::ShouldEnterStore(const ACSCustomerCharacter* Customer) const
+{
+	if (Customer == nullptr)
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	// 매장 상태로 판단 open인지 close인지
+	const ACSStoreGameState* StoreState = World->GetGameState<ACSStoreGameState>();
+	if (StoreState == nullptr || StoreState->bIsStoreOpen == false)
+	{
+		return false;
+	}
+
+	// [백록담님] 개인 심리 파트
+	const UCSPurchaseDecisionComponent* Decision =
+		Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+	if (Decision == nullptr)
+	{
+		return false;
+	}
+
+	// [백록담님]
+	// 소비심리 로직이 붙으면 이 한 줄이 그 파트의 판정 함수 호출로 바뀜
+	// StoreEntryChance는 현재 1.0이라 영업 중이면 일단 테스트용이므로 전원 입장으로 구현
+	// 아무 이유없이 줄이게되면 영향을 받을 수 있어서 (추후 생각)
+	return Decision->RollChance(Decision->StoreEntryChance);
 }
 
 void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)

@@ -44,6 +44,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
 	void InitializeRandomStream(int32 Seed);
 
+	// =====================================================================
+	// [임시] 손님 입장 확률 (백록담님 언제든지 삭제 및 변경해도 됩니다.)
+	// =====================================================================
+	// 가게가 open이면 스포너에 있는 가게 주위 영역포인트까지 걸어옴
+	// 영역에 도착하면 CSCustomerRuntimeSubsystem::ShouldEnterStore()에서 이 값을 읽어 굴림
+	// 결과에 따라 매장에 들어가거나 그대로 지나쳐 거리 반대쪽 끝까지 걸어가 사라집니다.
+	// [고려해야할 점]
+	// 1. 판정은 한번 뿐
+	// 2. 나중에 살 생각이 없었는데 지나가다가 충동적으로 구매를 하게 하고 싶거나 할 때 영향을 받게 가능함
+	// 3. 만약 어떠 손님이 편의점에서 물건을 살 목적이 있는데 이 확률에 영향을 받게되어 안사고 지나치는 오류를 범할 수도 있음
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Purchase|Entry",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float StoreEntryChance = 1.0f;
+
+	// [임시] 0~1 확률을 받아 이 손님의 스트림으로 굴립니다.
+	// 가게로 들어갈지 안갈지를 정할려고 확률을 굴리는 함수입니다.
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
+	bool RollChance(float Chance) const;
+
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
