@@ -51,8 +51,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCheckoutAbandoned,ACSCustomerC
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCustomerDespawned, ACSCustomerCharacter*, Customer, bool, bCheckoutDone);
 // 절도 시작 방송(디버그용 테스트). AtRiskGold는 들고 나가려는 상품의 판매가 합계.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftStarted,ACSCustomerCharacter*, Customer, int32, AtRiskGold);
-// 빌런 도주 성공 방송매, 매출/평판 집계는 이것을 구독하세요.
+// 빌런 도주 성공 방송, 매출/평판 집계는 이것을 구독하세요.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftEscaped,ACSCustomerCharacter*, Customer, int32, LostGold);
+// 영업시간 종료로 강제 퇴장된 손님 방송, 통계 파트가 자발적 빈손 퇴장 / 계산 포기와 구분하기 위한 별도 채널
+DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerCharacter* /*Customer*/);
 
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
@@ -68,6 +70,12 @@ public:
 	//레벨에 있는 진열대를 갱신하는 함수, 레벨 전체를 확인하여 진열대를 다시 수집.
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	void RefreshShelves();
+
+	// 설치가 완료된 진열대를 손님 방문 후보에 중복 없이 등록합니다.
+	void RegisterShelf(ACSShelfActor* Shelf);
+
+	// 이동 또는 제거되는 진열대를 손님 방문 후보에서 안전하게 해제합니다.
+	void UnregisterShelf(ACSShelfActor* Shelf);
 
 	// 등록된 진열대 목록 Get 함수, 소비심리 파트가 목표를 정할 때 이 목록 쓰일 가능성 높음
 	const TArray<TObjectPtr<AActor>>& GetShelves() const;
@@ -221,6 +229,29 @@ public:
 	int32 ReturnCustomerItemsToShelf(ACSCustomerCharacter* Customer, AActor* ShelfActor);
 
 	// =====================================================================
+	// 영업시간 종료 전원 퇴장
+	// =====================================================================
+
+	// 영업시간이 끝났는가 확인.
+	// 입간판 폐점과 24:00 마감이 같은 델리게이트/같은 플래그를 쓰기 때문에,그것만 보면 입간판을 돌리는 순간 매장 손님이 전부 물건을 던지고 나감
+	// 입간판 폐점은 "신규 손님을 안 받는다"일 뿐,매장 안 손님은 쇼핑과 계산을 마치고 정상 퇴장
+	UFUNCTION(BlueprintPure, Category = "Customer|Flow")
+	bool IsBusinessHoursOver() const;
+
+	// 이 손님을 즉시 내보내야 하는가.
+	bool ShouldForceLeaveStore(const ACSCustomerCharacter* Customer) const;
+
+	// 강제 퇴장 직전 정리. 줄 이탈 + 미결제 상품 낙하.
+	// 판정과 분리한 이유: 조건은 매 틱 불리고 정리는  한 번만 불려야 함
+	void PrepareForcedLeave(ACSCustomerCharacter* Customer);
+
+	// 월드에 남은 손님을 전부 정리하고 파괴합니다.(안전 및 최적화용)
+	// 다음 영업일 시작 시 호출
+	void DespawnAllCustomers();
+
+	FCSOnCustomerForcedToLeave OnCustomerForcedToLeave;
+
+	// =====================================================================
 	// 빌런
 	// =====================================================================
 
@@ -264,4 +295,11 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<ACSCustomerCharacter>> Queue; //계산 대기줄. 배열 순서가 줄 순서
 	//Queue를 사용하지 않는 이유 배열의 인덱스가 곧 줄 순번이라서 인덱스를 추적가능하게 해야해서
+
+protected:
+
+	// OnBusinessDayStarted 가 DYNAMIC 델리게이트라 UFUNCTION + int32 파라미터가 필수입니다.
+	// 하나라도 빠지면 AddDynamic 이 런타임에 조용히 실패합니다.
+	UFUNCTION()
+	void HandleBusinessDayStarted(int32 NewBusinessDay);
 };

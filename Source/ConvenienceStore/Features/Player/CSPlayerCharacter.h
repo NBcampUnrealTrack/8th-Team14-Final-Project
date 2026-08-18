@@ -26,6 +26,16 @@ enum class ECSPlayerMode : uint8
 	Build
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnBuildModeChanged,
+	bool,
+	bIsBuildMode);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnBuildableFacilityPlaced,
+	AActor*,
+	FacilityActor);
+
 UCLASS()
 class CONVENIENCESTORE_API ACSPlayerCharacter : public ACharacter
 {
@@ -43,6 +53,14 @@ public:
 	{
 		return CurrentPlayerMode == ECSPlayerMode::Build;
 	}
+
+	// 튜토리얼 전용 동작을 넣지 않고, 건축 모드 전환 성공 사실만 범용으로 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Player|Build")
+	FCSOnBuildModeChanged OnBuildModeChanged;
+
+	// 시설의 실제 배치가 완료된 경우에만 범용 성공 이벤트를 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Player|Build")
+	FCSOnBuildableFacilityPlaced OnBuildableFacilityPlaced;
 
 protected:
 	virtual void BeginPlay() override;

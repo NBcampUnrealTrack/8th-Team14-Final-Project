@@ -288,6 +288,9 @@ void ACSPlayerCharacter::ToggleBuildMode()
 	ResetBuildRotationInput();
 	ClearBuildPlacementPreview();
 	DestroyPlacementPreview();
+
+	// 건축 시스템의 성공 상태만 방송하고, 튜토리얼 진행 판단은 구독 측에 맡깁니다.
+	OnBuildModeChanged.Broadcast(IsBuildMode());
 }
 
 void ACSPlayerCharacter::StartRotateBuildLeft()
@@ -2015,6 +2018,9 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	HeldActor = nullptr;
 	HeldBuildableFacilityRotation = FRotator::ZeroRotator;
 	ClearBuildPlacementPreview();
+
+	// FinalizeBuildPlacement까지 끝난 실제 배치만 범용 성공 이벤트로 알립니다.
+	OnBuildableFacilityPlaced.Broadcast(FacilityToPlace);
 }
 
 void ACSPlayerCharacter::TryUsePrimaryTool()

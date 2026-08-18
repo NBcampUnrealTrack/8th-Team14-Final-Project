@@ -73,6 +73,7 @@ public:
 	ACSShelfActor();
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	virtual bool CanPlaceItem_Implementation(AActor* ItemActor) const override;
 	virtual bool GetPlacementPreview_Implementation(

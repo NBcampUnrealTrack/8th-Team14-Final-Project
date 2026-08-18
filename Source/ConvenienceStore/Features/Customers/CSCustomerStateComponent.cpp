@@ -73,6 +73,16 @@ bool UCSCustomerStateComponent::HasVisited(const AActor* ShelfActor) const
 	return false;
 }
 
+bool UCSCustomerStateComponent::IsForcedToLeave() const
+{
+	return bForcedToLeave;
+}
+
+void UCSCustomerStateComponent::MarkForcedToLeave()
+{
+	bForcedToLeave = true;
+}
+
 bool UCSCustomerStateComponent::AssignVillainAction(ECSVillainAction NewAction)
 {
 	// 빌런 해제(None 대입)는 지원하지 X
