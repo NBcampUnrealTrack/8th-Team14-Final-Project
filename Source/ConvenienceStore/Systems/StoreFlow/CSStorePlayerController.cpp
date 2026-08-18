@@ -54,6 +54,12 @@ void ACSStorePlayerController::HandleDailySummaryRequested()
 	if (!IsValid(ActiveDailySummaryWidget)) return;
 	ActiveDailySummaryWidget->OnDailySummaryConfirmed.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryConfirmed);
 	ActiveDailySummaryWidget->AddToViewport();
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDVisibilityBeforeDailySummary = StoreHUDWidget->GetVisibility();
+		bHasStoredHUDVisibilityForDailySummary = true;
+		StoreHUDWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
 	SetGameplayUIInputLock(ActiveDailySummaryWidget, true);
 }
 
@@ -65,6 +71,11 @@ void ACSStorePlayerController::HandleDailySummaryConfirmed()
 		ActiveDailySummaryWidget->RemoveFromParent();
 		ActiveDailySummaryWidget = nullptr;
 	}
+	if (IsValid(StoreHUDWidget) && bHasStoredHUDVisibilityForDailySummary)
+	{
+		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeDailySummary);
+	}
+	bHasStoredHUDVisibilityForDailySummary = false;
 	if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode())) Mode->CompleteDailySummary();
 }
 

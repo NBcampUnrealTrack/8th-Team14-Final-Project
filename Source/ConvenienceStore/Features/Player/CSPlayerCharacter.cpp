@@ -279,6 +279,12 @@ void ACSPlayerCharacter::ToggleBuildMode()
 	CurrentPlayerMode = IsBuildMode()
 		? ECSPlayerMode::Normal
 		: ECSPlayerMode::Build;
+	//B 입력 직후 모드 아이콘과 전환 애니메이션을 동기화합니다.
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController()))
+	{
+		StorePlayerController->SetBuildModeHUDState(IsBuildMode(), true);
+	}
 	ResetBuildRotationInput();
 	ClearBuildPlacementPreview();
 	DestroyPlacementPreview();
