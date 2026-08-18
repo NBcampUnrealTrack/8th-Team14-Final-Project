@@ -16,9 +16,15 @@ public:
 	ACSFacilityDeliveryPortalActor();
 
 	bool IsDeliveryConfigured() const;
+	ECFacilityOrderFailureReason ValidateOrderFacilities(
+		const TArray<FCSFacilityOrderLine>& OrderLines) const;
 	ECFacilityOrderFailureReason SpawnOrderFacilities(
 		const TArray<FCSFacilityOrderLine>& OrderLines,
 		TArray<AActor*>& OutSpawnedFacilities);
+	ECFacilityOrderFailureReason SpawnOrderFacilities(
+		const TArray<FCSFacilityOrderLine>& OrderLines,
+		TArray<AActor*>& OutSpawnedFacilities,
+		int32 StartingSpawnIndex);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery|Facility")
 	void OnFacilityOrderDelivered(int32 SpawnedFacilityCount);

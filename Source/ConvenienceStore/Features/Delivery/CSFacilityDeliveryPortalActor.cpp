@@ -51,11 +51,9 @@ bool ACSFacilityDeliveryPortalActor::IsDeliveryConfigured() const
 		!FacilityActorClasses.IsEmpty();
 }
 
-ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilities(
-	const TArray<FCSFacilityOrderLine>& OrderLines,
-	TArray<AActor*>& OutSpawnedFacilities)
+ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::ValidateOrderFacilities(
+	const TArray<FCSFacilityOrderLine>& OrderLines) const
 {
-	OutSpawnedFacilities.Reset();
 	if (!IsDeliveryConfigured())
 	{
 		return ECFacilityOrderFailureReason::DeliveryUnavailable;
@@ -80,6 +78,35 @@ ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilitie
 		}
 	}
 
+	return ECFacilityOrderFailureReason::None;
+}
+
+ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilities(
+	const TArray<FCSFacilityOrderLine>& OrderLines,
+	TArray<AActor*>& OutSpawnedFacilities)
+{
+	// 기존 호출자는 이전과 동일하게 첫 번째 배송 위치부터 사용합니다.
+	return SpawnOrderFacilities(OrderLines, OutSpawnedFacilities, 0);
+}
+
+ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilities(
+	const TArray<FCSFacilityOrderLine>& OrderLines,
+	TArray<AActor*>& OutSpawnedFacilities,
+	int32 StartingSpawnIndex)
+{
+	OutSpawnedFacilities.Reset();
+	if (StartingSpawnIndex < 0)
+	{
+		return ECFacilityOrderFailureReason::FacilitySpawnFailed;
+	}
+
+	const ECFacilityOrderFailureReason ValidationFailureReason =
+		ValidateOrderFacilities(OrderLines);
+	if (ValidationFailureReason != ECFacilityOrderFailureReason::None)
+	{
+		return ValidationFailureReason;
+	}
+
 	auto DestroySpawnedFacilities = [&OutSpawnedFacilities]()
 	{
 		for (AActor* SpawnedFacility : OutSpawnedFacilities)
@@ -93,7 +120,7 @@ ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilitie
 	};
 
 	UWorld* World = GetWorld();
-	int32 SpawnIndex = 0;
+	int32 SpawnIndex = StartingSpawnIndex;
 	for (const FCSFacilityOrderLine& OrderLine : OrderLines)
 	{
 		if (OrderLine.Quantity == 0)

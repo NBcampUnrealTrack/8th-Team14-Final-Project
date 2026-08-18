@@ -56,6 +56,23 @@ bool TryParseRequiredStoreLevel(FName StoreLevelCondition, int32& OutRequiredLev
 }
 }
 
+void UCSOrderSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+	TrySubscribeToStoreGameState();
+}
+
+void UCSOrderSubsystem::Deinitialize()
+{
+	UnsubscribeFromStoreGameState();
+	PendingProductOrders.Reset();
+	PendingFacilityOrders.Reset();
+	RegisteredDeliveryPortal.Reset();
+	RegisteredFacilityDeliveryPortal.Reset();
+
+	Super::Deinitialize();
+}
+
 FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 	const TArray<FCSOrderLine>& OrderLines) const
 {
@@ -178,50 +195,36 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrder(
 		return Result;
 	}
 
-	TArray<ACSDeliveryCrateActor*> SpawnedCrates;
-	if (!DeliveryPortal->SpawnOrderCrates(OrderLines, SpawnedCrates))
-	{
-		Result.bSuccess = false;
-		Result.FailureReason = ECOrderFailureReason::CrateSpawnFailed;
-		return Result;
-	}
-
-	auto DestroySpawnedCrates = [&SpawnedCrates]()
-	{
-		for (ACSDeliveryCrateActor* SpawnedCrate : SpawnedCrates)
-		{
-			if (IsValid(SpawnedCrate))
-			{
-				SpawnedCrate->Destroy();
-			}
-		}
-		SpawnedCrates.Reset();
-	};
-
 	UWorld* World = GetWorld();
 	ACSStoreGameState* StoreGameState =
 		World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
 	if (StoreGameState == nullptr)
 	{
-		DestroySpawnedCrates();
 		Result.bSuccess = false;
 		Result.FailureReason = ECOrderFailureReason::StoreGameStateUnavailable;
 		return Result;
 	}
+	TrySubscribeToStoreGameState();
 
 	if (!StoreGameState->TrySpendFunds(Result.TotalCost))
 	{
-		DestroySpawnedCrates();
 		Result.bSuccess = false;
 		Result.FailureReason = ECOrderFailureReason::InsufficientFunds;
 		return Result;
 	}
 
+	FCSPendingProductOrder& PendingOrder =
+		PendingProductOrders.AddDefaulted_GetRef();
+	PendingOrder.OrderLines = OrderLines;
+	PendingOrder.DeliveryBusinessDay =
+		StoreGameState->CurrentBusinessDay < MAX_int32
+			? StoreGameState->CurrentBusinessDay + 1
+			: MAX_int32;
+
 	Result.bSuccess = true;
 	Result.FailureReason = ECOrderFailureReason::None;
-	DeliveryPortal->OnOrderDelivered(SpawnedCrates.Num());
 
-	// 자금 차감과 배송 상자 생성까지 전부 끝난 시점에만 방송
+	// 실제 배송과 분리하여 자금 차감 및 Pending 접수가 끝난 시점에 방송합니다.
 	OnOrderPlaced.Broadcast(Result);
 
 	return Result;
@@ -364,34 +367,12 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrder(
 		return Result;
 	}
 
-	TArray<AActor*> SpawnedFacilities;
-	const ECFacilityOrderFailureReason SpawnFailureReason =
-		DeliveryPortal->SpawnOrderFacilities(OrderLines, SpawnedFacilities);
-	auto DestroySpawnedFacilities = [&SpawnedFacilities]()
+	const ECFacilityOrderFailureReason DeliveryValidationFailure =
+		DeliveryPortal->ValidateOrderFacilities(OrderLines);
+	if (DeliveryValidationFailure != ECFacilityOrderFailureReason::None)
 	{
-		for (AActor* SpawnedFacility : SpawnedFacilities)
-		{
-			if (IsValid(SpawnedFacility))
-			{
-				SpawnedFacility->Destroy();
-			}
-		}
-		SpawnedFacilities.Reset();
-	};
-
-	if (SpawnFailureReason != ECFacilityOrderFailureReason::None)
-	{
-		DestroySpawnedFacilities();
 		Result.bSuccess = false;
-		Result.FailureReason = SpawnFailureReason;
-		return Result;
-	}
-
-	if (SpawnedFacilities.Num() != Result.TotalFacilityCount)
-	{
-		DestroySpawnedFacilities();
-		Result.bSuccess = false;
-		Result.FailureReason = ECFacilityOrderFailureReason::SpawnedFacilityInvalid;
+		Result.FailureReason = DeliveryValidationFailure;
 		return Result;
 	}
 
@@ -400,24 +381,30 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrder(
 		World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
 	if (StoreGameState == nullptr)
 	{
-		DestroySpawnedFacilities();
 		Result.bSuccess = false;
 		Result.FailureReason =
 			ECFacilityOrderFailureReason::StoreGameStateUnavailable;
 		return Result;
 	}
+	TrySubscribeToStoreGameState();
 
 	if (!StoreGameState->TrySpendFunds(Result.TotalCost))
 	{
-		DestroySpawnedFacilities();
 		Result.bSuccess = false;
 		Result.FailureReason = ECFacilityOrderFailureReason::InsufficientFunds;
 		return Result;
 	}
 
+	FCSPendingFacilityOrder& PendingOrder =
+		PendingFacilityOrders.AddDefaulted_GetRef();
+	PendingOrder.OrderLines = OrderLines;
+	PendingOrder.DeliveryBusinessDay =
+		StoreGameState->CurrentBusinessDay < MAX_int32
+			? StoreGameState->CurrentBusinessDay + 1
+			: MAX_int32;
+
 	Result.bSuccess = true;
 	Result.FailureReason = ECFacilityOrderFailureReason::None;
-	DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilities.Num());
 	OnFacilityOrderPlaced.Broadcast(Result);
 	return Result;
 }
@@ -431,6 +418,7 @@ bool UCSOrderSubsystem::RegisterDeliveryPortal(ACSDeliveryPortalActor* Portal)
 
 	if (RegisteredDeliveryPortal.Get() == Portal)
 	{
+		TrySubscribeToStoreGameState();
 		return true;
 	}
 
@@ -442,6 +430,7 @@ bool UCSOrderSubsystem::RegisterDeliveryPortal(ACSDeliveryPortalActor* Portal)
 	}
 
 	RegisteredDeliveryPortal = Portal;
+	TrySubscribeToStoreGameState();
 	return true;
 }
 
@@ -463,6 +452,7 @@ bool UCSOrderSubsystem::RegisterFacilityDeliveryPortal(
 
 	if (RegisteredFacilityDeliveryPortal.Get() == Portal)
 	{
+		TrySubscribeToStoreGameState();
 		return true;
 	}
 
@@ -474,6 +464,7 @@ bool UCSOrderSubsystem::RegisterFacilityDeliveryPortal(
 	}
 
 	RegisteredFacilityDeliveryPortal = Portal;
+	TrySubscribeToStoreGameState();
 	return true;
 }
 
@@ -483,5 +474,152 @@ void UCSOrderSubsystem::UnregisterFacilityDeliveryPortal(
 	if (RegisteredFacilityDeliveryPortal.Get() == Portal)
 	{
 		RegisteredFacilityDeliveryPortal.Reset();
+	}
+}
+
+void UCSOrderSubsystem::TrySubscribeToStoreGameState()
+{
+	UWorld* World = GetWorld();
+	ACSStoreGameState* StoreGameState =
+		World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	if (!IsValid(StoreGameState))
+	{
+		return;
+	}
+
+	if (SubscribedStoreGameState != StoreGameState)
+	{
+		UnsubscribeFromStoreGameState();
+		SubscribedStoreGameState = StoreGameState;
+	}
+
+	StoreGameState->OnBusinessDayStarted.AddUniqueDynamic(
+		this,
+		&UCSOrderSubsystem::HandleBusinessDayStarted);
+}
+
+void UCSOrderSubsystem::UnsubscribeFromStoreGameState()
+{
+	if (IsValid(SubscribedStoreGameState))
+	{
+		SubscribedStoreGameState->OnBusinessDayStarted.RemoveDynamic(
+			this,
+			&UCSOrderSubsystem::HandleBusinessDayStarted);
+	}
+
+	SubscribedStoreGameState = nullptr;
+}
+
+void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
+{
+	// 접수 순서대로 처리하며 성공한 실제 생성 수량만 다음 주문의 위치 offset에 반영합니다.
+	int32 ProductSpawnIndex = 0;
+	for (int32 PendingIndex = 0;
+		PendingIndex < PendingProductOrders.Num();)
+	{
+		const FCSPendingProductOrder& PendingOrder =
+			PendingProductOrders[PendingIndex];
+		if (PendingOrder.DeliveryBusinessDay > NewBusinessDay)
+		{
+			++PendingIndex;
+			continue;
+		}
+
+		ACSDeliveryPortalActor* DeliveryPortal = RegisteredDeliveryPortal.Get();
+		if (!IsValid(DeliveryPortal) || !DeliveryPortal->IsDeliveryConfigured())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 상품 Pending 배송 실패: 배송 포탈을 사용할 수 없습니다. 예정일=%d"),
+				PendingOrder.DeliveryBusinessDay);
+			++PendingIndex;
+			continue;
+		}
+
+		TArray<ACSDeliveryCrateActor*> SpawnedCrates;
+		if (!DeliveryPortal->SpawnOrderCrates(
+			PendingOrder.OrderLines,
+			SpawnedCrates,
+			ProductSpawnIndex))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 상품 Pending 배송 Spawn에 실패했습니다. 예정일=%d"),
+				PendingOrder.DeliveryBusinessDay);
+			++PendingIndex;
+			continue;
+		}
+
+		const int32 SpawnedCrateCount = SpawnedCrates.Num();
+		ProductSpawnIndex += SpawnedCrateCount;
+		PendingProductOrders.RemoveAt(PendingIndex);
+		DeliveryPortal->OnOrderDelivered(SpawnedCrateCount);
+	}
+
+	int32 FacilitySpawnIndex = 0;
+	for (int32 PendingIndex = 0;
+		PendingIndex < PendingFacilityOrders.Num();)
+	{
+		const FCSPendingFacilityOrder& PendingOrder =
+			PendingFacilityOrders[PendingIndex];
+		if (PendingOrder.DeliveryBusinessDay > NewBusinessDay)
+		{
+			++PendingIndex;
+			continue;
+		}
+
+		ACSFacilityDeliveryPortalActor* DeliveryPortal =
+			RegisteredFacilityDeliveryPortal.Get();
+		if (!IsValid(DeliveryPortal) || !DeliveryPortal->IsDeliveryConfigured())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 시설 Pending 배송 실패: 배송 포탈을 사용할 수 없습니다. 예정일=%d"),
+				PendingOrder.DeliveryBusinessDay);
+			++PendingIndex;
+			continue;
+		}
+
+		TArray<AActor*> SpawnedFacilities;
+		const ECFacilityOrderFailureReason SpawnFailureReason =
+			DeliveryPortal->SpawnOrderFacilities(
+				PendingOrder.OrderLines,
+				SpawnedFacilities,
+				FacilitySpawnIndex);
+		if (SpawnFailureReason != ECFacilityOrderFailureReason::None)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 시설 Pending 배송 Spawn에 실패했습니다. 예정일=%d, 실패코드=%d"),
+				PendingOrder.DeliveryBusinessDay,
+				static_cast<int32>(SpawnFailureReason));
+			++PendingIndex;
+			continue;
+		}
+
+		int32 ExpectedFacilityCount = 0;
+		for (const FCSFacilityOrderLine& OrderLine : PendingOrder.OrderLines)
+		{
+			ExpectedFacilityCount += OrderLine.Quantity;
+		}
+
+		if (SpawnedFacilities.Num() != ExpectedFacilityCount)
+		{
+			for (AActor* SpawnedFacility : SpawnedFacilities)
+			{
+				if (IsValid(SpawnedFacility))
+				{
+					SpawnedFacility->Destroy();
+				}
+			}
+
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 시설 Pending 배송 수량이 일치하지 않습니다. 예정=%d, 생성=%d"),
+				ExpectedFacilityCount,
+				SpawnedFacilities.Num());
+			++PendingIndex;
+			continue;
+		}
+
+		const int32 SpawnedFacilityCount = SpawnedFacilities.Num();
+		FacilitySpawnIndex += SpawnedFacilityCount;
+		PendingFacilityOrders.RemoveAt(PendingIndex);
+		DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilityCount);
 	}
 }
