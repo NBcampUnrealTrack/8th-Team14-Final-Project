@@ -4,6 +4,7 @@
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "Features/Shelves/CSShelfActor.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
@@ -78,6 +79,7 @@ void UCSTutorialSubsystem::Deinitialize()
 	ClearAutoAdvanceTimer();
 	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
@@ -89,6 +91,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 {
 	StepRows.Reset();
 	CleanTrashDisposedCount = 0;
+	StockShelvesPlacedCount = 0;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -116,6 +119,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 
 	CreateTutorialWidgets(GameMode);
 	SubscribeToLevelDisposables();
+	SubscribeToLevelShelves();
 	TrySubscribeToPlayerController();
 
 	CurrentStepIndex = 0;
@@ -185,6 +189,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
@@ -449,6 +454,41 @@ void UCSTutorialSubsystem::UnsubscribeFromLevelDisposables()
 	SubscribedTrashCans.Reset();
 }
 
+void UCSTutorialSubsystem::SubscribeToLevelShelves()
+{
+	if (GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	// 레벨에 배치된 진열대를 전부 찾아 구독
+	// 진열대는 튜토리얼의 존재를 모르므로 서브시스템이 먼저 찾아가서 연결
+	for (TActorIterator<ACSShelfActor> It(GetWorld()); It; ++It)
+	{
+		ACSShelfActor* Shelf = *It;
+		if (!IsValid(Shelf))
+		{
+			continue;
+		}
+
+		Shelf->OnItemPlaced.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleShelfItemPlaced);
+		SubscribedShelves.AddUnique(Shelf);
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromLevelShelves()
+{
+	for (ACSShelfActor* Shelf : SubscribedShelves)
+	{
+		if (IsValid(Shelf))
+		{
+			Shelf->OnItemPlaced.RemoveDynamic(this, &UCSTutorialSubsystem::HandleShelfItemPlaced);
+		}
+	}
+
+	SubscribedShelves.Reset();
+}
+
 void UCSTutorialSubsystem::TrySubscribeToPlayerController()
 {
 	// 그 사이 튜토리얼이 이미 끝났다면 재시도를 멈춤 (cs.TNext 사용해서 조기 종료된 경우)
@@ -583,6 +623,13 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 		SubscribedTrashCans.AddUnique(TrashCan);
 	}
 
+	// 같은 이유로 새로 배치된 진열대도 여기서 구독을 걸어줌
+	if (ACSShelfActor* Shelf = Cast<ACSShelfActor>(FacilityActor))
+	{
+		Shelf->OnItemPlaced.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleShelfItemPlaced);
+		SubscribedShelves.AddUnique(Shelf);
+	}
+
 	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
 		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceFacility)
 	{
@@ -650,4 +697,25 @@ void UCSTutorialSubsystem::HandleTrashDisposed(AActor* DisposedItem, int32 Total
 	NotifyObjectiveProgress(
 		ECSTutorialStepId::CleanTrash,
 		CleanTrashDisposedCount);
+}
+
+void UCSTutorialSubsystem::HandleShelfItemPlaced(AActor* PlacedItem, int32 SlotIndex)
+{
+	(void)SlotIndex;
+
+	if (!IsValid(PlacedItem) ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::StockShelves)
+	{
+		return;
+	}
+
+	if (StockShelvesPlacedCount < MAX_int32)
+	{
+		++StockShelvesPlacedCount;
+	}
+
+	NotifyObjectiveProgress(
+		ECSTutorialStepId::StockShelves,
+		StockShelvesPlacedCount);
 }

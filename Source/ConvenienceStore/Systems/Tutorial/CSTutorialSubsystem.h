@@ -8,6 +8,7 @@
 class UDataTable;
 class ACSStoreGameMode;
 class ACSTrashCanActor;
+class ACSShelfActor;
 class ACSPlayerCharacter;
 class ACSStorePlayerController;
 class UUserWidget;
@@ -101,6 +102,12 @@ protected:
 	// 구독했던 상설 시설 방송을 전부 해제
 	void UnsubscribeFromLevelDisposables();
 
+	// 레벨에 있는 진열대를 찾아 상품 배치 방송을 구독
+	void SubscribeToLevelShelves();
+
+	// 구독했던 진열대 방송을 전부 해제
+	void UnsubscribeFromLevelShelves();
+
 	// 튜토리얼이 켜진 맵에서 아직 스폰되지 않았을 수 있는 ACSStorePlayerController를 찾아 구독을 시도
 	// 찾지 못하면 짧은 텀을 두고 다시 시도
 	void TrySubscribeToPlayerController();
@@ -117,6 +124,9 @@ protected:
 
 	UFUNCTION()
 	void HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount);
+
+	UFUNCTION()
+	void HandleShelfItemPlaced(AActor* PlacedItem, int32 SlotIndex);
 
 	// PlayerController의 OnGameplayUIInputLockChanged를 구독해 호출됨
 	// 지금 스텝이 기다리는 위젯이 맞는지 확인 후 열림/닫힘 조건에 맞으면 NotifyStepCompleted 호출
@@ -136,6 +146,7 @@ private:
 
 	int32 CurrentStepIndex = INDEX_NONE;
 	int32 CleanTrashDisposedCount = 0;
+	int32 StockShelvesPlacedCount = 0;
 	bool bTutorialCompleted = false;
 	FTimerHandle AutoAdvanceTimerHandle;
 
@@ -151,6 +162,10 @@ private:
 	// Deinitialize/CompleteTutorial에서 RemoveDynamic으로 해제하기 위해 구독 목록을 기억해 둠
 	UPROPERTY()
 	TArray<TObjectPtr<ACSTrashCanActor>> SubscribedTrashCans;
+
+	// 위와 같은 이유로 구독한 진열대 목록을 기억해 둠
+	UPROPERTY()
+	TArray<TObjectPtr<ACSShelfActor>> SubscribedShelves;
 
 	// 지연 구독으로 찾은 플레이어 컨트롤러 / 구독 해제 시 사용
 	UPROPERTY()
