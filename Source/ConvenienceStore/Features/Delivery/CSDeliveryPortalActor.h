@@ -20,6 +20,10 @@ public:
 	bool SpawnOrderCrates(
 		const TArray<FCSOrderLine>& OrderLines,
 		TArray<ACSDeliveryCrateActor*>& OutSpawnedCrates);
+	bool SpawnOrderCrates(
+		const TArray<FCSOrderLine>& OrderLines,
+		TArray<ACSDeliveryCrateActor*>& OutSpawnedCrates,
+		int32 StartingSpawnIndex);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery")
 	void OnOrderDelivered(int32 SpawnedCrateCount);
