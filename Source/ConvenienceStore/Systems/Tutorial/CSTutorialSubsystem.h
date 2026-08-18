@@ -87,8 +87,14 @@ protected:
 	// 현재 스텝의 HighlightMarkerTag를 가진 액터를 레벨에서 찾아 마커를 켬
 	void UpdateHighlightMarkersForCurrentStep();
 
+	// 지금 스텝이 DeliveryArrived이고 아직 스폰 안 했으면 매장 밖 스폰 지점에 튜토리얼 전용 선반을 하나 만듦
+	void TrySpawnTutorialShelfDelivery();
+
 	// 현재 켜져 있는 마커를 전부 끄고 목록을 비움
 	void HideAllActiveMarkers();
+
+	// [디버그 전용] CleanTrash 스텝을 cs.TNext로 건너뛸 때 레벨에 남은 쓰레기를 전부 정리
+	void DebugDestroyRemainingTrash();
 
 	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
 	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
@@ -148,6 +154,7 @@ private:
 	int32 CleanTrashDisposedCount = 0;
 	int32 StockShelvesPlacedCount = 0;
 	bool bTutorialCompleted = false;
+	bool bTutorialShelfSpawned = false;
 	FTimerHandle AutoAdvanceTimerHandle;
 
 	UPROPERTY()

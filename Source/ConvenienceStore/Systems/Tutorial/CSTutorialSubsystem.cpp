@@ -3,8 +3,10 @@
 #include "Blueprint/UserWidget.h"
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
+#include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Shelves/CSShelfActor.h"
+#include "Features/Tutorial/CSTutorialShelfSpawnPoint.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
@@ -92,6 +94,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	StepRows.Reset();
 	CleanTrashDisposedCount = 0;
 	StockShelvesPlacedCount = 0;
+	bTutorialShelfSpawned = false;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -126,6 +129,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
+	TrySpawnTutorialShelfDelivery();
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -148,6 +152,7 @@ void UCSTutorialSubsystem::AdvanceStep()
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
+	TrySpawnTutorialShelfDelivery();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -205,10 +210,8 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
 	OnTutorialStepChanged.Broadcast(CurrentRow);
 
-	if (CurrentRow.ObjectiveGoal > 0)
-	{
-		OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
-	}
+	// ObjectiveGoal이 0이어도 방송해야 함
+	OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
 }
 
 void UCSTutorialSubsystem::StartAutoAdvanceTimerIfNeeded()
@@ -291,6 +294,66 @@ void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
 	}
 }
 
+void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
+{
+	if (bTutorialShelfSpawned ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::DeliveryArrived)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	ACSStoreGameMode* GameMode = World->GetAuthGameMode<ACSStoreGameMode>();
+	const TSubclassOf<AActor> ShelfClass = IsValid(GameMode) ? GameMode->GetTutorialShelfFacilityClass() : nullptr;
+	if (ShelfClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] TutorialShelfFacilityClass가 지정되지 않아 배송 선반을 스폰하지 못했습니다."));
+		return;
+	}
+
+	// 레벨에서 ACSTutorialShelfSpawnPoint 타입 액터를 찾아 그 위치에 스폰
+	ACSTutorialShelfSpawnPoint* SpawnPoint = nullptr;
+	for (TActorIterator<ACSTutorialShelfSpawnPoint> It(World); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			SpawnPoint = *It;
+			break;
+		}
+	}
+
+	if (SpawnPoint == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] ACSTutorialShelfSpawnPoint를 레벨에서 찾지 못했습니다. BP_TutorialShelfSpawnPoint를 배치해주세요."));
+		return;
+	}
+
+	AActor* SpawnedShelf = World->SpawnActor<AActor>(ShelfClass, SpawnPoint->GetActorTransform());
+
+	// 발주 포탈 시스템과 무관하게 튜토리얼이 직접 미설치 상태로 초기화
+	// (기존 건축 시스템의 TryPickUpBuildableFacility로 바로 주울 수 있는 상태가 됨)
+	if (IsValid(SpawnedShelf) && SpawnedShelf->GetClass()->ImplementsInterface(UCSBuildableFacility::StaticClass()))
+	{
+		ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(SpawnedShelf);
+	}
+	else if (IsValid(SpawnedShelf))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] TutorialShelfFacilityClass(%s)가 ICSBuildableFacility를 구현하지 않습니다."),
+			*ShelfClass->GetName());
+	}
+
+	bTutorialShelfSpawned = true;
+}
+
 void UCSTutorialSubsystem::HideAllActiveMarkers()
 {
 	for (UCSTutorialMarkerComponent* MarkerComponent : ActiveMarkerComponents)
@@ -340,7 +403,30 @@ void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int
 
 void UCSTutorialSubsystem::DebugForceAdvanceStep()
 {
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::CleanTrash)
+	{
+		DebugDestroyRemainingTrash();
+	}
+
 	AdvanceStep();
+}
+
+void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			It->Destroy();
+		}
+	}
 }
 
 void UCSTutorialSubsystem::CreateTutorialWidgets(ACSStoreGameMode* GameMode)

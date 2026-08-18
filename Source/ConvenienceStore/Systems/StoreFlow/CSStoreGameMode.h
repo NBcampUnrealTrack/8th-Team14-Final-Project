@@ -60,6 +60,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
 	TSubclassOf<UCSTutorialObjectiveWidgetBase> GetTutorialObjectiveWidgetClass() const;
 
+	// 튜토리얼 전용: DeliveryArrived 스텝에서 매장 밖에 스폰할 선반 액터 클래스
+	// ICSBuildableFacility를 구현하는 클래스여야 함 (그렇지 않으면 스폰은 되지만 경고 로그만 남고 무시됨)
+	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
+	TSubclassOf<AActor> GetTutorialShelfFacilityClass() const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -115,6 +120,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
 	TSubclassOf<UCSTutorialObjectiveWidgetBase> TutorialObjectiveWidgetClass;
+
+	// 튜토리얼 전용: DeliveryArrived 스텝에서 스폰할 선반 클래스
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
+	TSubclassOf<AActor> TutorialShelfFacilityClass;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;
