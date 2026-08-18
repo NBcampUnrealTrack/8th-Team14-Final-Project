@@ -36,6 +36,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Identity")
 	FText DisplayName;
 
+	// [한길] 종족별 신체 크기입니다. 현재 공통 손님 크기가 4.0이므로 여기서는 1을 기본값으로 사용합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Physical",
+		meta = (ClampMin = "0.1", UIMin = "0.1"))
+	float CharacterScale = 1.0f;
+
 	// 스폰 - 값은 여기 두고 실제 손님 생성은 동선 담당 파트가 읽어 쓰기 - 백무송님
 	// 손님 100명 중 이 종족이 몇 명인가 -> 6종족 합계가 1.0이 되게 넣음
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Spawn",

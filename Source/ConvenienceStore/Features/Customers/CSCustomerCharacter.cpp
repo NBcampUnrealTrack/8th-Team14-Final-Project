@@ -9,6 +9,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
 
 // Sets default values
@@ -70,6 +71,8 @@ void ACSCustomerCharacter::BeginPlay()
 		BasketActor->AttachToComponent(
 			BasketAnchor,
 			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		// 손님 크기가 바뀌어도 장바구니는 원래 크기를 유지하고 위치·회전만 따라가도록 설정합니다.
+		BasketActor->GetRootComponent()->SetAbsolute(false, false, true);
 	}
 }
 
@@ -122,6 +125,8 @@ void ACSCustomerCharacter::ShowShoppingBag()
 		ShoppingBagActor->AttachToComponent(
 			BasketAnchor,
 			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		// 결제 후 생성하는 쇼핑백도 손님 스케일을 상속하지 않도록 같은 규칙을 적용합니다.
+		ShoppingBagActor->GetRootComponent()->SetAbsolute(false, false, true);
 	}
 }
 
