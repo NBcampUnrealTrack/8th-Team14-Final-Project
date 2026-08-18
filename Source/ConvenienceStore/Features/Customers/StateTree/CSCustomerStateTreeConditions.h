@@ -216,3 +216,38 @@ struct FCSCond_ShouldForceLeave : public FStateTreeConditionCommonBase
 
 	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
 };
+
+// =====================================================================
+// Customer: Has Entered Store
+// 이 손님이 매장 안에 들어온 적이 있는지 판정.
+//
+// Approach 상태에 Invert로 걸어서
+//   - 아직 안 들어온 손님만 가게 앞으로 걸어가게 하고
+//   - 이미 들어온 손님은 문이 닫혀도 밖으로 나가지 않게 합니다.
+// =====================================================================
+USTRUCT()
+struct FCSCond_HasEnteredStoreInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bInvert = false;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Has Entered Store"))
+struct FCSCond_HasEnteredStore : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_HasEnteredStoreInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};

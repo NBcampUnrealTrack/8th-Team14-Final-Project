@@ -12,6 +12,7 @@ class UArrowComponent;
 class USceneComponent;
 class ACSCustomerBasketActor;
 class ACSCustomerShoppingBagActor;
+class UCSPurchaseDecisionComponent;
 struct FCSSelectProduct;
 
 UCLASS()
@@ -52,6 +53,13 @@ protected:
 	//이 손님 개인의 상태(고른 상품, 방문한 진열대, 계산 완료 여부, 퇴장 지점)를 담고 있는 컴포넌트
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	TObjectPtr<UCSCustomerStateComponent> CustomerState;
+
+	// [백록담님 확인해야하는 상황] C++ 생성자에서 만드는 이유
+	//   스포너가 SpawnActorDeferred로 BeginPlay를 미룬 뒤 초기값을 주입하는데,
+	//   BP 컴포넌트는 그 보류 구간에 아직 존재하지 않는다.
+	//   BP에 두면 Archetype / 시드 / 빌런 배정이 통째로 건너뛰어진다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	TObjectPtr<UCSPurchaseDecisionComponent> PurchaseDecision;
 
 	// 장바구니를 손 위치에 붙이기 위한 기준 컴포넌트입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Basket")

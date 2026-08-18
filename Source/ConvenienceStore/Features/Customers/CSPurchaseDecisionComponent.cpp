@@ -366,3 +366,8 @@ void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
 {
 	RandomStream.Initialize(Seed);
 }
+
+bool UCSPurchaseDecisionComponent::RollChance(float Chance) const
+{
+	return RandomStream.FRand() < FMath::Clamp(Chance, 0.0f, 1.0f);
+}

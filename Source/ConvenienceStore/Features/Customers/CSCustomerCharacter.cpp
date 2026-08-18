@@ -11,6 +11,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
+#include "Features//Customers/CSPurchaseDecisionComponent.h"
 
 // Sets default values
 ACSCustomerCharacter::ACSCustomerCharacter()
@@ -19,6 +20,7 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	PrimaryActorTick.bCanEverTick = false;
 
 	CustomerState = CreateDefaultSubobject<UCSCustomerStateComponent>(TEXT("CustomerState"));
+	PurchaseDecision = CreateDefaultSubobject<UCSPurchaseDecisionComponent>(TEXT("PurchaseDecision"));
 	BasketAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("BasketAnchor"));
 	BasketAnchor->SetupAttachment(GetMesh());
 	// 블루프린트에서 고객 메시와 애니메이션에 맞춰 손 위치로 조정합니다.
