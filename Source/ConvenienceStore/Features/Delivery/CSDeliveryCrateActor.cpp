@@ -40,6 +40,20 @@ void ACSDeliveryCrateActor::BeginPlay()
 		CrateMesh->SetGenerateOverlapEvents(true);
 	}
 
+	const bool bRuntimeCrateIsUninitialized =
+		ProductRow.DataTable == nullptr &&
+		ProductRow.RowName.IsNone() &&
+		RemainingQuantity <= 0;
+	const bool bHasValidPlacedInitialValues =
+		IsValid(PlacedProductRow.DataTable) &&
+		!PlacedProductRow.RowName.IsNone() &&
+		PlacedQuantity > 0;
+	if (bRuntimeCrateIsUninitialized && bHasValidPlacedInitialValues)
+	{
+		// 기존 InitializeCrate를 재사용하며, 발주로 이미 초기화된 상자는 위 조건에서 제외됩니다.
+		InitializeCrate(PlacedProductRow, PlacedQuantity);
+	}
+
 	EnsureFreshnessRuntimeStateInitialized();
 	CacheSpoiledVFXComponent();
 	SpoiledVFXStoreGameState = GetWorld() != nullptr

@@ -26,7 +26,7 @@ enum class ECSTutorialPromptType : uint8
 
 // 튜토리얼 스텝 이름표
 // 진행 순서는 이 목록의 순서가 아니라 DT_TutorialStep의 행 순서로 정해짐
-// (건축 모드 단계(4~5)는 종원님이 올리시면 추가 예정)
+// 건축 관련 4~5단계도 실제 건축 성공 이벤트를 통해 진행됨
 UENUM(BlueprintType)
 enum class ECSTutorialStepId : uint8
 {
@@ -42,7 +42,11 @@ enum class ECSTutorialStepId : uint8
 	ApproachLedger,       // 12: 장부 접근
 	SetProductPrice,      // 13: 가격 설정
 	CloseLedgerUI,        // 14: 장부 닫기
-	OpenSign              // 15: 입간판으로 영업 시작
+	OpenSign,             // 15: 입간판으로 영업 시작
+
+	// 기존 직렬화 값을 보존하기 위해 신규 ID는 끝에 추가하며, 실제 진행 순서는 DataTable 행을 따름
+	EnterBuildMode,       // 4: 건축 모드 진입
+	PlaceFacility         // 5: 시설 배치
 };
 
 // DT_TutorialStep의 한 행

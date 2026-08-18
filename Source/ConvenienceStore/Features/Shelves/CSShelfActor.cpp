@@ -6,6 +6,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
 ACSShelfActor::ACSShelfActor()
 {
@@ -39,6 +40,20 @@ void ACSShelfActor::BeginPlay()
 	SpawnInitialProducts();
 }
 
+void ACSShelfActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+			World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			CustomerRuntimeSubsystem->UnregisterShelf(this);
+		}
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 FName ACSShelfActor::GetFacilityId_Implementation() const
 {
 	return FacilityRow.RowName;
@@ -52,11 +67,28 @@ bool ACSShelfActor::IsFacilityInstalled_Implementation() const
 void ACSShelfActor::InitializeAsUninstalledFacility_Implementation()
 {
 	bIsInstalled = false;
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+			World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			CustomerRuntimeSubsystem->UnregisterShelf(this);
+		}
+	}
 	SetFacilityPhysicsEnabled(true);
 }
 
 void ACSShelfActor::PrepareForBuildPickup_Implementation()
 {
+	bIsInstalled = false;
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+			World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			CustomerRuntimeSubsystem->UnregisterShelf(this);
+		}
+	}
 	SetFacilityPhysicsEnabled(false);
 }
 
@@ -64,6 +96,14 @@ void ACSShelfActor::FinalizeBuildPlacement_Implementation()
 {
 	SetFacilityPhysicsEnabled(false);
 	bIsInstalled = true;
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+			World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			CustomerRuntimeSubsystem->RegisterShelf(this);
+		}
+	}
 }
 
 void ACSShelfActor::SpawnInitialProducts()

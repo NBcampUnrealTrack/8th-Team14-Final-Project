@@ -8,6 +8,7 @@
 class UDataTable;
 class ACSStoreGameMode;
 class ACSTrashCanActor;
+class ACSPlayerCharacter;
 class ACSStorePlayerController;
 class UUserWidget;
 class UCSTutorialMarkerComponent;
@@ -110,6 +111,10 @@ protected:
 	// SubscribeToPlayerController에서 걸었던 구독을 해제
 	void UnsubscribeFromPlayerController();
 
+	// PlayerCharacter가 방송하는 범용 건축 성공 이벤트를 구독/해제
+	void SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter);
+	void UnsubscribeFromPlayerCharacter();
+
 	UFUNCTION()
 	void HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount);
 
@@ -117,6 +122,12 @@ protected:
 	// 지금 스텝이 기다리는 위젯이 맞는지 확인 후 열림/닫힘 조건에 맞으면 NotifyStepCompleted 호출
 	UFUNCTION()
 	void HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked);
+
+	UFUNCTION()
+	void HandleBuildModeChanged(bool bIsBuildMode);
+
+	UFUNCTION()
+	void HandleBuildableFacilityPlaced(AActor* FacilityActor);
 
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠
@@ -144,6 +155,10 @@ private:
 	// 지연 구독으로 찾은 플레이어 컨트롤러 / 구독 해제 시 사용
 	UPROPERTY()
 	TObjectPtr<ACSStorePlayerController> SubscribedPlayerController;
+
+	// 건축 모드 진입/시설 배치 이벤트의 RemoveDynamic을 위해 구독 대상을 보관
+	UPROPERTY()
+	TObjectPtr<ACSPlayerCharacter> SubscribedPlayerCharacter;
 
 	// TrySubscribeToPlayerController()가 재시도에 사용하는 타이머 핸들
 	FTimerHandle PlayerControllerSubscribeRetryTimerHandle;

@@ -71,6 +71,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	void RefreshShelves();
 
+	// 설치가 완료된 진열대를 손님 방문 후보에 중복 없이 등록합니다.
+	void RegisterShelf(ACSShelfActor* Shelf);
+
+	// 이동 또는 제거되는 진열대를 손님 방문 후보에서 안전하게 해제합니다.
+	void UnregisterShelf(ACSShelfActor* Shelf);
+
 	// 등록된 진열대 목록 Get 함수, 소비심리 파트가 목표를 정할 때 이 목록 쓰일 가능성 높음
 	const TArray<TObjectPtr<AActor>>& GetShelves() const;
 

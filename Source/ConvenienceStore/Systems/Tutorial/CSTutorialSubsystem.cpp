@@ -3,6 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Engine/DataTable.h"
 #include "EngineUtils.h"
+#include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
@@ -77,6 +78,7 @@ void UCSTutorialSubsystem::Deinitialize()
 	ClearAutoAdvanceTimer();
 	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 
@@ -183,6 +185,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	OnTutorialCompleted.Broadcast();
 
 	UnsubscribeFromLevelDisposables();
+	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	CloseTutorialWidgets();
 }
@@ -459,20 +462,28 @@ void UCSTutorialSubsystem::TrySubscribeToPlayerController()
 	}
 
 	ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(World->GetFirstPlayerController());
+	ACSPlayerCharacter* PlayerCharacter = nullptr;
 	if (IsValid(PlayerController))
 	{
-		PlayerControllerSubscribeAttempts = 0;
+		// Character 준비 여부와 무관하게 기존 UI 열림/닫힘 이벤트는 즉시 구독합니다.
 		SubscribeToPlayerController(PlayerController);
+		PlayerCharacter = Cast<ACSPlayerCharacter>(PlayerController->GetPawn());
+	}
+
+	if (IsValid(PlayerCharacter))
+	{
+		PlayerControllerSubscribeAttempts = 0;
+		SubscribeToPlayerCharacter(PlayerCharacter);
 		return;
 	}
 
-	// 아직 컨트롤러가 스폰되지 않음 -> 짧은 텀 후 다시 시도
+	// 아직 컨트롤러 또는 플레이어 캐릭터가 준비되지 않음 -> 기존 짧은 재시도 흐름을 사용
 	// 정상적인 경우 한두 번 안에 찾아지지만 혹시 모를 상황을 대비해 재시도 횟수를 제한
 	++PlayerControllerSubscribeAttempts;
 	if (PlayerControllerSubscribeAttempts > MaxPlayerControllerSubscribeAttempts)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[Tutorial] PlayerController를 %d회 시도해도 찾지 못해 구독을 포기합니다."),
+			TEXT("[Tutorial] PlayerController/PlayerCharacter를 %d회 시도해도 찾지 못해 구독을 포기합니다."),
 			MaxPlayerControllerSubscribeAttempts);
 		return;
 	}
@@ -489,7 +500,7 @@ void UCSTutorialSubsystem::SubscribeToPlayerController(ACSStorePlayerController*
 {
 	SubscribedPlayerController = PlayerController;
 
-	PlayerController->OnGameplayUIInputLockChanged.AddDynamic(
+	PlayerController->OnGameplayUIInputLockChanged.AddUniqueDynamic(
 		this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
 }
 
@@ -507,6 +518,65 @@ void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
 	}
 
 	SubscribedPlayerController = nullptr;
+}
+
+void UCSTutorialSubsystem::SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter)
+{
+	if (!IsValid(PlayerCharacter))
+	{
+		return;
+	}
+
+	if (SubscribedPlayerCharacter != PlayerCharacter)
+	{
+		UnsubscribeFromPlayerCharacter();
+		SubscribedPlayerCharacter = PlayerCharacter;
+	}
+
+	// PlayerCharacter는 범용 성공 이벤트만 방송하고, 튜토리얼 4~5단계 완료 판단은 여기서 담당합니다.
+	PlayerCharacter->OnBuildModeChanged.AddUniqueDynamic(
+		this, &UCSTutorialSubsystem::HandleBuildModeChanged);
+	PlayerCharacter->OnBuildableFacilityPlaced.AddUniqueDynamic(
+		this, &UCSTutorialSubsystem::HandleBuildableFacilityPlaced);
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromPlayerCharacter()
+{
+	if (IsValid(SubscribedPlayerCharacter))
+	{
+		SubscribedPlayerCharacter->OnBuildModeChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleBuildModeChanged);
+		SubscribedPlayerCharacter->OnBuildableFacilityPlaced.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleBuildableFacilityPlaced);
+	}
+
+	SubscribedPlayerCharacter = nullptr;
+}
+
+void UCSTutorialSubsystem::HandleBuildModeChanged(bool bIsBuildMode)
+{
+	if (!bIsBuildMode ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::EnterBuildMode)
+	{
+		return;
+	}
+
+	// 4단계는 범용 Build Mode 진입 성공 이벤트를 받았을 때만 완료합니다.
+	NotifyStepCompleted(ECSTutorialStepId::EnterBuildMode);
+}
+
+void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
+{
+	if (!IsValid(FacilityActor) ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceFacility)
+	{
+		return;
+	}
+
+	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료합니다.
+	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
 }
 
 void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
