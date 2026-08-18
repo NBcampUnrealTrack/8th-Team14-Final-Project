@@ -2200,13 +2200,9 @@ void ACSPlayerCharacter::RefreshShelfPlacementHighlights()
 			continue;
 		}
 
-		FTransform UnusedSlotTransform;
+		// 외곽선은 특정 단이 아니라 진열대 전체에 빈 슬롯이 있는지를 기준으로 유지합니다.
 		const ECSShelfPlacementPreviewState PreviewState =
-			ICSShelfPlaceable::Execute_GetPlacementPreviewState(
-				ShelfActor,
-				PlacementItem,
-				ShelfActor->GetActorLocation(),
-				UnusedSlotTransform);
+			ShelfActor->GetPlacementHighlightState(PlacementItem);
 		ShelfActor->SetPlacementHighlight(PreviewState);
 	}
 }

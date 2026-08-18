@@ -100,6 +100,9 @@ public:
 	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
 	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
 
+	// 조준 위치와 무관하게 진열대 전체에 배치 가능한 슬롯이 있는지 기준으로 외곽선 상태를 반환합니다.
+	ECSShelfPlacementPreviewState GetPlacementHighlightState(AActor* ItemActor) const;
+
 	// 선택적 손님 접근 마커가 있으면 해당 컴포넌트의 월드 위치를 반환합니다.
 	bool TryGetCustomerBrowseLocation(FVector& OutLocation) const;
 
@@ -108,6 +111,9 @@ public:
 	FCSOnItemPlaced OnItemPlaced;
 
 protected:
+	// 조준 위치와 가장 가까운 상단·중단·하단을 반환합니다. 이미 찬 슬롯도 단 판정에는 사용합니다.
+	ECSShelfSlotLevel FindAimedSlotLevel(FVector PlacementHint) const;
+	// 조준한 단 안에서만 가장 가까운 빈 슬롯을 반환합니다.
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
 	// Arrow Component 이름에서 Slot_00 형식의 슬롯 번호를 읽어옵니다.
 	bool TryGetSlotMarkerIndex(const UArrowComponent* SlotMarker, int32& OutSlotIndex) const;
