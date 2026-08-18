@@ -55,12 +55,33 @@ void UCSCustomerRuntimeSubsystem::RefreshShelves()
 	// 진열대가 스스로 등록하는 방식이 아니라 여기서 찾아서 수집한다.
 	for (TActorIterator<ACSShelfActor> It(World); It; ++It)
 	{
-		ACSShelfActor* Shelf = *It;
-		if (Shelf != nullptr)
-		{
-			Shelves.Add(Shelf);
-		}
+		RegisterShelf(*It);
 	}
+}
+
+void UCSCustomerRuntimeSubsystem::RegisterShelf(ACSShelfActor* Shelf)
+{
+	Shelves.RemoveAll([](const TObjectPtr<AActor>& RegisteredShelf)
+	{
+		return !IsValid(RegisteredShelf);
+	});
+
+	if (!IsValid(Shelf) ||
+		Shelf->IsActorBeingDestroyed() ||
+		!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
+	{
+		return;
+	}
+
+	Shelves.AddUnique(Shelf);
+}
+
+void UCSCustomerRuntimeSubsystem::UnregisterShelf(ACSShelfActor* Shelf)
+{
+	Shelves.RemoveAll([Shelf](const TObjectPtr<AActor>& RegisteredShelf)
+	{
+		return !IsValid(RegisteredShelf) || RegisteredShelf.Get() == Shelf;
+	});
 }
 
 const TArray<TObjectPtr<AActor>>& UCSCustomerRuntimeSubsystem::GetShelves() const
@@ -98,7 +119,9 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObje
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (Shelf == nullptr)
+		if (!IsValid(Shelf) ||
+			!Shelf->Implements<UCSBuildableFacility>() ||
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
 		{
 			continue;
 		}
@@ -138,7 +161,9 @@ bool UCSCustomerRuntimeSubsystem::HasUnvisitedShelf(const TArray<TObjectPtr<AAct
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (Shelf == nullptr)
+		if (!IsValid(Shelf) ||
+			!Shelf->Implements<UCSBuildableFacility>() ||
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
 		{
 			continue;
 		}
@@ -667,7 +692,9 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (Shelf == nullptr)
+		if (!IsValid(Shelf) ||
+			!Shelf->Implements<UCSBuildableFacility>() ||
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
 		{
 			continue;
 		}
