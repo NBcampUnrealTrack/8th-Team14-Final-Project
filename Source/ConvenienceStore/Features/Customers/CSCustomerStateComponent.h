@@ -80,6 +80,21 @@ public:
 	// 강제 퇴장 확정 시 호출.
 	void MarkForcedToLeave();
 
+	// 이 손님이 매장 안에 들어온 적이 있는지.
+	//
+	// 두 가지 용도가 있습니다.
+	//  1) 통계 : 그냥 지나간 행인을 구매 통계에서 제외
+	//  2) 입장 : 이미 들어온 손님이 다시 가게 앞으로 나가지 않게 함
+	// 강제 퇴장 대상인가와는 무관
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	bool bHasEnteredStore = false;
+
+	UFUNCTION(BlueprintPure, Category = "Customer")
+	bool HasEnteredStore() const;
+
+	// 가게 앞 판정을 통과해 입장이 확정될 때 호출합니다.
+	void MarkEnteredStore();
+
 	// 빌런 -------
 
 	// 스폰 시점에 확정된 이 손님의 빌런 행동. None이면 일반 손님.

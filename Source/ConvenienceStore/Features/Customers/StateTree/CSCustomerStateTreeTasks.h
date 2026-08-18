@@ -384,3 +384,59 @@ struct FCSTask_PrepareForcedLeave : public FStateTreeTaskCommonBase
 	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
 };
+
+// =====================================================================
+// ApproachStorefront : 스폰 지점에서 가게 앞까지 걸어가 입장 여부를 판정
+//
+// [핵심] 가게 앞에 도착하는 순간 태스크가 끝
+// StateTree는 조건이 바뀌었다고 상태를 자동으로 벗어나지 않으므로,
+// 도착 = 판정 = 상태 종료를 한 지점에 모아야 개점에 반응할 수 있습니다.
+//
+// 스폰 시점이 아니라 도착 시점에 굴리는 이유:
+//   스폰 시 확정하면 걸어오는 도중에 문이 열려도 이미 "통과"로 정해져 그냥 지나감
+//   반대로 걸어오는 도중에 문이 닫히면 닫힌 가게에 들어가게 됩니다.
+//
+// 손님마다 스폰 시각이 달라 가게 앞 도착 시점이 자연히 어긋나므로,
+// 개점 순간 전원이 동시에 몰리지 않고 한 명씩 순차적으로 들어옴
+//
+// 판정은 손님당 한 번, 지나친 뒤에는 문이 열려도 돌아오지 않음
+// 성공(Succeeded) = 매장 진입 결정 → Root 재선택 → Shopping
+// 실패(Failed)    = 그냥 지나감    → Leave → ExitPoint로 계속 걸어감
+// =====================================================================
+
+USTRUCT()
+struct FCSTask_ApproachStorefrontInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	float AcceptanceRadius = 80.0f;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Approach Storefront"))
+struct FCSTask_ApproachStorefront : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSTask_ApproachStorefrontInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
+		const float DeltaTime) const override;
+
+	virtual void ExitState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+};

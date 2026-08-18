@@ -552,3 +552,107 @@ EStateTreeRunStatus FCSTask_PrepareForcedLeave::EnterState(FStateTreeExecutionCo
 
 	return EStateTreeRunStatus::Succeeded;
 }
+
+// =====================================================================
+// ApproachStorefront
+// =====================================================================
+
+EStateTreeRunStatus FCSTask_ApproachStorefront::EnterState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+	if (State == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// [ForceLeave 연동 가드]
+	// 이미 강제 퇴장이 확정된 손님은 가게 앞으로 되돌아가면 안 된다.
+	//
+	// 이 가드가 필요한 경로: Leave 상태가 Failed를 반환하면 Root로 돌아가는데,
+	// 그때 ForceLeave는 bForcedToLeave 때문에 false가 되고
+	// Approach는 HasEnteredStore가 false라 true가 되어 여기로 들어온다.
+	// 그러면 마감 시각에 손님이 가게 앞으로 걸어가게 됨
+	if (State->IsForcedToLeave())
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 판정 지점이 없을 때 조용히 입장시키지 않는다.
+	// 조용히 통과시키면 개폐 판정이 통째로 사라지는데 로그가 없어 원인 추적이 불가능하다.
+	// (스폰 초기화 순서 버그가 실제로 이 폴백에 가려 오래 발견되지 않았다.)
+	if (State->StorefrontLocation.IsNearlyZero())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s StorefrontLocation이 비어 있음 - 레벨에 StorefrontPoint를 배치했는지, "
+				 "스포너가 StateTree 시작 전에 값을 주입하는지 확인 필요"),
+			*Data.Actor->GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	Data.AIController->MoveToLocation(State->StorefrontLocation, Data.AcceptanceRadius);
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FCSTask_ApproachStorefront::Tick(FStateTreeExecutionContext& Context,
+	const float DeltaTime) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 아직 걸어가는 중이면 대기
+	if (Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem =
+		Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+	if (Subsystem == nullptr || State == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 가게 앞에 도착했으니 한 번 판정
+	if (Subsystem->ShouldEnterStore(Data.Actor) == false)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[입장판정] %s 그냥 지나감"), *Data.Actor->GetName());
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 진입 확정
+	//  - 통계에서 행인과 구분되고
+	//  - 매장 안 손님이 다시 가게 앞으로 나가지 않는다.
+	State->MarkEnteredStore();
+
+	UE_LOG(LogTemp, Log, TEXT("[입장판정] %s 입장"), *Data.Actor->GetName());
+
+	return EStateTreeRunStatus::Succeeded;
+}
+
+void FCSTask_ApproachStorefront::ExitState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	// 다음 상태가 새 이동 명령을 내리기 전에 진행 중인 경로를 정리한
+	// ForceLeave가 이 상태를 중간에 끊을 때도 이 함수가 먼저 실행
+	// PrepareForcedLeave 태스크는 StopMovement를 따로 부르지 않아도 된다.
+	if (Data.AIController != nullptr)
+	{
+		Data.AIController->StopMovement();
+	}
+}

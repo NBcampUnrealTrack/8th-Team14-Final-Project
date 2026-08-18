@@ -36,7 +36,7 @@ protected:
 
 	// 레벨에 존재 할 수 있는 최대 손님 수
     UPROPERTY(EditAnywhere, Category = "Spawn")
-    int32 MaxAliveCustomers = 5;
+    int32 MaxAliveCustomers = 8;
 
     //스폰될 위치를 알려주는 액터 참조 (할당안되어있으면 스포너 자신의 위치에서 생성)
     UPROPERTY(EditAnywhere, Category = "Spawn")
@@ -45,6 +45,12 @@ protected:
     // 퇴장 지점 (비워두면 입장 지점과 동일)
     UPROPERTY(EditAnywhere, Category = "Spawn")
     TObjectPtr<AActor> ExitPoint;
+
+	// 가게 문 앞 판정 지점.
+	// 영업 중이면 매장에 들어가고, 아니면 ExitPoint로 계속 걸어갑니다.
+	UPROPERTY(EditAnywhere, Category = "Spawn")
+	TObjectPtr<AActor> StorefrontPoint;
+
 
 	// 스폰 시 손님에게 확률적으로 배정할 종족 데이터 목록
 	// 각 DA의 SpawnWeightBase 비율에 따라 뽑힘
