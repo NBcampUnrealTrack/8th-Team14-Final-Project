@@ -55,8 +55,17 @@ bool ACSDeliveryPortalActor::SpawnOrderCrates(
 	const TArray<FCSOrderLine>& OrderLines,
 	TArray<ACSDeliveryCrateActor*>& OutSpawnedCrates)
 {
+	// 기존 호출자는 이전과 동일하게 첫 번째 배송 위치부터 사용합니다.
+	return SpawnOrderCrates(OrderLines, OutSpawnedCrates, 0);
+}
+
+bool ACSDeliveryPortalActor::SpawnOrderCrates(
+	const TArray<FCSOrderLine>& OrderLines,
+	TArray<ACSDeliveryCrateActor*>& OutSpawnedCrates,
+	int32 StartingSpawnIndex)
+{
 	OutSpawnedCrates.Reset();
-	if (!IsDeliveryConfigured())
+	if (!IsDeliveryConfigured() || StartingSpawnIndex < 0)
 	{
 		return false;
 	}
@@ -84,7 +93,7 @@ bool ACSDeliveryPortalActor::SpawnOrderCrates(
 	}
 
 	UWorld* World = GetWorld();
-	int32 SpawnIndex = 0;
+	int32 SpawnIndex = StartingSpawnIndex;
 	for (const FCSOrderLine& OrderLine : OrderLines)
 	{
 		if (OrderLine.CrateCount == 0)

@@ -8,8 +8,9 @@
 
 class ACSDeliveryPortalActor;
 class ACSFacilityDeliveryPortalActor;
+class ACSStoreGameState;
 
-// 발주가 실제로 성공(자금 차감 + 배송 상자 생성)했을 때만 방송됨
+// 발주 접수(자금 차감 + Pending 등록)가 성공했을 때만 방송됨
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnOrderPlaced,
 	const FCSOrderResult&,
@@ -20,12 +21,41 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	const FCSFacilityOrderResult&,
 	Result);
 
+// 현재 월드 세션에서 다음 영업일까지 보관할 상품 발주입니다.
+USTRUCT()
+struct FCSPendingProductOrder
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FCSOrderLine> OrderLines;
+
+	UPROPERTY()
+	int32 DeliveryBusinessDay = 0;
+};
+
+// 현재 월드 세션에서 다음 영업일까지 보관할 시설 발주입니다.
+USTRUCT()
+struct FCSPendingFacilityOrder
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FCSFacilityOrderLine> OrderLines;
+
+	UPROPERTY()
+	int32 DeliveryBusinessDay = 0;
+};
+
 UCLASS()
 class CONVENIENCESTORE_API UCSOrderSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 
 public:
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+	virtual void Deinitialize() override;
+
 	UFUNCTION(BlueprintPure, Category = "Store|Order")
 	FCSOrderResult EvaluateOrder(const TArray<FCSOrderLine>& OrderLines) const;
 
@@ -45,7 +75,7 @@ public:
 	bool RegisterFacilityDeliveryPortal(ACSFacilityDeliveryPortalActor* Portal);
 	void UnregisterFacilityDeliveryPortal(ACSFacilityDeliveryPortalActor* Portal);
 
-	// 발주가 성공적으로 완료될 때마다 방송
+	// 자금 차감과 Pending 등록까지 완료되어 발주 접수에 성공할 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "Store|Order")
 	FCSOnOrderPlaced OnOrderPlaced;
 
@@ -53,6 +83,22 @@ public:
 	FCSOnFacilityOrderPlaced OnFacilityOrderPlaced;
 
 private:
+	void TrySubscribeToStoreGameState();
+	void UnsubscribeFromStoreGameState();
+
+	UFUNCTION()
+	void HandleBusinessDayStarted(int32 NewBusinessDay);
+
 	TWeakObjectPtr<ACSDeliveryPortalActor> RegisteredDeliveryPortal;
 	TWeakObjectPtr<ACSFacilityDeliveryPortalActor> RegisteredFacilityDeliveryPortal;
+
+	// UPROPERTY로 보관하여 Pending RowHandle의 DataTable 참조가 GC에 안전하게 유지됩니다.
+	UPROPERTY()
+	TArray<FCSPendingProductOrder> PendingProductOrders;
+
+	UPROPERTY()
+	TArray<FCSPendingFacilityOrder> PendingFacilityOrders;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ACSStoreGameState> SubscribedStoreGameState;
 };
