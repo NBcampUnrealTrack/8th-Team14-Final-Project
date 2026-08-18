@@ -90,6 +90,10 @@ struct FCSTutorialStepRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
 	FName HighlightMarkerTag;
 
+	// 3D 마커 위젯(WBP_TutorialMarker)에 표시할 이름표
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
+	FText MarkerLabelText;
+
 	// true면 완료 조건을 채워야만 다음으로 넘어감 (관문형).
 	// false면 조건을 못 채워도 AutoAdvanceSeconds 후 자동으로 넘어감 (안내형).
 	// 2부(영업 중) 스텝은 손님을 놓칠 수 있으므로 반드시 false 두기

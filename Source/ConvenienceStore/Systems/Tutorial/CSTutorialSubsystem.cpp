@@ -288,7 +288,7 @@ void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
 
 		if (UCSTutorialMarkerComponent* MarkerComponent = Actor->FindComponentByClass<UCSTutorialMarkerComponent>())
 		{
-			MarkerComponent->ShowMarker(CurrentRow.ObjectiveText);
+			MarkerComponent->ShowMarker(CurrentRow.MarkerLabelText);
 			ActiveMarkerComponents.Add(MarkerComponent);
 		}
 	}
@@ -337,6 +337,7 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 	}
 
 	AActor* SpawnedShelf = World->SpawnActor<AActor>(ShelfClass, SpawnPoint->GetActorTransform());
+	TutorialSpawnedShelf = SpawnedShelf;
 
 	// 발주 포탈 시스템과 무관하게 튜토리얼이 직접 미설치 상태로 초기화
 	// (기존 건축 시스템의 TryPickUpBuildableFacility로 바로 주울 수 있는 상태가 됨)
@@ -349,6 +350,18 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Tutorial] TutorialShelfFacilityClass(%s)가 ICSBuildableFacility를 구현하지 않습니다."),
 			*ShelfClass->GetName());
+	}
+
+	if (IsValid(SpawnedShelf))
+	{
+		UCSTutorialMarkerComponent* HighlightComponent =
+			NewObject<UCSTutorialMarkerComponent>(SpawnedShelf);
+		if (IsValid(HighlightComponent))
+		{
+			HighlightComponent->SetupAttachment(SpawnedShelf->GetRootComponent());
+			HighlightComponent->RegisterComponent();
+			HighlightComponent->ShowMarker(FText::GetEmpty());
+		}
 	}
 
 	bTutorialShelfSpawned = true;
@@ -409,6 +422,12 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 		DebugDestroyRemainingTrash();
 	}
 
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::PlaceFacility)
+	{
+		DebugHideTutorialShelfHighlight();
+	}
+
 	AdvanceStep();
 }
 
@@ -427,6 +446,22 @@ void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
 			It->Destroy();
 		}
 	}
+}
+
+void UCSTutorialSubsystem::DebugHideTutorialShelfHighlight()
+{
+	if (!IsValid(TutorialSpawnedShelf))
+	{
+		return;
+	}
+
+	if (UCSTutorialMarkerComponent* HighlightComponent =
+		TutorialSpawnedShelf->FindComponentByClass<UCSTutorialMarkerComponent>())
+	{
+		HighlightComponent->HideMarker();
+	}
+
+	TutorialSpawnedShelf = nullptr;
 }
 
 void UCSTutorialSubsystem::CreateTutorialWidgets(ACSStoreGameMode* GameMode)
@@ -709,7 +744,7 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 		SubscribedTrashCans.AddUnique(TrashCan);
 	}
 
-	// 같은 이유로 새로 배치된 진열대도 여기서 구독을 걸어줌
+	// 같은 이유로 새로 배치된 진열대도 여기서 구독을 걸어준다
 	if (ACSShelfActor* Shelf = Cast<ACSShelfActor>(FacilityActor))
 	{
 		Shelf->OnItemPlaced.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleShelfItemPlaced);
@@ -721,6 +756,15 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 	{
 		return;
 	}
+
+	// 정식 배치가 확정된 시점이므로 튜토리얼이 스폰 시점에 켜뒀던 강조 표시를 여기서 끔
+	// (선반 자체에 동적으로 붙인 UCSTutorialMarkerComponent가 대상)
+	if (UCSTutorialMarkerComponent* HighlightComponent =
+		FacilityActor->FindComponentByClass<UCSTutorialMarkerComponent>())
+	{
+		HighlightComponent->HideMarker();
+	}
+	TutorialSpawnedShelf = nullptr;
 
 	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료
 	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
