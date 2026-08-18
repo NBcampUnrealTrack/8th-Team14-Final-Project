@@ -429,8 +429,10 @@ void UCSTutorialSubsystem::SubscribeToLevelDisposables()
 			continue;
 		}
 
-		TrashCan->OnItemDisposed.AddDynamic(this, &UCSTutorialSubsystem::HandleTrashDisposed);
-		SubscribedTrashCans.Add(TrashCan);
+		// AddUniqueDynamic + AddUnique: 이 함수가 나중에 두 번 불려도(재구독 등)
+		// 같은 쓰레기통에 핸들러가 중복으로 걸리지 않도록 방어
+		TrashCan->OnItemDisposed.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleTrashDisposed);
+		SubscribedTrashCans.AddUnique(TrashCan);
 	}
 }
 
@@ -568,14 +570,26 @@ void UCSTutorialSubsystem::HandleBuildModeChanged(bool bIsBuildMode)
 
 void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 {
-	if (!IsValid(FacilityActor) ||
-		!StepRows.IsValidIndex(CurrentStepIndex) ||
+	if (!IsValid(FacilityActor))
+	{
+		return;
+	}
+
+	// 건축으로 새로 배치된 시설이 쓰레기통이면 튜토리얼 시작 시점의 1회 순회
+	// 지금이 몇 단계든 상관없이 처리해야 하므로 아래 PlaceFacility 스텝 판정보다 먼저
+	if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(FacilityActor))
+	{
+		TrashCan->OnItemDisposed.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleTrashDisposed);
+		SubscribedTrashCans.AddUnique(TrashCan);
+	}
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
 		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceFacility)
 	{
 		return;
 	}
 
-	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료합니다.
+	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료
 	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
 }
 
