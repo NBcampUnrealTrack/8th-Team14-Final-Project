@@ -2,6 +2,7 @@
 
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
+#include "Features/Items/CSProductPickupActor.h"
 
 void ACSStoreGameState::BeginPlay()
 {
@@ -71,6 +72,10 @@ void ACSStoreGameState::RequestDailySummary()
 
 void ACSStoreGameState::CompleteDailySummary()
 {
+	if (bIsDailySummaryPending)
+	{
+		PreviousDailyNetProfitGold = GetDailyNetProfitGold();
+	}
 	bIsDailySummaryPending = false;
 }
 
@@ -193,6 +198,7 @@ bool ACSStoreGameState::InitializeStoreProgression(
 		MaximumReputationScore);
 	CurrentReputationGrade = StoreProgressionDataAsset->GetReputationGradeForScore(
 		CurrentReputationScore);
+	DailyStartingReputationScore = CurrentReputationScore;
 
 	if (CurrentStoreExperience != PreviousExperience)
 	{
@@ -491,6 +497,84 @@ bool ACSStoreGameState::RecordCheckoutTransaction(
 	return true;
 }
 
+bool ACSStoreGameState::RecordDisposedProduct(const ACSProductPickupActor* Product)
+{
+	if (!IsValid(Product))
+	{
+		return false;
+	}
+
+	const FDataTableRowHandle ProductRow = Product->GetProductRow();
+	const FCSProductDataRow* ProductData = ProductRow.GetRow<FCSProductDataRow>(
+		TEXT("ACSStoreGameState::RecordDisposedProduct"));
+	if (ProductData == nullptr || ProductData->PurchasePrice < 0)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 폐기 상품의 매입가를 확인할 수 없어 손실을 기록하지 않습니다."));
+		return false;
+	}
+
+	const int64 NewWasteLoss =
+		static_cast<int64>(DailyWasteLossGold) + ProductData->PurchasePrice;
+	if (NewWasteLoss > MAX_int32)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 당일 폐기 손실이 int32 범위를 초과해 기록하지 않습니다."));
+		return false;
+	}
+
+	DailyWasteLossGold = static_cast<int32>(NewWasteLoss);
+	const FName ProductId = Product->GetProductId();
+	if (!ProductId.IsNone())
+	{
+		int32& DisposedQuantity = DailyDisposedProductQuantities.FindOrAdd(ProductId);
+		if (DisposedQuantity < MAX_int32)
+		{
+			++DisposedQuantity;
+		}
+		DailyDisposedProductNames.FindOrAdd(ProductId) = ProductData->DisplayName;
+	}
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
+
+int32 ACSStoreGameState::GetDailyTotalLossGold() const
+{
+	const int64 TotalLoss =
+		static_cast<int64>(DailyCostGold) + DailyWasteLossGold;
+	return static_cast<int32>(FMath::Min<int64>(TotalLoss, MAX_int32));
+}
+
+int32 ACSStoreGameState::GetDailyNetProfitGold() const
+{
+	const int64 NetProfit =
+		static_cast<int64>(DailySalesGold) - GetDailyTotalLossGold();
+	return static_cast<int32>(FMath::Clamp<int64>(
+		NetProfit,
+		static_cast<int64>(MIN_int32),
+		static_cast<int64>(MAX_int32)));
+}
+
+int32 ACSStoreGameState::GetDailyNetProfitDeltaGold() const
+{
+	const int64 Delta =
+		static_cast<int64>(GetDailyNetProfitGold()) - PreviousDailyNetProfitGold;
+	return static_cast<int32>(FMath::Clamp<int64>(
+		Delta,
+		static_cast<int64>(MIN_int32),
+		static_cast<int64>(MAX_int32)));
+}
+
+int32 ACSStoreGameState::GetDailyReputationDelta() const
+{
+	const int64 Delta =
+		static_cast<int64>(CurrentReputationScore) - DailyStartingReputationScore;
+	return static_cast<int32>(FMath::Clamp<int64>(
+		Delta,
+		static_cast<int64>(MIN_int32),
+		static_cast<int64>(MAX_int32)));
+}
+
 void ACSStoreGameState::BeginNextBusinessDay()
 {
 	++CurrentBusinessDay;
@@ -501,8 +585,12 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailyProfitGold = 0;
 	DailySoldQuantity = 0;
 	CompletedCheckoutCount = 0;
+	DailyWasteLossGold = 0;
+	DailyDisposedProductQuantities.Reset();
+	DailyDisposedProductNames.Reset();
 	DailyCheckoutTransactions.Reset();
 	NextTransactionId = 1;
+	DailyStartingReputationScore = CurrentReputationScore;
 
 	// 다음 날 HUD와 정산 화면이 이전 날의 값을 유지하지 않도록 갱신을 알립니다.
 	OnDailySalesChanged.Broadcast();

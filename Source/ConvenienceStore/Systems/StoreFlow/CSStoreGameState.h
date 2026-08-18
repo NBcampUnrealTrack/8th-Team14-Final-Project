@@ -9,6 +9,7 @@
 
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
+class ACSProductPickupActor;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStorePhaseChanged,
@@ -165,6 +166,18 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	int32 CompletedCheckoutCount = 0;
 
+	// 오늘 낱개 상품을 폐기하며 잃은 매입가 합계입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyWasteLossGold = 0;
+
+	// 상품 분석에서 오늘 폐기된 상품별 수량을 표시하기 위한 집계입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	TMap<FName, int32> DailyDisposedProductQuantities;
+
+	// 폐기 후 상품 액터가 사라져도 분석 화면에 상품명을 표시하기 위한 기록입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	TMap<FName, FText> DailyDisposedProductNames;
+
 	// 오늘 발생한 결제 거래를 정산과 판매 보고서에서 조회할 수 있도록 저장합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TArray<FCSCheckoutTransaction> DailyCheckoutTransactions;
@@ -300,6 +313,21 @@ public:
 	// 스캔이 끝난 주문을 거래로 기록하고 오늘의 매출·원가·이익을 갱신합니다.
 	bool RecordCheckoutTransaction(const TArray<FCSCheckoutLineItem>& LineItems);
 
+	// 배송 상자와 튜토리얼 쓰레기는 제외하고 낱개 상품의 폐기 손실만 기록합니다.
+	bool RecordDisposedProduct(const ACSProductPickupActor* Product);
+
+	UFUNCTION(BlueprintPure, Category = "Store|Sales")
+	int32 GetDailyTotalLossGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Sales")
+	int32 GetDailyNetProfitGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Sales")
+	int32 GetDailyNetProfitDeltaGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetDailyReputationDelta() const;
+
 	// 다음 영업일을 시작할 때 하루 단위 판매 기록과 요약값을 초기화합니다.
 	void BeginNextBusinessDay();
 
@@ -334,4 +362,10 @@ protected:
 private:
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.
 	int32 NextTransactionId = 1;
+
+	// 오늘 발생한 평판 변화만 정산에 표시하기 위한 하루 시작값입니다.
+	int32 DailyStartingReputationScore = 6000;
+
+	// 확인을 마친 직전 정산의 최종 순이익입니다.
+	int32 PreviousDailyNetProfitGold = 0;
 };
