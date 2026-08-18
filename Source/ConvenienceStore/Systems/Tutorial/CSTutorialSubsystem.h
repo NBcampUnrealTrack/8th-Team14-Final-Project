@@ -96,6 +96,9 @@ protected:
 	// [디버그 전용] CleanTrash 스텝을 cs.TNext로 건너뛸 때 레벨에 남은 쓰레기를 전부 정리
 	void DebugDestroyRemainingTrash();
 
+	// [디버그 전용] PlaceFacility 스텝을 cs.TNext로 건너뛸 때 튜토리얼 선반의 강조 표시를 끔
+	void DebugHideTutorialShelfHighlight();
+
 	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
 	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
 
@@ -155,6 +158,12 @@ private:
 	int32 StockShelvesPlacedCount = 0;
 	bool bTutorialCompleted = false;
 	bool bTutorialShelfSpawned = false;
+
+	// TrySpawnTutorialShelfDelivery가 스폰한 선반을 기억해둠
+	// cs.TNext로 PlaceFacility를 건너뛸 때 실제 배치 이벤트 없이도 아웃라인을 끄기 위해 필요
+	UPROPERTY()
+	TObjectPtr<AActor> TutorialSpawnedShelf;
+
 	FTimerHandle AutoAdvanceTimerHandle;
 
 	UPROPERTY()
