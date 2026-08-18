@@ -132,7 +132,7 @@ void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
 	{
 		InteractionPanel->ClearInteractionContext();
 		InteractionPanel->SetInteractionPrompt(
-			NSLOCTEXT("Interaction", "ShelfFull", "진열할 빈 슬롯이 없습니다."),
+			NSLOCTEXT("Interaction", "ShelfLevelFull", "조준한 단에 빈 슬롯이 없습니다."),
 			FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
 	}
 }

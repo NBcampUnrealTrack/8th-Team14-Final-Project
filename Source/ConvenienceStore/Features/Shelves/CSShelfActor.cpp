@@ -405,15 +405,55 @@ void ACSShelfActor::RestorePlacementHighlight()
 	OriginalCustomStencilValues.Empty();
 }
 
+ECSShelfPlacementPreviewState ACSShelfActor::GetPlacementHighlightState(
+	AActor* ItemActor) const
+{
+	// 외곽선은 현재 조준한 단이 아닌, 진열대 전체의 배치 가능 여부를 알려 줍니다.
+	if (!CanPlaceItem_Implementation(ItemActor))
+	{
+		return ECSShelfPlacementPreviewState::Invalid;
+	}
+
+	return ShouldWarnStorage(ItemActor)
+		? ECSShelfPlacementPreviewState::Warning
+		: ECSShelfPlacementPreviewState::Valid;
+}
+
+ECSShelfSlotLevel ACSShelfActor::FindAimedSlotLevel(FVector PlacementHint) const
+{
+	ECSShelfSlotLevel AimedSlotLevel = ECSShelfSlotLevel::Middle;
+	float ClosestDistanceSquared = TNumericLimits<float>::Max();
+
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		// 이미 찬 슬롯도 조준한 단을 판정하는 기준점으로 유지합니다.
+		const FTransform SlotWorldTransform =
+			Slot.LocalTransform * GetActorTransform();
+		const float DistanceSquared = FVector::DistSquared(
+			SlotWorldTransform.GetLocation(),
+			PlacementHint);
+
+		if (DistanceSquared < ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			AimedSlotLevel = Slot.SlotLevel;
+		}
+	}
+
+	return AimedSlotLevel;
+}
+
 int32 ACSShelfActor::FindClosestEmptySlot(FVector PlacementHint) const
 {
 	int32 ClosestSlotIndex = INDEX_NONE;
 	float ClosestDistanceSquared = TNumericLimits<float>::Max();
+	const ECSShelfSlotLevel AimedSlotLevel = FindAimedSlotLevel(PlacementHint);
 
 	for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
 	{
 		const FCSShelfSlot& Slot = Slots[SlotIndex];
-		if (IsValid(Slot.OccupyingItem))
+		// 다른 단은 비어 있어도 선택하지 않아 플레이어가 조준한 단만 채워집니다.
+		if (Slot.SlotLevel != AimedSlotLevel || IsValid(Slot.OccupyingItem))
 		{
 			continue;
 		}
