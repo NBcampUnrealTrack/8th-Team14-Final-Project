@@ -196,13 +196,23 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	}
 
 
+	// [한길] 손님을 만들기 전에 종족을 먼저 결정해야 종족별 크기를 스폰 순간부터 적용할 수 있습니다.
+	UCSCustomerArchetypeDataAsset* SelectedArchetype = PickArchetypeBySpawnWeight();
+	const float CharacterScale = SelectedArchetype != nullptr
+		? FMath::Max(SelectedArchetype->CharacterScale, 0.1f)
+		: 4.0f;
+	const FTransform SpawnTransform(
+		FRotator::ZeroRotator,
+		SpawnLocation,
+		FVector(CharacterScale));
+
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	//스폰 지점에 다른 액터와 겹쳐도 밀어내서라도 무조건 스폰되게 함 (스폰 실패로 조용히 스폰 안되는 상황 방지)
 
 
 	ACSCustomerCharacter* Customer = GetWorld()->SpawnActor<ACSCustomerCharacter>(
-		CustomerClass, SpawnLocation, FRotator::ZeroRotator, Params);
+		CustomerClass, SpawnTransform, Params);
 	//Params로 정한 규칙을 기준으로 생성
 
 	// 생성 실패면 리턴
@@ -230,7 +240,7 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
 	if (Decision != nullptr)
 	{
-		Decision->Archetype = PickArchetypeBySpawnWeight();
+		Decision->Archetype = SelectedArchetype;
 
 		// 이 손님 전용 파생 시드 주입 마스터 스트림에서 하나 뽑아 넘기면
 		// 이 손님의 예산 추첨/구매 판단 굴림이 전부 이 시드로만 결정됨
