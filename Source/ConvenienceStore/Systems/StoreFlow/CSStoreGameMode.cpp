@@ -360,3 +360,8 @@ TSubclassOf<UCSTutorialObjectiveWidgetBase> ACSStoreGameMode::GetTutorialObjecti
 {
 	return TutorialObjectiveWidgetClass;
 }
+
+TSubclassOf<AActor> ACSStoreGameMode::GetTutorialShelfFacilityClass() const
+{
+	return TutorialShelfFacilityClass;
+}
