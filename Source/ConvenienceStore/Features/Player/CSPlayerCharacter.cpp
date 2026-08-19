@@ -36,7 +36,7 @@
 
 namespace
 {
-void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+void PlayPlayerGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
 	{
@@ -1687,7 +1687,7 @@ void ACSPlayerCharacter::DropHeldItem()
 		IsAimingAtMagicWandHomeDock(MagicWand) &&
 		RestoreMagicWandToHomeDock(MagicWand))
 	{
-		PlayGameplaySFX(this, ECSAudioEvent::WandPlace);
+		PlayPlayerGameplaySFX(this, ECSAudioEvent::WandPlace);
 		HeldActor = nullptr;
 		DestroyPlacementPreview();
 		ClearShelfPlacementHighlights();
@@ -1757,7 +1757,7 @@ void ACSPlayerCharacter::DropHeldItem()
 				{
 					PlacedProduct->SetHeldByPlayerForFreshness(false);
 				}
-				PlayGameplaySFX(this, ECSAudioEvent::ProductStock);
+				PlayPlayerGameplaySFX(this, ECSAudioEvent::ProductStock);
             HeldActor = nullptr;
 			DestroyPlacementPreview();
             return;
@@ -2043,7 +2043,7 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	HeldActor = nullptr;
 	HeldBuildableFacilityRotation = FRotator::ZeroRotator;
 	ClearBuildPlacementPreview();
-	PlayGameplaySFX(this, ECSAudioEvent::FacilityPlace);
+	PlayPlayerGameplaySFX(this, ECSAudioEvent::FacilityPlace);
 
 	// FinalizeBuildPlacement까지 끝난 실제 배치만 범용 성공 이벤트로 알립니다.
 	OnBuildableFacilityPlaced.Broadcast(FacilityToPlace);
@@ -2165,7 +2165,7 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 		ProductActor->Destroy();
 		return false;
 	}
-	PlayGameplaySFX(this, ECSAudioEvent::ProductStock);
+	PlayPlayerGameplaySFX(this, ECSAudioEvent::ProductStock);
 
 	if (bWillDepleteCrate || !IsValid(DeliveryCrate))
 	{

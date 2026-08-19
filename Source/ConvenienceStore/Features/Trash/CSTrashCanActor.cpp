@@ -8,7 +8,7 @@
 
 namespace
 {
-void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+void PlayTrashCanGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
 	{
@@ -91,7 +91,7 @@ bool ACSTrashCanActor::TryDisposeItem(AActor* ItemActor)
 	}
 
 	OnItemDisposed.Broadcast(ItemActor, TotalDisposedCount);
-	PlayGameplaySFX(this, ECSAudioEvent::TrashDispose);
+	PlayTrashCanGameplaySFX(this, ECSAudioEvent::TrashDispose);
 	ItemActor->Destroy();
 	return true;
 }

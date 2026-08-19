@@ -21,7 +21,7 @@
 
 namespace
 {
-void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+void PlayCheckoutGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
 	{
@@ -485,7 +485,7 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 			TEXT("[CheckoutCounter] 거래 기록에 실패하여 손님 결제를 완료하지 않습니다."));
 		return;
 	}
-	PlayGameplaySFX(this, ECSAudioEvent::CheckoutComplete);
+	PlayCheckoutGameplaySFX(this, ECSAudioEvent::CheckoutComplete);
 
 	// 거래를 먼저 기록한 뒤 손님 Subsystem에 결제 완료를 알려 대기열과 손님 퇴장 흐름을 진행합니다.
 	if (IsValid(FrontCustomer))
