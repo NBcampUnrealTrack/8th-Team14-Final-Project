@@ -14,6 +14,7 @@
 #include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
@@ -86,6 +87,8 @@ void UCSTutorialSubsystem::Deinitialize()
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	UnsubscribeFromOrderSubsystem();
+	UnsubscribeFromPricingSubsystem();
+	UnsubscribeFromStoreGameState();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -127,6 +130,8 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToLevelShelves();
 	TrySubscribeToPlayerController();
 	SubscribeToOrderSubsystem();
+	SubscribeToPricingSubsystem();
+	SubscribeToStoreGameState();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -201,11 +206,15 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	UnsubscribeFromOrderSubsystem();
+	UnsubscribeFromPricingSubsystem();
+	UnsubscribeFromStoreGameState();
 	CloseTutorialWidgets();
 }
 
 void UCSTutorialSubsystem::BroadcastCurrentStep() const
 {
+	const FCSTutorialStepRow& DebugRow = *StepRows[CurrentStepIndex];
+
 	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
@@ -711,6 +720,54 @@ void UCSTutorialSubsystem::UnsubscribeFromOrderSubsystem()
 	SubscribedOrderSubsystem = nullptr;
 }
 
+void UCSTutorialSubsystem::SubscribeToPricingSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSStorePricingSubsystem* PricingSubsystem = World->GetSubsystem<UCSStorePricingSubsystem>())
+		{
+			SubscribedPricingSubsystem = PricingSubsystem;
+			PricingSubsystem->OnSalePriceChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleSalePriceChanged);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromPricingSubsystem()
+{
+	if (IsValid(SubscribedPricingSubsystem))
+	{
+		SubscribedPricingSubsystem->OnSalePriceChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleSalePriceChanged);
+	}
+
+	SubscribedPricingSubsystem = nullptr;
+}
+
+void UCSTutorialSubsystem::SubscribeToStoreGameState()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (ACSStoreGameState* StoreGameState = World->GetGameState<ACSStoreGameState>())
+		{
+			SubscribedStoreGameState = StoreGameState;
+			StoreGameState->OnStoreOpenStateChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromStoreGameState()
+{
+	if (IsValid(SubscribedStoreGameState))
+	{
+		SubscribedStoreGameState->OnStoreOpenStateChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+	}
+
+	SubscribedStoreGameState = nullptr;
+}
+
 void UCSTutorialSubsystem::SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter)
 {
 	if (!IsValid(PlayerCharacter))
@@ -809,6 +866,36 @@ void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
 	}
 
 	NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
+}
+
+void UCSTutorialSubsystem::HandleSalePriceChanged(FName ProductRowName, int32 NewSalePrice)
+{
+	(void)ProductRowName;
+	(void)NewSalePrice;   // 이 델리게이트는 변경 성공 시에만 방송되므로 값 자체는 볼 필요 없음
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::SetProductPrice)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::SetProductPrice);
+}
+
+void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
+{
+	if (!bNewStoreOpen)   // 폐점은 관심 없음 실제로 열릴 때만 반응
+	{
+		return;
+	}
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::OpenSign)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::OpenSign);
 }
 
 void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
