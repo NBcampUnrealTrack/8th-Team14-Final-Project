@@ -34,6 +34,9 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> BreakdownNetProfitText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailySalesText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailyWasteLossText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailyRentText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RentAmountText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RentDDayText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailySoldQuantityText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ReputationScoreText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> ReputationDeltaIcon;

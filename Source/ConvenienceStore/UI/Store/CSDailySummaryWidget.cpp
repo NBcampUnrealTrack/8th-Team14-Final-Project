@@ -65,6 +65,11 @@ void UCSDailySummaryWidget::RefreshSummary()
 
 	const FText SalesText = FText::AsNumber(State->DailySalesGold);
 	const FText WasteLossText = FText::AsNumber(State->DailyWasteLossGold);
+	const FText RentText = FText::AsNumber(State->GetDailyRentGold());
+	const FText NextRentText = FText::AsNumber(State->GetNextRentGold());
+	const FText RentDDayDisplayText = FText::Format(
+		NSLOCTEXT("StoreSummary", "RentDDay", "D - {0}"),
+		FText::AsNumber(State->GetDaysUntilNextRentPayment()));
 	const FText TotalLossText = FText::AsNumber(State->GetDailyTotalLossGold());
 	const FText NetProfitText = FText::AsNumber(State->GetDailyNetProfitGold());
 
@@ -80,6 +85,9 @@ void UCSDailySummaryWidget::RefreshSummary()
 	if (IsValid(BreakdownNetProfitText)) BreakdownNetProfitText->SetText(NetProfitText);
 	if (IsValid(DailySalesText)) DailySalesText->SetText(SalesText);
 	if (IsValid(DailyWasteLossText)) DailyWasteLossText->SetText(WasteLossText);
+	if (IsValid(DailyRentText)) DailyRentText->SetText(RentText);
+	if (IsValid(RentAmountText)) RentAmountText->SetText(NextRentText);
+	if (IsValid(RentDDayText)) RentDDayText->SetText(RentDDayDisplayText);
 	if (IsValid(DailySoldQuantityText))
 	{
 		DailySoldQuantityText->SetText(FText::Format(
