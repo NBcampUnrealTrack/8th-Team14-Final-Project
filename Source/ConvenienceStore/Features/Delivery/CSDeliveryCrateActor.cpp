@@ -17,7 +17,7 @@
 
 namespace
 {
-void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+void PlayDeliveryCrateGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
 	{
@@ -268,7 +268,7 @@ bool ACSDeliveryCrateActor::ConsumeOne()
 	if (RemainingQuantity == 0)
 	{
 		OnCrateDepleted();
-		PlayGameplaySFX(this, ECSAudioEvent::DeliveryCrateDisappear);
+		PlayDeliveryCrateGameplaySFX(this, ECSAudioEvent::DeliveryCrateDisappear);
 		Destroy();
 	}
 
