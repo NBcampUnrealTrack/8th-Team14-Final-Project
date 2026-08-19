@@ -390,6 +390,9 @@ protected:
 	TObjectPtr<UCSStoreEconomyDataAsset> StoreEconomyDataAsset;
 
 private:
+	// 임대료처럼 잔액과 관계없이 확정되는 비용에만 사용하는 내부 지출 경로입니다.
+	bool ApplyForcedExpense(int32 Amount);
+
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.
 	int32 NextTransactionId = 1;
 
