@@ -8,7 +8,7 @@
 
 namespace
 {
-void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+void PlayMagicWandGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
 	{
@@ -80,6 +80,6 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	// 투사체가 카메라 조준 방향을 그대로 사용하도록 초기 속도와 방향을 전달합니다.
 	Projectile->InitializeProjectile(TravelDirection);
 	LastPrimaryUseTime = CurrentTime;
-	PlayGameplaySFX(this, ECSAudioEvent::MagicAttack);
+	PlayMagicWandGameplaySFX(this, ECSAudioEvent::MagicAttack);
 	return true;
 }
