@@ -2,7 +2,30 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/GameInstance.h"
 #include "Features/Trash/CSTrashable.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
+
+namespace
+{
+void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+{
+	if (!IsValid(WorldContextActor))
+	{
+		return;
+	}
+
+	if (UGameInstance* GameInstance = WorldContextActor->GetGameInstance();
+		IsValid(GameInstance))
+	{
+		if (UCSAudioSubsystem* AudioSubsystem =
+			GameInstance->GetSubsystem<UCSAudioSubsystem>(); IsValid(AudioSubsystem))
+		{
+			AudioSubsystem->PlaySFX(AudioEvent);
+		}
+	}
+}
+}
 
 ACSTrashCanActor::ACSTrashCanActor()
 {
@@ -68,6 +91,7 @@ bool ACSTrashCanActor::TryDisposeItem(AActor* ItemActor)
 	}
 
 	OnItemDisposed.Broadcast(ItemActor, TotalDisposedCount);
+	PlayGameplaySFX(this, ECSAudioEvent::TrashDispose);
 	ItemActor->Destroy();
 	return true;
 }
