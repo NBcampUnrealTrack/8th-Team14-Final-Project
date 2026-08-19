@@ -1,6 +1,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 #include "Data/CSFreshnessSettingsDataAsset.h"
+#include "Data/CSStoreEconomyDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Features/Items/CSProductPickupActor.h"
 
@@ -140,6 +141,33 @@ bool ACSStoreGameState::TrySpendFunds(int32 Amount)
 	return true;
 }
 
+bool ACSStoreGameState::ApplyForcedExpense(int32 Amount)
+{
+	if (Amount < 0)
+	{
+		return false;
+	}
+
+	if (Amount == 0)
+	{
+		return true;
+	}
+
+	const int64 NewFunds = static_cast<int64>(CurrentFunds) - Amount;
+	if (NewFunds < MIN_int32 || NewFunds > MAX_int32)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 강제 지출 %dG 적용 시 자금이 int32 범위를 벗어나 처리하지 않습니다. 현재 자금=%dG"),
+			Amount,
+			CurrentFunds);
+		return false;
+	}
+
+	CurrentFunds = static_cast<int32>(NewFunds);
+	OnFundsChanged.Broadcast(CurrentFunds);
+	return true;
+}
+
 bool ACSStoreGameState::AddFunds(int32 Amount)
 {
 	if (Amount < 0)
@@ -235,6 +263,138 @@ bool ACSStoreGameState::InitializeFreshnessSettings(
 UCSFreshnessSettingsDataAsset* ACSStoreGameState::GetFreshnessSettings() const
 {
 	return FreshnessSettingsDataAsset;
+}
+
+bool ACSStoreGameState::InitializeStoreEconomy(
+	UCSStoreEconomyDataAsset* InStoreEconomyDataAsset)
+{
+	if (!IsValid(InStoreEconomyDataAsset) ||
+		!InStoreEconomyDataAsset->IsConfigurationValid())
+	{
+		return false;
+	}
+
+	StoreEconomyDataAsset = InStoreEconomyDataAsset;
+	return true;
+}
+
+bool ACSStoreGameState::ProcessDailyRent()
+{
+	if (LastRentProcessedBusinessDay == CurrentBusinessDay)
+	{
+		return true;
+	}
+
+	LastRentProcessedBusinessDay = CurrentBusinessDay;
+	DailyRentGold = 0;
+	if (!IsValid(StoreEconomyDataAsset))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 상점 경제 설정이 없어 %d일차 임대료 처리를 생략합니다."),
+			CurrentBusinessDay);
+		return false;
+	}
+
+	if (!StoreEconomyDataAsset->IsRentPaymentDay(CurrentBusinessDay))
+	{
+		return true;
+	}
+
+	const int32 RentGold =
+		StoreEconomyDataAsset->GetRentGoldForBusinessDay(CurrentBusinessDay);
+	if (!ApplyForcedExpense(RentGold))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] %d일차 임대료 %dG 차감에 실패했습니다."),
+			CurrentBusinessDay,
+			RentGold);
+		return false;
+	}
+
+	DailyRentGold = RentGold;
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
+
+int32 ACSStoreGameState::GetDailyRentGold() const
+{
+	return DailyRentGold;
+}
+
+int32 ACSStoreGameState::GetCurrentRentGold() const
+{
+	return IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset->GetRentGoldForBusinessDay(CurrentBusinessDay)
+		: 0;
+}
+
+int32 ACSStoreGameState::GetNextRentPaymentBusinessDay() const
+{
+	if (!IsValid(StoreEconomyDataAsset) ||
+		!StoreEconomyDataAsset->IsConfigurationValid())
+	{
+		return 0;
+	}
+
+	const int64 CurrentDay = CurrentBusinessDay;
+	const int64 FirstPaymentDay = StoreEconomyDataAsset->FirstRentBusinessDay;
+	const int64 PaymentInterval = StoreEconomyDataAsset->RentPaymentIntervalDays;
+	if (CurrentDay < FirstPaymentDay)
+	{
+		return static_cast<int32>(FirstPaymentDay);
+	}
+
+	const bool bIsTodayPaymentDay =
+		StoreEconomyDataAsset->IsRentPaymentDay(CurrentBusinessDay);
+	if (bIsTodayPaymentDay &&
+		LastRentProcessedBusinessDay != CurrentBusinessDay)
+	{
+		return CurrentBusinessDay;
+	}
+
+	const int64 DaysSinceFirstPayment = CurrentDay - FirstPaymentDay;
+	const int64 DaysIntoCurrentInterval = DaysSinceFirstPayment % PaymentInterval;
+	const int64 DaysUntilNextPayment = PaymentInterval - DaysIntoCurrentInterval;
+	const int64 NextPaymentDay = CurrentDay + DaysUntilNextPayment;
+	return NextPaymentDay <= MAX_int32
+		? static_cast<int32>(NextPaymentDay)
+		: 0;
+}
+
+int32 ACSStoreGameState::GetDaysUntilNextRentPayment() const
+{
+	const int32 NextPaymentDay = GetNextRentPaymentBusinessDay();
+	if (NextPaymentDay <= 0)
+	{
+		return 0;
+	}
+
+	const int64 DaysUntilPayment =
+		static_cast<int64>(NextPaymentDay) - CurrentBusinessDay;
+	return static_cast<int32>(FMath::Clamp<int64>(
+		DaysUntilPayment,
+		0,
+		MAX_int32));
+}
+
+int32 ACSStoreGameState::GetNextRentGold() const
+{
+	if (!IsValid(StoreEconomyDataAsset) ||
+		!StoreEconomyDataAsset->IsConfigurationValid())
+	{
+		return 0;
+	}
+
+	const int32 NextPaymentDay = GetNextRentPaymentBusinessDay();
+	return NextPaymentDay > 0
+		? StoreEconomyDataAsset->GetRentGoldForBusinessDay(NextPaymentDay)
+		: 0;
+}
+
+bool ACSStoreGameState::IsRentPaymentDay() const
+{
+	return IsValid(StoreEconomyDataAsset) &&
+		StoreEconomyDataAsset->IsRentPaymentDay(CurrentBusinessDay);
 }
 
 int32 ACSStoreGameState::GetStoreExperience() const
@@ -541,7 +701,9 @@ bool ACSStoreGameState::RecordDisposedProduct(const ACSProductPickupActor* Produ
 int32 ACSStoreGameState::GetDailyTotalLossGold() const
 {
 	const int64 TotalLoss =
-		static_cast<int64>(DailyCostGold) + DailyWasteLossGold;
+		static_cast<int64>(DailyCostGold) +
+		DailyWasteLossGold +
+		DailyRentGold;
 	return static_cast<int32>(FMath::Min<int64>(TotalLoss, MAX_int32));
 }
 
@@ -586,6 +748,7 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailySoldQuantity = 0;
 	CompletedCheckoutCount = 0;
 	DailyWasteLossGold = 0;
+	DailyRentGold = 0;
 	DailyDisposedProductQuantities.Reset();
 	DailyDisposedProductNames.Reset();
 	DailyCheckoutTransactions.Reset();

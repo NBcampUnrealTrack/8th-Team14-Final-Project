@@ -2,7 +2,30 @@
 
 #include "Features/Tools/CSMagicProjectileActor.h"
 #include "Components/SceneComponent.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/Pawn.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
+
+namespace
+{
+void PlayMagicWandGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+{
+	if (!IsValid(WorldContextActor))
+	{
+		return;
+	}
+
+	if (UGameInstance* GameInstance = WorldContextActor->GetGameInstance();
+		IsValid(GameInstance))
+	{
+		if (UCSAudioSubsystem* AudioSubsystem =
+			GameInstance->GetSubsystem<UCSAudioSubsystem>(); IsValid(AudioSubsystem))
+		{
+			AudioSubsystem->PlaySFX(AudioEvent);
+		}
+	}
+}
+}
 
 ACSMagicWandActor::ACSMagicWandActor()
 {
@@ -57,5 +80,6 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	// 투사체가 카메라 조준 방향을 그대로 사용하도록 초기 속도와 방향을 전달합니다.
 	Projectile->InitializeProjectile(TravelDirection);
 	LastPrimaryUseTime = CurrentTime;
+	PlayMagicWandGameplaySFX(this, ECSAudioEvent::MagicAttack);
 	return true;
 }

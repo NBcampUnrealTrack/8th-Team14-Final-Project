@@ -6,6 +6,7 @@
 #include "CSCheckoutWidget.generated.h"
 
 class UButton;
+class UAudioComponent;
 class UTextBlock;
 class UCSCheckoutReceiptWidget;
 
@@ -52,6 +53,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Checkout|Animation")
 	void NotifyReceiptExitFinished();
 
+	// 데이터 스캔뿐 아니라 마지막 바코드음 재생까지 끝난 실제 결제 가능 상태입니다.
+	UFUNCTION(BlueprintPure, Category = "Checkout")
+	bool CanCompleteCheckout() const;
+
 	// 블루프린트 UI에서 상품별 행을 만들 때 사용할 주문 목록입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Checkout")
 	TArray<FCSCheckoutLineItem> OrderItems;
@@ -90,6 +95,7 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 	// 상품 스캔 결과가 화면에 반영된 뒤 WBP에 숫자와 합계 피드백 연출을 요청합니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Checkout|Animation")
@@ -152,9 +158,19 @@ protected:
 	UFUNCTION()
 	void HandleReceiptCompletionFinished();
 
+	UFUNCTION()
+	void HandleBarcodeScanAudioFinished();
+
 private:
 	// 완료 연출 중 스캔·결제·취소가 중복 실행되지 않게 막습니다.
 	bool bIsCheckoutTransitioning = false;
+
+	// 바코드음이 끝날 때까지만 다음 스캔과 결제를 막는 계산대 전용 상태입니다.
+	UPROPERTY(Transient)
+	bool bBarcodeScanAudioLocked = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> ActiveBarcodeScanAudioComponent;
 
 	// 현재 스캔할 주문 행의 인덱스입니다.
 	int32 CurrentLineItemIndex = 0;
@@ -164,4 +180,6 @@ private:
 
 	// 숫자와 버튼 상태, 블루프린트 주문 목록 표시를 한 번에 갱신합니다.
 	void UpdateCheckoutDisplay();
+	bool StartBarcodeScanAudio();
+	void ClearBarcodeScanAudioState();
 };

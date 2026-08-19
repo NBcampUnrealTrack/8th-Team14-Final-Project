@@ -1,7 +1,11 @@
 #include "UI/Checkout/CSCheckoutWidget.h"
 
+#include "Components/AudioComponent.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "UI/Checkout/CSCheckoutReceiptWidget.h"
 
 void UCSCheckoutWidget::NativeConstruct()
@@ -38,11 +42,18 @@ void UCSCheckoutWidget::NativeConstruct()
 	UpdateCheckoutDisplay();
 }
 
+void UCSCheckoutWidget::NativeDestruct()
+{
+	ClearBarcodeScanAudioState();
+	Super::NativeDestruct();
+}
+
 void UCSCheckoutWidget::SetCheckoutOrder(
 	const TArray<FCSCheckoutLineItem>& InOrderItems,
 	int32 InTotalSalePrice)
 {
 	// 이전 손님의 스캔 진행 상태를 초기화하여 주문이 섞이지 않게 합니다.
+	ClearBarcodeScanAudioState();
 	OrderItems = InOrderItems;
 	TotalSalePrice = FMath::Max(0, InTotalSalePrice);
 	ScannedItemCount = 0;
@@ -75,7 +86,7 @@ bool UCSCheckoutWidget::ScanNextItem()
 	}
 
 	// 모든 주문 행을 스캔한 경우에는 추가 스캔을 처리하지 않습니다.
-	if (IsScanComplete())
+	if (bBarcodeScanAudioLocked || IsScanComplete())
 	{
 		return false;
 	}
@@ -97,6 +108,7 @@ bool UCSCheckoutWidget::ScanNextItem()
 	++ScannedItemCount;
 	++ScannedQuantityInCurrentLine;
 	ScannedSalePrice += LineItem.UnitSalePrice;
+	StartBarcodeScanAudio();
 
 	if (IsValid(ReceiptWidget))
 	{
@@ -123,6 +135,11 @@ bool UCSCheckoutWidget::IsScanComplete() const
 	return TotalItemCount > 0 && ScannedItemCount >= TotalItemCount;
 }
 
+bool UCSCheckoutWidget::CanCompleteCheckout() const
+{
+	return IsScanComplete() && !bBarcodeScanAudioLocked;
+}
+
 void UCSCheckoutWidget::HandleScanNextItemClicked()
 {
 	// 버튼 클릭은 다음 상품 한 개를 스캔하는 동작으로 처리합니다.
@@ -131,8 +148,8 @@ void UCSCheckoutWidget::HandleScanNextItemClicked()
 
 void UCSCheckoutWidget::HandleCompleteCheckoutClicked()
 {
-	// 스캔이 끝나지 않은 주문은 결제 요청을 보내지 않습니다.
-	if (bIsCheckoutTransitioning || !IsScanComplete())
+	// 완료 연출 중이거나 마지막 바코드음까지 끝나지 않은 주문은 결제 요청을 보내지 않습니다.
+	if (bIsCheckoutTransitioning || !CanCompleteCheckout())
 	{
 		return;
 	}
@@ -149,6 +166,7 @@ void UCSCheckoutWidget::HandleCancelCheckoutClicked()
 	}
 
 	// 계산 취소는 손님의 장바구니와 대기열을 변경하지 않고 UI를 닫는 용도로만 사용합니다.
+	ClearBarcodeScanAudioState();
 	OnCheckoutCancelled.Broadcast();
 }
 
@@ -194,6 +212,19 @@ void UCSCheckoutWidget::HandleReceiptCompletionFinished()
 	}
 }
 
+void UCSCheckoutWidget::HandleBarcodeScanAudioFinished()
+{
+	if (IsValid(ActiveBarcodeScanAudioComponent))
+	{
+		ActiveBarcodeScanAudioComponent->OnAudioFinished.RemoveDynamic(
+			this, &UCSCheckoutWidget::HandleBarcodeScanAudioFinished);
+	}
+
+	ActiveBarcodeScanAudioComponent = nullptr;
+	bBarcodeScanAudioLocked = false;
+	UpdateCheckoutDisplay();
+}
+
 void UCSCheckoutWidget::UpdateCheckoutDisplay()
 {
 	if (IsValid(Text_ScannedCount))
@@ -213,25 +244,83 @@ void UCSCheckoutWidget::UpdateCheckoutDisplay()
 
 	if (IsValid(CheckoutStatusText))
 	{
-		CheckoutStatusText->SetText(IsScanComplete()
+		CheckoutStatusText->SetText(CanCompleteCheckout()
 			? NSLOCTEXT("Checkout", "ReadyToPay", "결제를 완료해 주세요.")
 			: NSLOCTEXT("Checkout", "Scanning", "상품을 스캔해 주세요."));
 	}
 
 	if (IsValid(ScanNextItemButton))
 	{
-		ScanNextItemButton->SetIsEnabled(!bIsCheckoutTransitioning && !IsScanComplete());
+		ScanNextItemButton->SetIsEnabled(
+			!bIsCheckoutTransitioning && !IsScanComplete() && !bBarcodeScanAudioLocked);
 	}
 
 	if (IsValid(CompleteCheckoutButton))
 	{
 		// 결제 완료 버튼의 실제 처리 연결은 계산대 결제 단계에서 추가합니다.
-		CompleteCheckoutButton->SetIsEnabled(!bIsCheckoutTransitioning && IsScanComplete());
+		CompleteCheckoutButton->SetIsEnabled(!bIsCheckoutTransitioning && CanCompleteCheckout());
 	}
 
 	if (IsValid(CancelCheckoutButton))
 	{
 		CancelCheckoutButton->SetIsEnabled(!bIsCheckoutTransitioning);
 	}
+}
 
+bool UCSCheckoutWidget::StartBarcodeScanAudio()
+{
+	UWorld* World = GetWorld();
+	UGameInstance* GameInstance = IsValid(World) ? World->GetGameInstance() : nullptr;
+	UCSAudioSubsystem* AudioSubsystem = IsValid(GameInstance)
+		? GameInstance->GetSubsystem<UCSAudioSubsystem>()
+		: nullptr;
+	if (!IsValid(AudioSubsystem))
+	{
+		return false;
+	}
+
+	UAudioComponent* AudioComponent =
+		AudioSubsystem->CreateTrackedSFX2D(ECSAudioEvent::BarcodeScan);
+	if (!IsValid(AudioComponent))
+	{
+		return false;
+	}
+
+	AudioComponent->OnAudioFinished.AddUniqueDynamic(
+		this, &UCSCheckoutWidget::HandleBarcodeScanAudioFinished);
+	ActiveBarcodeScanAudioComponent = AudioComponent;
+	bBarcodeScanAudioLocked = true;
+	AudioComponent->Play();
+
+	// 재생 시작 자체가 실패한 경우에는 사운드만 생략하고 계산 진행은 즉시 허용합니다.
+	if (bBarcodeScanAudioLocked &&
+		ActiveBarcodeScanAudioComponent == AudioComponent &&
+		(!IsValid(AudioComponent) || !AudioComponent->IsPlaying()))
+	{
+		ClearBarcodeScanAudioState();
+		return false;
+	}
+
+	return true;
+}
+
+void UCSCheckoutWidget::ClearBarcodeScanAudioState()
+{
+	UAudioComponent* AudioComponent = ActiveBarcodeScanAudioComponent.Get();
+	if (IsValid(AudioComponent))
+	{
+		AudioComponent->OnAudioFinished.RemoveDynamic(
+			this, &UCSCheckoutWidget::HandleBarcodeScanAudioFinished);
+		if (AudioComponent->IsPlaying())
+		{
+			AudioComponent->Stop();
+		}
+		if (IsValid(AudioComponent))
+		{
+			AudioComponent->DestroyComponent();
+		}
+	}
+
+	ActiveBarcodeScanAudioComponent = nullptr;
+	bBarcodeScanAudioLocked = false;
 }

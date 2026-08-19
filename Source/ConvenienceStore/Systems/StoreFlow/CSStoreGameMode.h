@@ -7,6 +7,8 @@
 
 class ACSStoreGameState;
 class UDataTable;
+class UCSAudioConfigDataAsset;
+class UCSStoreEconomyDataAsset;
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
 class UCSTutorialBannerWidgetBase;
@@ -83,6 +85,14 @@ protected:
 	// 상품 신선도의 초기값과 시간 기반 감소량을 제공하는 전역 설정입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Freshness")
 	TObjectPtr<UCSFreshnessSettingsDataAsset> FreshnessSettingsDataAsset;
+
+	// 임대료 납부 주기와 일차별 금액을 제공하는 상점 경제 설정입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Economy")
+	TObjectPtr<UCSStoreEconomyDataAsset> StoreEconomyDataAsset;
+
+	// BGM, SFX 이벤트 에셋과 SoundMix 라우팅을 제공하는 공용 오디오 설정입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Audio")
+	TObjectPtr<UCSAudioConfigDataAsset> StoreAudioConfigDataAsset;
 
 	// 하루를 시작할 게임 내 시각입니다. 기본값은 08:00 AM입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time", meta = (ClampMin = "0", ClampMax = "1440"))

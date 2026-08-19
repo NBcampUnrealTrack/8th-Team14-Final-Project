@@ -6,6 +6,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
@@ -13,10 +14,32 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
 #include "UI/Checkout/CSCheckoutWidget.h"
+
+namespace
+{
+void PlayCheckoutGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+{
+	if (!IsValid(WorldContextActor))
+	{
+		return;
+	}
+
+	if (UGameInstance* GameInstance = WorldContextActor->GetGameInstance();
+		IsValid(GameInstance))
+	{
+		if (UCSAudioSubsystem* AudioSubsystem =
+			GameInstance->GetSubsystem<UCSAudioSubsystem>(); IsValid(AudioSubsystem))
+		{
+			AudioSubsystem->PlaySFX(AudioEvent);
+		}
+	}
+}
+}
 
 ACSCheckoutCounterActor::ACSCheckoutCounterActor()
 {
@@ -402,9 +425,9 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 
 void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 {
-	// 다른 위젯 또는 스캔이 끝나지 않은 위젯의 요청은 처리하지 않습니다.
+	// 완료 연출 중이거나 마지막 바코드음까지 끝나지 않은 위젯의 요청은 처리하지 않습니다.
 	if (bIsCheckoutTransitioning || !IsValid(ActiveCheckoutWidget) ||
-		!ActiveCheckoutWidget->IsScanComplete())
+		!ActiveCheckoutWidget->CanCompleteCheckout())
 	{
 		return;
 	}
@@ -473,6 +496,7 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 			TEXT("[CheckoutCounter] 거래 기록에 실패하여 손님 결제를 완료하지 않습니다."));
 		return;
 	}
+	PlayCheckoutGameplaySFX(this, ECSAudioEvent::CheckoutComplete);
 
 	// 거래를 먼저 기록한 뒤 손님 Subsystem에 완료를 알려 다음 손님이 연출 중 앞으로 이동하게 합니다.
 	if (IsValid(FrontCustomer))

@@ -9,6 +9,7 @@
 
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
+class UCSStoreEconomyDataAsset;
 class ACSProductPickupActor;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
@@ -170,6 +171,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	int32 DailyWasteLossGold = 0;
 
+	// 오늘 마감 정산에서 실제로 납부한 임대료입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyRentGold = 0;
+
 	// 상품 분석에서 오늘 폐기된 상품별 수량을 표시하기 위한 집계입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TMap<FName, int32> DailyDisposedProductQuantities;
@@ -267,6 +272,28 @@ public:
 
 	bool InitializeStoreProgression(UCSStoreProgressionDataAsset* InProgressionDataAsset);
 	bool InitializeFreshnessSettings(UCSFreshnessSettingsDataAsset* InFreshnessSettingsDataAsset);
+	bool InitializeStoreEconomy(UCSStoreEconomyDataAsset* InStoreEconomyDataAsset);
+
+	// Daily Summary 요청 직전에 현재 영업일의 임대료를 한 번만 처리합니다.
+	bool ProcessDailyRent();
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	int32 GetDailyRentGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	int32 GetCurrentRentGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	int32 GetNextRentPaymentBusinessDay() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	int32 GetDaysUntilNextRentPayment() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	int32 GetNextRentGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Economy")
+	bool IsRentPaymentDay() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Freshness")
 	UCSFreshnessSettingsDataAsset* GetFreshnessSettings() const;
@@ -359,7 +386,13 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UCSFreshnessSettingsDataAsset> FreshnessSettingsDataAsset;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreEconomyDataAsset> StoreEconomyDataAsset;
+
 private:
+	// 임대료처럼 잔액과 관계없이 확정되는 비용에만 사용하는 내부 지출 경로입니다.
+	bool ApplyForcedExpense(int32 Amount);
+
 	// 영업일 안에서 다음 거래에 사용할 순번입니다.
 	int32 NextTransactionId = 1;
 
@@ -368,4 +401,7 @@ private:
 
 	// 확인을 마친 직전 정산의 최종 순이익입니다.
 	int32 PreviousDailyNetProfitGold = 0;
+
+	// 같은 영업일의 마감 진입이 반복되어도 임대료를 다시 차감하지 않습니다.
+	int32 LastRentProcessedBusinessDay = INDEX_NONE;
 };

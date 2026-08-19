@@ -11,8 +11,10 @@
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
@@ -84,6 +86,9 @@ void UCSTutorialSubsystem::Deinitialize()
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
+	UnsubscribeFromOrderSubsystem();
+	UnsubscribeFromPricingSubsystem();
+	UnsubscribeFromStoreGameState();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -124,6 +129,9 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToLevelDisposables();
 	SubscribeToLevelShelves();
 	TrySubscribeToPlayerController();
+	SubscribeToOrderSubsystem();
+	SubscribeToPricingSubsystem();
+	SubscribeToStoreGameState();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -197,11 +205,16 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
+	UnsubscribeFromOrderSubsystem();
+	UnsubscribeFromPricingSubsystem();
+	UnsubscribeFromStoreGameState();
 	CloseTutorialWidgets();
 }
 
 void UCSTutorialSubsystem::BroadcastCurrentStep() const
 {
+	const FCSTutorialStepRow& DebugRow = *StepRows[CurrentStepIndex];
+
 	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
@@ -288,7 +301,7 @@ void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
 
 		if (UCSTutorialMarkerComponent* MarkerComponent = Actor->FindComponentByClass<UCSTutorialMarkerComponent>())
 		{
-			MarkerComponent->ShowMarker(CurrentRow.ObjectiveText);
+			MarkerComponent->ShowMarker(CurrentRow.MarkerLabelText);
 			ActiveMarkerComponents.Add(MarkerComponent);
 		}
 	}
@@ -337,6 +350,7 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 	}
 
 	AActor* SpawnedShelf = World->SpawnActor<AActor>(ShelfClass, SpawnPoint->GetActorTransform());
+	TutorialSpawnedShelf = SpawnedShelf;
 
 	// 발주 포탈 시스템과 무관하게 튜토리얼이 직접 미설치 상태로 초기화
 	// (기존 건축 시스템의 TryPickUpBuildableFacility로 바로 주울 수 있는 상태가 됨)
@@ -349,6 +363,18 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Tutorial] TutorialShelfFacilityClass(%s)가 ICSBuildableFacility를 구현하지 않습니다."),
 			*ShelfClass->GetName());
+	}
+
+	if (IsValid(SpawnedShelf))
+	{
+		UCSTutorialMarkerComponent* HighlightComponent =
+			NewObject<UCSTutorialMarkerComponent>(SpawnedShelf);
+		if (IsValid(HighlightComponent))
+		{
+			HighlightComponent->SetupAttachment(SpawnedShelf->GetRootComponent());
+			HighlightComponent->RegisterComponent();
+			HighlightComponent->ShowMarker(FText::GetEmpty());
+		}
 	}
 
 	bTutorialShelfSpawned = true;
@@ -409,6 +435,12 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 		DebugDestroyRemainingTrash();
 	}
 
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::PlaceFacility)
+	{
+		DebugHideTutorialShelfHighlight();
+	}
+
 	AdvanceStep();
 }
 
@@ -427,6 +459,22 @@ void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
 			It->Destroy();
 		}
 	}
+}
+
+void UCSTutorialSubsystem::DebugHideTutorialShelfHighlight()
+{
+	if (!IsValid(TutorialSpawnedShelf))
+	{
+		return;
+	}
+
+	if (UCSTutorialMarkerComponent* HighlightComponent =
+		TutorialSpawnedShelf->FindComponentByClass<UCSTutorialMarkerComponent>())
+	{
+		HighlightComponent->HideMarker();
+	}
+
+	TutorialSpawnedShelf = nullptr;
 }
 
 void UCSTutorialSubsystem::CreateTutorialWidgets(ACSStoreGameMode* GameMode)
@@ -648,6 +696,78 @@ void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
 	SubscribedPlayerController = nullptr;
 }
 
+void UCSTutorialSubsystem::SubscribeToOrderSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSOrderSubsystem* OrderSubsystem = World->GetSubsystem<UCSOrderSubsystem>())
+		{
+			SubscribedOrderSubsystem = OrderSubsystem;
+			OrderSubsystem->OnOrderPlaced.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleOrderPlaced);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromOrderSubsystem()
+{
+	if (IsValid(SubscribedOrderSubsystem))
+	{
+		SubscribedOrderSubsystem->OnOrderPlaced.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleOrderPlaced);
+	}
+
+	SubscribedOrderSubsystem = nullptr;
+}
+
+void UCSTutorialSubsystem::SubscribeToPricingSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSStorePricingSubsystem* PricingSubsystem = World->GetSubsystem<UCSStorePricingSubsystem>())
+		{
+			SubscribedPricingSubsystem = PricingSubsystem;
+			PricingSubsystem->OnSalePriceChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleSalePriceChanged);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromPricingSubsystem()
+{
+	if (IsValid(SubscribedPricingSubsystem))
+	{
+		SubscribedPricingSubsystem->OnSalePriceChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleSalePriceChanged);
+	}
+
+	SubscribedPricingSubsystem = nullptr;
+}
+
+void UCSTutorialSubsystem::SubscribeToStoreGameState()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (ACSStoreGameState* StoreGameState = World->GetGameState<ACSStoreGameState>())
+		{
+			SubscribedStoreGameState = StoreGameState;
+			StoreGameState->OnStoreOpenStateChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromStoreGameState()
+{
+	if (IsValid(SubscribedStoreGameState))
+	{
+		SubscribedStoreGameState->OnStoreOpenStateChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+	}
+
+	SubscribedStoreGameState = nullptr;
+}
+
 void UCSTutorialSubsystem::SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter)
 {
 	if (!IsValid(PlayerCharacter))
@@ -709,7 +829,7 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 		SubscribedTrashCans.AddUnique(TrashCan);
 	}
 
-	// 같은 이유로 새로 배치된 진열대도 여기서 구독을 걸어줌
+	// 같은 이유로 새로 배치된 진열대도 여기서 구독을 걸어준다
 	if (ACSShelfActor* Shelf = Cast<ACSShelfActor>(FacilityActor))
 	{
 		Shelf->OnItemPlaced.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleShelfItemPlaced);
@@ -722,8 +842,60 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 		return;
 	}
 
+	// 정식 배치가 확정된 시점이므로 튜토리얼이 스폰 시점에 켜뒀던 강조 표시를 여기서 끔
+	// (선반 자체에 동적으로 붙인 UCSTutorialMarkerComponent가 대상)
+	if (UCSTutorialMarkerComponent* HighlightComponent =
+		FacilityActor->FindComponentByClass<UCSTutorialMarkerComponent>())
+	{
+		HighlightComponent->HideMarker();
+	}
+	TutorialSpawnedShelf = nullptr;
+
 	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료
 	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
+}
+
+void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
+{
+	(void)Result;   // 이 델리게이트는 발주 성공 시에만 방송되므로 별도 성공 여부 검사가 필요 없음
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceProductOrder)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
+}
+
+void UCSTutorialSubsystem::HandleSalePriceChanged(FName ProductRowName, int32 NewSalePrice)
+{
+	(void)ProductRowName;
+	(void)NewSalePrice;   // 이 델리게이트는 변경 성공 시에만 방송되므로 값 자체는 볼 필요 없음
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::SetProductPrice)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::SetProductPrice);
+}
+
+void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
+{
+	if (!bNewStoreOpen)   // 폐점은 관심 없음 실제로 열릴 때만 반응
+	{
+		return;
+	}
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::OpenSign)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::OpenSign);
 }
 
 void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)

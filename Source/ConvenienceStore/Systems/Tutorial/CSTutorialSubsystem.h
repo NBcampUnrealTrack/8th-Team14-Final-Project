@@ -7,6 +7,7 @@
 
 class UDataTable;
 class ACSStoreGameMode;
+class ACSStoreGameState;
 class ACSTrashCanActor;
 class ACSShelfActor;
 class ACSPlayerCharacter;
@@ -16,6 +17,9 @@ class UCSTutorialMarkerComponent;
 class UCSTutorialBannerWidgetBase;
 class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
+class UCSOrderSubsystem;
+class UCSStorePricingSubsystem;
+struct FCSOrderResult;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
 // 위젯들이 이걸 구독해서 화면 내용을 갱신함
@@ -96,6 +100,9 @@ protected:
 	// [디버그 전용] CleanTrash 스텝을 cs.TNext로 건너뛸 때 레벨에 남은 쓰레기를 전부 정리
 	void DebugDestroyRemainingTrash();
 
+	// [디버그 전용] PlaceFacility 스텝을 cs.TNext로 건너뛸 때 튜토리얼 선반의 강조 표시를 끔
+	void DebugHideTutorialShelfHighlight();
+
 	// 배너/대화창/목표 위젯 3종을 생성해 화면에 올림
 	void CreateTutorialWidgets(ACSStoreGameMode* GameMode);
 
@@ -128,6 +135,18 @@ protected:
 	void SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter);
 	void UnsubscribeFromPlayerCharacter();
 
+	// 발주 서브시스템의 상품 발주 접수 성공 방송을 구독/해제
+	void SubscribeToOrderSubsystem();
+	void UnsubscribeFromOrderSubsystem();
+
+	// 가격 설정 서브시스템의 판매가 변경 성공 방송을 구독/해제
+	void SubscribeToPricingSubsystem();
+	void UnsubscribeFromPricingSubsystem();
+
+	// 게임 상태의 실제 개점 방송을 구독/해제
+	void SubscribeToStoreGameState();
+	void UnsubscribeFromStoreGameState();
+
 	UFUNCTION()
 	void HandleTrashDisposed(AActor* DisposedItem, int32 TotalDisposedCount);
 
@@ -145,6 +164,20 @@ protected:
 	UFUNCTION()
 	void HandleBuildableFacilityPlaced(AActor* FacilityActor);
 
+	// OrderSubsystem의 OnOrderPlaced를 구독해 호출됨
+	// 지금 스텝이 PlaceProductOrder면 스텝 완료 처리
+	UFUNCTION()
+	void HandleOrderPlaced(const FCSOrderResult& Result);
+
+	// PricingSubsystem의 OnSalePriceChanged를 구독해 호출됨
+	UFUNCTION()
+	void HandleSalePriceChanged(FName ProductRowName, int32 NewSalePrice);
+
+	// StoreGameState의 OnStoreOpenStateChanged를 구독해 호출됨
+	// bNewStoreOpen이 true일 때(실제 개점)만 반응
+	UFUNCTION()
+	void HandleStoreOpenStateChanged(bool bNewStoreOpen);
+
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠
 	// 이 배열의 인덱스가 곧 진행 순서
@@ -155,6 +188,12 @@ private:
 	int32 StockShelvesPlacedCount = 0;
 	bool bTutorialCompleted = false;
 	bool bTutorialShelfSpawned = false;
+
+	// TrySpawnTutorialShelfDelivery가 스폰한 선반을 기억해둠
+	// cs.TNext로 PlaceFacility를 건너뛸 때 실제 배치 이벤트 없이도 아웃라인을 끄기 위해 필요
+	UPROPERTY()
+	TObjectPtr<AActor> TutorialSpawnedShelf;
+
 	FTimerHandle AutoAdvanceTimerHandle;
 
 	UPROPERTY()
@@ -181,6 +220,16 @@ private:
 	// 건축 모드 진입/시설 배치 이벤트의 RemoveDynamic을 위해 구독 대상을 보관
 	UPROPERTY()
 	TObjectPtr<ACSPlayerCharacter> SubscribedPlayerCharacter;
+
+	// 발주 서브시스템 구독 해제를 위해 보관
+	UPROPERTY()
+	TObjectPtr<UCSOrderSubsystem> SubscribedOrderSubsystem;
+
+	UPROPERTY()
+	TObjectPtr<UCSStorePricingSubsystem> SubscribedPricingSubsystem;
+
+	UPROPERTY()
+	TObjectPtr<ACSStoreGameState> SubscribedStoreGameState;
 
 	// TrySubscribeToPlayerController()가 재시도에 사용하는 타이머 핸들
 	FTimerHandle PlayerControllerSubscribeRetryTimerHandle;
