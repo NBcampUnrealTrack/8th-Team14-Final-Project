@@ -141,6 +141,33 @@ bool ACSStoreGameState::TrySpendFunds(int32 Amount)
 	return true;
 }
 
+bool ACSStoreGameState::ApplyForcedExpense(int32 Amount)
+{
+	if (Amount < 0)
+	{
+		return false;
+	}
+
+	if (Amount == 0)
+	{
+		return true;
+	}
+
+	const int64 NewFunds = static_cast<int64>(CurrentFunds) - Amount;
+	if (NewFunds < MIN_int32 || NewFunds > MAX_int32)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 강제 지출 %dG 적용 시 자금이 int32 범위를 벗어나 처리하지 않습니다. 현재 자금=%dG"),
+			Amount,
+			CurrentFunds);
+		return false;
+	}
+
+	CurrentFunds = static_cast<int32>(NewFunds);
+	OnFundsChanged.Broadcast(CurrentFunds);
+	return true;
+}
+
 bool ACSStoreGameState::AddFunds(int32 Amount)
 {
 	if (Amount < 0)
@@ -275,17 +302,7 @@ bool ACSStoreGameState::ProcessDailyRent()
 
 	const int32 RentGold =
 		StoreEconomyDataAsset->GetRentGoldForBusinessDay(CurrentBusinessDay);
-	if (!CanAfford(RentGold))
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[StoreGameState] %d일차 임대료 %dG를 납부할 자금이 부족합니다. 현재 자금=%dG"),
-			CurrentBusinessDay,
-			RentGold,
-			CurrentFunds);
-		return false;
-	}
-
-	if (!TrySpendFunds(RentGold))
+	if (!ApplyForcedExpense(RentGold))
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[StoreGameState] %d일차 임대료 %dG 차감에 실패했습니다."),

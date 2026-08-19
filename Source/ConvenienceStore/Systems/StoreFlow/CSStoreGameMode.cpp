@@ -1,9 +1,12 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
+#include "Data/CSAudioConfigDataAsset.h"
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSStoreEconomyDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Engine/DataTable.h"
+#include "Engine/GameInstance.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 
@@ -56,6 +59,39 @@ void ACSStoreGameMode::BeginPlay()
 			UE_LOG(LogTemp, Warning,
 				TEXT("[StoreGameMode] StoreEconomyDataAsset 설정이 유효하지 않아 임대료를 처리하지 않습니다."));
 		}
+	}
+
+	if (!IsValid(StoreAudioConfigDataAsset))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameMode] StoreAudioConfigDataAsset이 지정되지 않아 공용 사운드 시스템을 초기화하지 않습니다."));
+	}
+	else if (UGameInstance* GameInstance = GetGameInstance(); IsValid(GameInstance))
+	{
+		if (UCSAudioSubsystem* AudioSubsystem =
+			GameInstance->GetSubsystem<UCSAudioSubsystem>(); IsValid(AudioSubsystem))
+		{
+			if (!AudioSubsystem->InitializeAudio(StoreAudioConfigDataAsset))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[StoreGameMode] StoreAudioConfigDataAsset으로 공용 사운드 시스템을 초기화하지 못했습니다."));
+			}
+			else if (!AudioSubsystem->PlayBGM())
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[StoreGameMode] StoreBGM이 지정되지 않았거나 현재 월드에서 재생할 수 없습니다."));
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] UCSAudioSubsystem을 찾을 수 없습니다."));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameMode] GameInstance를 찾을 수 없어 공용 사운드 시스템을 초기화하지 못했습니다."));
 	}
 
 	if (bStartFlowOnBeginPlay)

@@ -5,13 +5,36 @@
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "TimerManager.h"
+
+namespace
+{
+void PlayGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
+{
+	if (!IsValid(WorldContextActor))
+	{
+		return;
+	}
+
+	if (UGameInstance* GameInstance = WorldContextActor->GetGameInstance();
+		IsValid(GameInstance))
+	{
+		if (UCSAudioSubsystem* AudioSubsystem =
+			GameInstance->GetSubsystem<UCSAudioSubsystem>(); IsValid(AudioSubsystem))
+		{
+			AudioSubsystem->PlaySFX(AudioEvent);
+		}
+	}
+}
+}
 
 ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 {
@@ -245,6 +268,7 @@ bool ACSDeliveryCrateActor::ConsumeOne()
 	if (RemainingQuantity == 0)
 	{
 		OnCrateDepleted();
+		PlayGameplaySFX(this, ECSAudioEvent::DeliveryCrateDisappear);
 		Destroy();
 	}
 
