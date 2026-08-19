@@ -6,9 +6,8 @@
 #include "CSCheckoutWidget.generated.h"
 
 class UButton;
-class UScrollBox;
 class UTextBlock;
-class UCSCheckoutOrderRowWidget;
+class UCSCheckoutReceiptWidget;
 
 // 모든 상품 스캔 후 결제를 요청할 때 계산대에 알리는 이벤트입니다.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnCheckoutPaymentRequested);
@@ -18,6 +17,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnCheckoutCancelled);
 
 // 상품 한 개의 스캔이 끝났을 때 계산대의 표시용 상품을 갱신하도록 알리는 이벤트입니다.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutItemScanned, FName, ProductId);
+
+// 영수증 완료·퇴장 연출이 모두 끝나 다음 손님 또는 UI 종료를 준비할 수 있음을 계산대에 알립니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnReceiptExitFinished);
 
 // 손님 주문을 표시하고 상품별 스캔 진행 상태를 관리하는 계산대 UI의 기본 클래스입니다.
 UCLASS(Abstract)
@@ -40,17 +42,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Checkout")
 	bool IsScanComplete() const;
 
-	// 블루프린트에서 주문 목록을 생성하거나 갱신할 수 있도록 호출합니다.
-	UFUNCTION(BlueprintImplementableEvent, Category = "Checkout")
-	void RefreshCheckoutDisplay();
+	// 결제가 확정된 뒤 입력을 잠그고 최종 합계·도장·영수증 퇴장 연출을 WBP에 요청합니다.
+	void BeginCheckoutCompletionSequence();
+
+	// 다음 손님의 데이터가 적용된 뒤 새 영수증 등장 연출을 WBP에 요청합니다.
+	void BeginNextCustomerReceipt();
+
+	// WBP의 영수증 퇴장 애니메이션 Finished에서 호출합니다.
+	UFUNCTION(BlueprintCallable, Category = "Checkout|Animation")
+	void NotifyReceiptExitFinished();
 
 	// 블루프린트 UI에서 상품별 행을 만들 때 사용할 주문 목록입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Checkout")
 	TArray<FCSCheckoutLineItem> OrderItems;
-
-	// 가장 최근에 스캔한 상품 이름입니다.
-	UPROPERTY(BlueprintReadOnly, Category = "Checkout")
-	FText LastScannedItemName;
 
 	// 현재까지 스캔한 상품 개수입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Checkout")
@@ -80,8 +84,24 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Checkout")
 	FCSOnCheckoutItemScanned OnItemScanned;
 
+	// 영수증 퇴장 완료 후 계산대가 다음 대기 손님을 선택하도록 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Checkout")
+	FCSOnReceiptExitFinished OnReceiptExitFinished;
+
 protected:
 	virtual void NativeConstruct() override;
+
+	// 상품 스캔 결과가 화면에 반영된 뒤 WBP에 숫자와 합계 피드백 연출을 요청합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Checkout|Animation")
+	void OnScanFeedbackRequested();
+
+	// 자식 영수증의 완료 연출이 끝난 뒤 WBP에서 영수증 퇴장 애니메이션을 재생합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Checkout|Animation")
+	void OnReceiptExitRequested();
+
+	// 다음 주문 초기화가 끝난 뒤 WBP에서 새 영수증 등장 애니메이션을 재생합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Checkout|Animation")
+	void OnNextCustomerReceiptRequested();
 
 	// 상품을 한 줄씩 스캔할 수 있는 버튼입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -95,29 +115,26 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UButton> CancelCheckoutButton;
 
-	// 현재 스캔 진행도를 표시할 텍스트입니다.
+	// 현재까지 스캔한 상품 개수를 표시할 텍스트입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> ScanProgressText;
+	TObjectPtr<UTextBlock> Text_ScannedCount;
+
+	// 주문에 포함된 전체 상품 개수를 표시할 텍스트입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> Text_TotalItemCount;
 
 	// 스캔된 상품의 합계를 표시할 텍스트입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ScannedTotalText;
 
-	// 가장 최근에 스캔한 상품 이름을 표시할 텍스트입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UTextBlock> LastScannedItemText;
-
 	// 계산 진행 상태와 안내 문구를 표시할 텍스트입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CheckoutStatusText;
 
-	// 주문 상품 행을 동적으로 추가할 ScrollBox입니다.
-	UPROPERTY(meta = (BindWidgetOptional))
-	TObjectPtr<UScrollBox> OrderListScrollBox;
-
-	// 주문 목록에 추가할 행 위젯 클래스입니다. 블루프린트 자식 클래스를 지정하면됩니다.
-	UPROPERTY(EditDefaultsOnly, Category = "Checkout|UI")
-	TSubclassOf<UCSCheckoutOrderRowWidget> OrderRowWidgetClass;
+	// 새 계산대 화면에 배치된 영수증 자식 위젯입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Checkout|Receipt",
+		meta = (BindWidgetOptional))
+	TObjectPtr<UCSCheckoutReceiptWidget> ReceiptWidget;
 
 	// 스캔 버튼 클릭을 다음 상품 스캔 처리로 연결합니다.
 	UFUNCTION()
@@ -131,10 +148,14 @@ protected:
 	UFUNCTION()
 	void HandleCancelCheckoutClicked();
 
-	// 현재 주문 목록을 기준으로 ScrollBox의 행을 새로 생성합니다.
-	void RefreshOrderList();
+	// 자식 영수증의 합계·도장·흔들림 연출 완료를 받아 부모 영수증 퇴장을 요청합니다.
+	UFUNCTION()
+	void HandleReceiptCompletionFinished();
 
 private:
+	// 완료 연출 중 스캔·결제·취소가 중복 실행되지 않게 막습니다.
+	bool bIsCheckoutTransitioning = false;
+
 	// 현재 스캔할 주문 행의 인덱스입니다.
 	int32 CurrentLineItemIndex = 0;
 

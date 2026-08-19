@@ -1,9 +1,8 @@
 #include "UI/Checkout/CSCheckoutWidget.h"
 
 #include "Components/Button.h"
-#include "Components/ScrollBox.h"
 #include "Components/TextBlock.h"
-#include "UI/Checkout/CSCheckoutOrderRowWidget.h"
+#include "UI/Checkout/CSCheckoutReceiptWidget.h"
 
 void UCSCheckoutWidget::NativeConstruct()
 {
@@ -29,6 +28,13 @@ void UCSCheckoutWidget::NativeConstruct()
 			this, &UCSCheckoutWidget::HandleCancelCheckoutClicked);
 	}
 
+	// 자식 영수증 애니메이션의 실제 Finished 신호로 부모 퇴장 연출을 이어갑니다.
+	if (IsValid(ReceiptWidget))
+	{
+		ReceiptWidget->OnReceiptCompletionFinished.AddUniqueDynamic(
+			this, &UCSCheckoutWidget::HandleReceiptCompletionFinished);
+	}
+
 	UpdateCheckoutDisplay();
 }
 
@@ -43,7 +49,12 @@ void UCSCheckoutWidget::SetCheckoutOrder(
 	ScannedSalePrice = 0;
 	CurrentLineItemIndex = 0;
 	ScannedQuantityInCurrentLine = 0;
-	LastScannedItemName = FText::GetEmpty();
+	bIsCheckoutTransitioning = false;
+
+	if (IsValid(ReceiptWidget))
+	{
+		ReceiptWidget->ResetReceipt();
+	}
 
 	TotalItemCount = 0;
 	for (const FCSCheckoutLineItem& LineItem : OrderItems)
@@ -57,6 +68,12 @@ void UCSCheckoutWidget::SetCheckoutOrder(
 
 bool UCSCheckoutWidget::ScanNextItem()
 {
+	// 이전 손님의 결제 완료 연출 중에는 다음 입력을 받지 않습니다.
+	if (bIsCheckoutTransitioning)
+	{
+		return false;
+	}
+
 	// 모든 주문 행을 스캔한 경우에는 추가 스캔을 처리하지 않습니다.
 	if (IsScanComplete())
 	{
@@ -77,14 +94,26 @@ bool UCSCheckoutWidget::ScanNextItem()
 	}
 
 	const FCSCheckoutLineItem& LineItem = OrderItems[CurrentLineItemIndex];
-	LastScannedItemName = LineItem.ItemName;
 	++ScannedItemCount;
 	++ScannedQuantityInCurrentLine;
 	ScannedSalePrice += LineItem.UnitSalePrice;
 
+	if (IsValid(ReceiptWidget))
+	{
+		// 기존 스캔 진행 상태를 표시용 데이터로 복사해 영수증에는 스캔 완료분만 전달합니다.
+		FCSCheckoutLineItem ReceiptLineItem = LineItem;
+		ReceiptLineItem.Quantity = ScannedQuantityInCurrentLine;
+		ReceiptLineItem.LineTotalSalePrice =
+			ReceiptLineItem.UnitSalePrice * ReceiptLineItem.Quantity;
+		ReceiptWidget->AddOrUpdateLineItem(ReceiptLineItem);
+	}
+
 	// 계산대가 같은 상품의 표시용 액터를 제거하거나 연출할 수 있도록 스캔 대상을 알립니다.
 	OnItemScanned.Broadcast(LineItem.ProductId);
+
+	// 숫자와 현재 합계를 먼저 새 값으로 갱신한 뒤 WBP가 해당 값에 피드백 연출을 적용하게 합니다.
 	UpdateCheckoutDisplay();
+	OnScanFeedbackRequested();
 	return true;
 }
 
@@ -103,95 +132,106 @@ void UCSCheckoutWidget::HandleScanNextItemClicked()
 void UCSCheckoutWidget::HandleCompleteCheckoutClicked()
 {
 	// 스캔이 끝나지 않은 주문은 결제 요청을 보내지 않습니다.
-	if (!IsScanComplete())
+	if (bIsCheckoutTransitioning || !IsScanComplete())
 	{
 		return;
 	}
 
-	// 실제 손님 퇴장과 대기열 갱신은 계산대가 담당하므로 이벤트로만 요청합니다.
+	// 합계 표시는 거래 검증이 성공한 뒤 계산대가 완료 연출을 요청할 때 시작합니다.
 	OnPaymentRequested.Broadcast();
 }
 
 void UCSCheckoutWidget::HandleCancelCheckoutClicked()
 {
+	if (bIsCheckoutTransitioning)
+	{
+		return;
+	}
+
 	// 계산 취소는 손님의 장바구니와 대기열을 변경하지 않고 UI를 닫는 용도로만 사용합니다.
 	OnCheckoutCancelled.Broadcast();
 }
 
+void UCSCheckoutWidget::BeginCheckoutCompletionSequence()
+{
+	if (bIsCheckoutTransitioning)
+	{
+		return;
+	}
+
+	// 결제가 확정된 순간부터 퇴장 완료까지 모든 버튼 입력을 잠급니다.
+	bIsCheckoutTransitioning = true;
+	if (IsValid(ReceiptWidget))
+	{
+		ReceiptWidget->SetFinalTotal(TotalSalePrice);
+		ReceiptWidget->BeginReceiptCompletionSequence();
+	}
+	UpdateCheckoutDisplay();
+}
+
+void UCSCheckoutWidget::BeginNextCustomerReceipt()
+{
+	// SetCheckoutOrder로 새 데이터와 영수증이 초기화된 뒤 등장 연출만 별도로 요청합니다.
+	OnNextCustomerReceiptRequested();
+}
+
+void UCSCheckoutWidget::NotifyReceiptExitFinished()
+{
+	// 완료 연출 중 한 번만 계산대에 전달하여 애니메이션 Finished의 중복 연결을 방어합니다.
+	if (!bIsCheckoutTransitioning)
+	{
+		return;
+	}
+
+	OnReceiptExitFinished.Broadcast();
+}
+
+void UCSCheckoutWidget::HandleReceiptCompletionFinished()
+{
+	if (bIsCheckoutTransitioning)
+	{
+		OnReceiptExitRequested();
+	}
+}
+
 void UCSCheckoutWidget::UpdateCheckoutDisplay()
 {
-	if (IsValid(ScanProgressText))
+	if (IsValid(Text_ScannedCount))
 	{
-		ScanProgressText->SetText(FText::Format(
-			NSLOCTEXT("Checkout", "ScanProgress", "스캔: {0} / {1}"),
-			FText::AsNumber(ScannedItemCount),
-			FText::AsNumber(TotalItemCount)));
+		Text_ScannedCount->SetText(FText::AsNumber(ScannedItemCount));
+	}
+
+	if (IsValid(Text_TotalItemCount))
+	{
+		Text_TotalItemCount->SetText(FText::AsNumber(TotalItemCount));
 	}
 
 	if (IsValid(ScannedTotalText))
 	{
-		ScannedTotalText->SetText(FText::Format(
-			NSLOCTEXT("Checkout", "ScannedTotal", "합계: {0} 골드"),
-			FText::AsNumber(ScannedSalePrice)));
-	}
-
-	if (IsValid(LastScannedItemText))
-	{
-		LastScannedItemText->SetText(LastScannedItemName);
+		ScannedTotalText->SetText(FText::AsNumber(ScannedSalePrice));
 	}
 
 	if (IsValid(CheckoutStatusText))
 	{
 		CheckoutStatusText->SetText(IsScanComplete()
-			? NSLOCTEXT("Checkout", "ReadyToPay", "스캔이 완료되었습니다. 결제를 진행해 주세요.")
+			? NSLOCTEXT("Checkout", "ReadyToPay", "결제를 완료해 주세요.")
 			: NSLOCTEXT("Checkout", "Scanning", "상품을 스캔해 주세요."));
 	}
 
 	if (IsValid(ScanNextItemButton))
 	{
-		ScanNextItemButton->SetIsEnabled(!IsScanComplete());
+		ScanNextItemButton->SetIsEnabled(!bIsCheckoutTransitioning && !IsScanComplete());
 	}
 
 	if (IsValid(CompleteCheckoutButton))
 	{
 		// 결제 완료 버튼의 실제 처리 연결은 계산대 결제 단계에서 추가합니다.
-		CompleteCheckoutButton->SetIsEnabled(IsScanComplete());
+		CompleteCheckoutButton->SetIsEnabled(!bIsCheckoutTransitioning && IsScanComplete());
 	}
 
-	// C++에서 주문 목록 행을 갱신하고, 기존 블루프린트 표시 확장 이벤트도 계속 호출합니다.
-	RefreshOrderList();
-	RefreshCheckoutDisplay();
-}
-
-void UCSCheckoutWidget::RefreshOrderList()
-{
-	// ScrollBox 또는 행 위젯 클래스가 아직 설정되지 않은 경우에는 기존 UI 기능만 유지합니다.
-	if (!IsValid(OrderListScrollBox) || OrderRowWidgetClass == nullptr)
+	if (IsValid(CancelCheckoutButton))
 	{
-		return;
+		CancelCheckoutButton->SetIsEnabled(!bIsCheckoutTransitioning);
 	}
 
-	// 주문이 바뀌거나 스캔할 때마다 이전 행을 제거하여 중복 표시를 방지합니다.
-	OrderListScrollBox->ClearChildren();
-
-	for (const FCSCheckoutLineItem& LineItem : OrderItems)
-	{
-		// 유효하지 않은 수량의 데이터는 주문 목록에 표시하지 않습니다.
-		if (LineItem.Quantity <= 0)
-		{
-			continue;
-		}
-
-		UCSCheckoutOrderRowWidget* OrderRowWidget = CreateWidget<UCSCheckoutOrderRowWidget>(
-			this,
-			OrderRowWidgetClass);
-		if (!IsValid(OrderRowWidget))
-		{
-			continue;
-		}
-
-		// 생성한 행에 상품 데이터를 전달한 뒤 ScrollBox의 마지막 자식으로 추가합니다.
-		OrderRowWidget->SetLineItem(LineItem);
-		OrderListScrollBox->AddChild(OrderRowWidget);
-	}
 }
