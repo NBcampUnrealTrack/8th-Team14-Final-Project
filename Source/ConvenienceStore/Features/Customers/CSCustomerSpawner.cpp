@@ -10,7 +10,9 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Data/CSCustomerVisualDataAsset.h"
 #include "Data/CSVillainTypes.h"
+#include "Data/CSCustomerTrafficDataAsset.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Data/CSStorePhaseTypes.h"
 
 
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
@@ -28,13 +30,142 @@ void ACSCustomerSpawner::BeginPlay()
 	const int32 FixedSeed = CVarCS_FixedSeed.GetValueOnGameThread();
 	MasterStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
+	CachedStoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (IsValid(CachedStoreGameState))
+	{
+		CachedStoreGameState->OnScheduleEventFired.AddDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
+		CachedStoreGameState->OnStorePhaseChanged.AddDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
+		CachedStoreGameState->OnStoreLevelChanged.AddDynamic(this, &ACSCustomerSpawner::HandleStoreLevelChanged);
+	}
+
+	if (!IsValid(TrafficDataAsset))
+	{
+		UE_LOG(LogTemp, Error,TEXT("[CSCustomerSpawner] TrafficDataAsset이 지정되지 않아 상점 레벨과 피크타임이 손님 생성에 반영되지 않습니다. %.1f초 간격 / 최대 %d명으로만 동작합니다."),
+			SpawnInterval, MaxAliveCustomers);
+	}
+
+	// 구독만으로는 부족하고 여기서 현재 레벨을 한 번 읽어야 초기화 순서에 상관없이 맞는다.
+	// 스포너의 BeginPlay가 ACSStoreGameMode::BeginPlay보다 먼저 돌면 아직 레벨이 확정되지 않았지만,
+	// 그 경우엔 게임모드가 초기화하면서 OnStoreLevelChanged를 쏴 주므로 위 구독이 받아 준다.
+	// 반대로 게임모드가 먼저 돌아 브로드캐스트를 놓쳤다면 여기서 읽는 값이 이미 올바른 레벨이다.
+	ApplySpawnTimer();
+}
+
+void ACSCustomerSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsValid(CachedStoreGameState))
+	{
+		CachedStoreGameState->OnScheduleEventFired.RemoveDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
+		CachedStoreGameState->OnStorePhaseChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
+		CachedStoreGameState->OnStoreLevelChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleStoreLevelChanged);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACSCustomerSpawner::HandleScheduleEventFired(FName EventId, FText Message)
+{
+	if (EventId == PeakStartEventId)
+	{
+		bIsPeakActive = true;
+	}
+	else if (EventId == PeakEndEventId)
+	{
+		bIsPeakActive = false;
+	}
+	else
+	{
+		// 배송 도착이나 손님 입장 시작 같은 나머지 이벤트는 생성량과 무관하다.
+		return;
+	}
+
+	// 생성 간격이 바뀌었으니 다음 스폰부터 바로 반영되도록 타이머를 다시 건다.
+	ApplySpawnTimer();
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSCustomerSpawner] 피크타임 %s (상점 레벨 %d) - 생성 간격 %.2f초 / 동시 상한 %d명"),
+		bIsPeakActive ? TEXT("시작") : TEXT("종료"),
+		GetStoreLevel(),
+		GetCurrentSpawnInterval(),
+		GetCurrentMaxAlive());
+}
+
+void ACSCustomerSpawner::HandleStoreLevelChanged(int32 NewLevel)
+{
+	// 레벨이 오르면 생성 간격과 동시 인원 상한이 함께 바뀐다.
+	ApplySpawnTimer();
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSCustomerSpawner] 상점 레벨 %d - 생성 간격 %.2f초 / 동시 상한 %d명%s"),
+		NewLevel,
+		GetCurrentSpawnInterval(),
+		GetCurrentMaxAlive(),
+		bIsPeakActive ? TEXT(" (피크타임 적용 중)") : TEXT(""));
+}
+
+void ACSCustomerSpawner::HandleStorePhaseChanged(ECStorePhase NewPhase)
+{
+	// 영업 단계가 아니면 피크를 유지할 이유가 없다.
+	// 피크 종료 시각을 24:00 이후로 옮기더라도 피크가 다음 날까지 켜진 채 넘어가지 않게 막는다.
+	if (NewPhase != ECStorePhase::Open)
+	{
+		bIsPeakActive = false;
+	}
+
+	// 개점 시점에 맞춰 첫 손님까지의 대기 시간을 다시 잡는다.
+	ApplySpawnTimer();
+}
+
+int32 ACSCustomerSpawner::GetStoreLevel() const
+{
+	if (!IsValid(CachedStoreGameState))
+	{
+		return 1;
+	}
+
+	return CachedStoreGameState->GetStoreLevel();
+}
+
+float ACSCustomerSpawner::GetCurrentSpawnInterval() const
+{
+	if (!IsValid(TrafficDataAsset))
+	{
+		// 설정이 없으면 기존 동작을 그대로 유지
+		return FMath::Max(SpawnInterval, 0.1f);
+	}
+
+	return TrafficDataAsset->GetSpawnIntervalSeconds(GetStoreLevel(), bIsPeakActive);
+}
+
+int32 ACSCustomerSpawner::GetCurrentMaxAlive() const
+{
+	if (!IsValid(TrafficDataAsset))
+	{
+		return FMath::Max(MaxAliveCustomers, 1);
+	}
+
+	return TrafficDataAsset->GetMaxAliveCustomers(GetStoreLevel(), bIsPeakActive);
+}
+
+void ACSCustomerSpawner::ApplySpawnTimer()
+{
+	const int32 StoreLevel = GetStoreLevel();
+
+	// 개점, 피크 전환, 레벨업처럼 조건이 바뀔 때만 불리는 함수
+	if (IsValid(TrafficDataAsset) && !TrafficDataAsset->HasValuesForLevel(StoreLevel))
+	{
+		UE_LOG(LogTemp, Error,TEXT("[CSCustomerSpawner] 상점 레벨 %d에 해당하는 값이 %s에 없어 가장 가까운 레벨의 값으로 대체합니다."),
+			StoreLevel, *TrafficDataAsset->GetName());
+	}
+
+	const float Interval = GetCurrentSpawnInterval();
 	GetWorldTimerManager().SetTimer(
 		SpawnTimerHandle,
 		this,
 		&ACSCustomerSpawner::TrySpawnCustomer,//실행될 함수
-		SpawnInterval, //반복 주기
+		Interval, //반복 주기
 		true,   // 반복
-		1.0f);  // 첫 스폰까지 1초 대기
+		Interval);  // 첫 스폰까지도 같은 간격만큼 대기
 }
 
 UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() const
@@ -47,7 +178,11 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 	{
 		if (Candidate != nullptr) TotalWeight += Candidate->SpawnWeightBase;
 	}
-	if (TotalWeight <= 0.f) return Archetypes[0]; // 가중치가 전부 0이면 첫 종족으로 폴백
+
+	if (TotalWeight <= 0.f) // 가중치가 전부 0이면 첫 종족으로 폴백
+	{
+		return Archetypes[0];
+	}
 
 	// 0~TotalWeight 사이 난수를 뽑아 가중치를 누적하며 그 난수를 처음 넘는 종족을 선택
 	const float Roll = MasterStream.FRandRange(0.f, TotalWeight);
@@ -160,10 +295,9 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 	}
 
 	// 하루 흐름 시스템 연동:
-	// DT_StorePhase의 bCanSpawnCustomers 플래그를 게이트로 사용.
-	// (준비 08:00~09:00 = 스폰 X, 영업 09:00~ = 스폰 O — 데이터 테이블이 결정)
-	// TODO(확장): GameState의 OnScheduleEventFired를 구독해서
-	//             PeakStart/PeakEnd에 SpawnInterval을 바꾸면 피크타임 웨이브 구현 가능.
+	// GameState의 bCanSpawnCustomers 플래그를 게이트로 사용.
+	// (준비 08:00~09:00 = 스폰 X, 영업 09:00~ = 스폰 O)
+	// 이 값은 ACSStoreGameMode::MakePhaseData()가 단계에 따라 결정한다.
 
 	// 영업 시간대(bCanSpawnCustomers)면 문이 닫혀 있어도 손님을 만든다.
 	// 문이 닫혀 있는 동안에는 이들이 거리를 지나가기만 하고,
@@ -190,8 +324,9 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		}
 	}
 
-	//정리 후 MaxAliveCustomers 이상이면 리턴(상한체크)
-	if (SpawnedCustomers.Num() >= MaxAliveCustomers)
+	//정리 후 현재 레벨(+피크)의 동시 인원 상한 이상이면 리턴(상한체크)
+	// 고정값이 아니라 이 조회를 거쳐야 레벨별 상한과 피크타임 상한이 실제로 적용된다.
+	if (SpawnedCustomers.Num() >= GetCurrentMaxAlive())
 	{
 		return;
 	}
