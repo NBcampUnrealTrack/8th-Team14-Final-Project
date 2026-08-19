@@ -11,6 +11,7 @@
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
@@ -84,6 +85,7 @@ void UCSTutorialSubsystem::Deinitialize()
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
+	UnsubscribeFromOrderSubsystem();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -124,6 +126,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToLevelDisposables();
 	SubscribeToLevelShelves();
 	TrySubscribeToPlayerController();
+	SubscribeToOrderSubsystem();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -197,6 +200,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
+	UnsubscribeFromOrderSubsystem();
 	CloseTutorialWidgets();
 }
 
@@ -683,6 +687,30 @@ void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
 	SubscribedPlayerController = nullptr;
 }
 
+void UCSTutorialSubsystem::SubscribeToOrderSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSOrderSubsystem* OrderSubsystem = World->GetSubsystem<UCSOrderSubsystem>())
+		{
+			SubscribedOrderSubsystem = OrderSubsystem;
+			OrderSubsystem->OnOrderPlaced.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleOrderPlaced);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromOrderSubsystem()
+{
+	if (IsValid(SubscribedOrderSubsystem))
+	{
+		SubscribedOrderSubsystem->OnOrderPlaced.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleOrderPlaced);
+	}
+
+	SubscribedOrderSubsystem = nullptr;
+}
+
 void UCSTutorialSubsystem::SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter)
 {
 	if (!IsValid(PlayerCharacter))
@@ -768,6 +796,19 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 
 	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료
 	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
+}
+
+void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
+{
+	(void)Result;   // 이 델리게이트는 발주 성공 시에만 방송되므로 별도 성공 여부 검사가 필요 없음
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceProductOrder)
+	{
+		return;
+	}
+
+	NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
 }
 
 void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
