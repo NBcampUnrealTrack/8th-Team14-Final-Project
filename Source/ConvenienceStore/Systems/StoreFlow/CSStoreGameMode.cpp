@@ -1,6 +1,7 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 #include "Data/CSFreshnessSettingsDataAsset.h"
+#include "Data/CSStoreEconomyDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -43,6 +44,17 @@ void ACSStoreGameMode::BeginPlay()
 		{
 			UE_LOG(LogTemp, Warning,
 				TEXT("[StoreGameMode] FreshnessSettingsDataAsset으로 신선도 설정을 초기화하지 못했습니다."));
+		}
+
+		if (!IsValid(StoreEconomyDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] StoreEconomyDataAsset이 지정되지 않아 임대료를 처리하지 않습니다."));
+		}
+		else if (!StoreGameState->InitializeStoreEconomy(StoreEconomyDataAsset))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[StoreGameMode] StoreEconomyDataAsset 설정이 유효하지 않아 임대료를 처리하지 않습니다."));
 		}
 	}
 
@@ -226,6 +238,9 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 	// 새벽 02:00에는 입간판 상태와 무관하게 영업을 강제 종료합니다.
 	StoreGameState->bIsStoreOpen = false;
 	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
+
+	// 오늘 정산이 표시되기 전에 임대료를 확정하여 Summary 손실과 순이익에 포함합니다.
+	StoreGameState->ProcessDailyRent();
 
 	// 통계 확인 전에는 UI만 표시하고, 확인 후에 마감 자유 활동 단계로 전환합니다.
 	StoreGameState->RequestDailySummary();
