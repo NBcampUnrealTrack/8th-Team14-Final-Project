@@ -8,8 +8,10 @@
 #include "Features/Interaction/CSInteractable.h"
 #include "CSCheckoutCounterActor.generated.h"
 
+class APlayerController;
 class UArrowComponent;
 class UBoxComponent;
+class UCameraComponent;
 class UDataTable;
 class USceneComponent;
 class UStaticMeshComponent;
@@ -73,12 +75,25 @@ protected:
 	UFUNCTION()
 	void HandleCheckoutItemScanned(FName ProductId);
 
+	// 현재 영수증 퇴장이 끝나면 다음 손님 주문을 같은 UI와 카메라에 연결합니다.
+	UFUNCTION()
+	void HandleReceiptExitFinished();
+
+	// 대기열의 다음 손님 주문과 월드 표시 상품을 현재 계산 세션에 준비합니다.
+	bool PrepareNextCustomerCheckout();
+
 	// 매장 단계가 계산 불가 상태로 바뀌면 진행 중인 계산 UI를 안전하게 닫습니다.
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
 
 	// 계산 UI를 닫고 플레이어 입력을 게임 조작으로 되돌립니다.
 	void CloseCheckoutWidget();
+
+	// 계산 시작 전 시점을 저장하고 계산대에 배치한 카메라로 전환합니다.
+	void ActivateCheckoutCamera(APlayerController* PlayerController);
+
+	// 계산 시작 전에 저장한 플레이어 시점으로 되돌립니다.
+	void RestoreCheckoutCamera();
 
 	// 대기열 맨 앞 손님의 상품 BP를 계산대 상판에 표시용으로 생성합니다.
 	void SpawnCheckoutDisplayProducts();
@@ -95,6 +110,10 @@ protected:
 	// 블루프린트에서 계산대 메시를 지정할 수 있는 컴포넌트입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> CounterMesh;
+
+	// 계산 중 계산대와 손님을 정면으로 보여 주는 카메라입니다. 위치와 회전은 계산대 BP에서 조정합니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Checkout|Camera")
+	TObjectPtr<UCameraComponent> CheckoutCamera;
 
 	// 손님 대기열 반대편의 직원 위치에서만 계산을 시작하도록 제한하는 충돌 영역입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -119,6 +138,11 @@ protected:
 	// 계산대 상호작용 시 생성할 계산 UI 블루프린트 클래스입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Checkout")
 	TSubclassOf<UCSCheckoutWidget> CheckoutWidgetClass;
+
+	// 플레이어 시점과 계산대 시점 사이를 전환하는 시간입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout|Camera",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float CheckoutCameraBlendTime = 0.35f;
 
 	// 계산대 위에 한 줄로 표시할 최대 상품 수입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout|Display",
@@ -151,8 +175,21 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSCustomerCharacter> ActiveCheckoutCustomer;
 
+	// UI가 예외적으로 먼저 사라져도 원래 시점을 복원할 수 있도록 계산 중인 컨트롤러를 저장합니다.
+	UPROPERTY(Transient)
+	TObjectPtr<APlayerController> CheckoutPlayerController;
+
+	// 계산 시작 직전 플레이어가 바라보던 ViewTarget입니다.
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> PreviousCheckoutViewTarget;
+
+	bool bCheckoutCameraActive = false;
+
 	// 결제가 확정된 경우에는 장바구니를 복원하지 않고 봉투 표시를 유지합니다.
 	bool bCheckoutPaymentCompleted = false;
+
+	// 결제 확정부터 영수증 퇴장 완료까지 중복 결제와 취소 요청을 차단합니다.
+	bool bIsCheckoutTransitioning = false;
 
 	// 영업 단계 변경을 감지하기 위해 현재 매장 GameState를 저장합니다.
 	UPROPERTY(Transient)

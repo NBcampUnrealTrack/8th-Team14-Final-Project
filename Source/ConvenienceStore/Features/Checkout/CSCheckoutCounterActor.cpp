@@ -3,6 +3,7 @@
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
+#include "Camera/CameraComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
@@ -28,6 +29,11 @@ ACSCheckoutCounterActor::ACSCheckoutCounterActor()
 	// 계산대 외형은 블루프린트에서 자유롭게 지정할 수 있도록 빈 메시 컴포넌트로 둡니다.
 	CounterMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CounterMesh"));
 	CounterMesh->SetupAttachment(SceneRoot);
+
+	// 실제 구도는 계산대 블루프린트에서 미리 보며 조정하고, C++은 전환 시점만 관리합니다.
+	CheckoutCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CheckoutCamera"));
+	CheckoutCamera->SetupAttachment(SceneRoot);
+	CheckoutCamera->SetAutoActivate(false);
 
 	// 직원 구역은 블루프린트에서 계산대 뒷편으로 옮겨 조정할 수 있도록 별도 BoxCollision Component로 구성합니다.
 	CashierInteractionZone = CreateDefaultSubobject<UBoxComponent>(TEXT("CashierInteractionZone"));
@@ -360,13 +366,17 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 		this, &ACSCheckoutCounterActor::HandleCheckoutCancelled);
 	ActiveCheckoutWidget->OnItemScanned.AddDynamic(
 		this, &ACSCheckoutCounterActor::HandleCheckoutItemScanned);
+	ActiveCheckoutWidget->OnReceiptExitFinished.AddDynamic(
+		this, &ACSCheckoutCounterActor::HandleReceiptExitFinished);
 	ActiveCheckoutWidget->AddToViewport();
+	ActivateCheckoutCamera(PlayerController);
 	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
 		GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 	ActiveCheckoutCustomer = IsValid(CustomerSubsystem)
 		? CustomerSubsystem->GetFrontCustomer()
 		: nullptr;
 	bCheckoutPaymentCompleted = false;
+	bIsCheckoutTransitioning = false;
 	SetCheckoutCustomerBasketVisible(false);
 
 	// UI가 열린 주문과 같은 손님의 상품을 계산대 위에 표시합니다.
@@ -393,7 +403,8 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 {
 	// 다른 위젯 또는 스캔이 끝나지 않은 위젯의 요청은 처리하지 않습니다.
-	if (!IsValid(ActiveCheckoutWidget) || !ActiveCheckoutWidget->IsScanComplete())
+	if (bIsCheckoutTransitioning || !IsValid(ActiveCheckoutWidget) ||
+		!ActiveCheckoutWidget->IsScanComplete())
 	{
 		return;
 	}
@@ -463,20 +474,81 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 		return;
 	}
 
-	// 거래를 먼저 기록한 뒤 손님 Subsystem에 결제 완료를 알려 대기열과 손님 퇴장 흐름을 진행합니다.
+	// 거래를 먼저 기록한 뒤 손님 Subsystem에 완료를 알려 다음 손님이 연출 중 앞으로 이동하게 합니다.
 	if (IsValid(FrontCustomer))
 	{
 		FrontCustomer->ShowShoppingBag();
 	}
 	bCheckoutPaymentCompleted = true;
+	bIsCheckoutTransitioning = true;
 	CustomerSubsystem->CompleteFrontCheckout();
-	CloseCheckoutWidget();
+
+	// UI는 닫지 않고 최종 합계·도장·흔들림·영수증 퇴장 연출을 시작합니다.
+	ActiveCheckoutWidget->BeginCheckoutCompletionSequence();
 }
 
 void ACSCheckoutCounterActor::HandleCheckoutCancelled()
 {
+	if (bIsCheckoutTransitioning)
+	{
+		return;
+	}
+
 	// 취소 시에는 판매 기록과 손님 대기열을 변경하지 않고 계산 UI만 닫습니다.
 	CloseCheckoutWidget();
+}
+
+void ACSCheckoutCounterActor::HandleReceiptExitFinished()
+{
+	if (!bIsCheckoutTransitioning || !IsValid(ActiveCheckoutWidget))
+	{
+		return;
+	}
+
+	// 다음 손님이 유효하면 카메라와 입력 잠금을 유지한 채 새 영수증만 교체합니다.
+	if (CanProcessCheckout() && PrepareNextCustomerCheckout())
+	{
+		bIsCheckoutTransitioning = false;
+		ActiveCheckoutWidget->BeginNextCustomerReceipt();
+		return;
+	}
+
+	// 다음 손님이 없거나 계산 불가 단계라면 이때에만 전체 계산 세션을 종료합니다.
+	CloseCheckoutWidget();
+}
+
+bool ACSCheckoutCounterActor::PrepareNextCustomerCheckout()
+{
+	if (!IsValid(ActiveCheckoutWidget))
+	{
+		return false;
+	}
+
+	TArray<FCSCheckoutLineItem> NextOrderItems;
+	int32 NextTotalSalePrice = 0;
+	if (!BuildFrontCustomerOrder(NextOrderItems, NextTotalSalePrice))
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	ACSCustomerCharacter* NextCustomer =
+		IsValid(CustomerSubsystem) ? CustomerSubsystem->GetFrontCustomer() : nullptr;
+	if (!IsValid(NextCustomer))
+	{
+		return false;
+	}
+
+	// 이전 손님의 표시 액터를 정리한 뒤 다음 손님을 현재 계산 대상으로 교체합니다.
+	ClearCheckoutDisplayProducts();
+	ActiveCheckoutCustomer = NextCustomer;
+	bCheckoutPaymentCompleted = false;
+	SetCheckoutCustomerBasketVisible(false);
+	ActiveCheckoutWidget->SetCheckoutOrder(NextOrderItems, NextTotalSalePrice);
+	SpawnCheckoutDisplayProducts();
+	return true;
 }
 
 void ACSCheckoutCounterActor::HandleCheckoutItemScanned(FName ProductId)
@@ -519,6 +591,9 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 
 void ACSCheckoutCounterActor::CloseCheckoutWidget()
 {
+	// 위젯이 이미 사라진 예외 상황에서도 계산대 카메라에 시점이 남지 않도록 먼저 복원합니다.
+	RestoreCheckoutCamera();
+
 	// UI가 어떤 이유로 닫히더라도 표시용 상품이 월드에 남지 않게 정리합니다.
 	ClearCheckoutDisplayProducts();
 	if (!bCheckoutPaymentCompleted)
@@ -528,6 +603,7 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 	}
 	ActiveCheckoutCustomer = nullptr;
 	bCheckoutPaymentCompleted = false;
+	bIsCheckoutTransitioning = false;
 
 	if (!IsValid(ActiveCheckoutWidget))
 	{
@@ -552,6 +628,63 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget()
 		PlayerController->SetInputMode(InputMode);
 		PlayerController->SetShowMouseCursor(false);
 	}
+}
+
+void ACSCheckoutCounterActor::ActivateCheckoutCamera(
+	APlayerController* PlayerController)
+{
+	if (!IsValid(PlayerController) || !IsValid(CheckoutCamera) || bCheckoutCameraActive)
+	{
+		return;
+	}
+
+	CheckoutPlayerController = PlayerController;
+	PreviousCheckoutViewTarget = PlayerController->GetViewTarget();
+	CheckoutCamera->SetActive(true);
+	PlayerController->SetViewTargetWithBlend(
+		this,
+		CheckoutCameraBlendTime,
+		EViewTargetBlendFunction::VTBlend_Cubic,
+		0.0f,
+		true);
+	bCheckoutCameraActive = true;
+}
+
+void ACSCheckoutCounterActor::RestoreCheckoutCamera()
+{
+	if (!bCheckoutCameraActive)
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = CheckoutPlayerController.Get();
+	if (IsValid(PlayerController))
+	{
+		AActor* RestoreTarget = PreviousCheckoutViewTarget.Get();
+		if (!IsValid(RestoreTarget))
+		{
+			RestoreTarget = PlayerController->GetPawn();
+		}
+
+		if (IsValid(RestoreTarget))
+		{
+			PlayerController->SetViewTargetWithBlend(
+				RestoreTarget,
+				CheckoutCameraBlendTime,
+				EViewTargetBlendFunction::VTBlend_Cubic,
+				0.0f,
+				true);
+		}
+	}
+
+	if (IsValid(CheckoutCamera))
+	{
+		CheckoutCamera->SetActive(false);
+	}
+
+	CheckoutPlayerController = nullptr;
+	PreviousCheckoutViewTarget = nullptr;
+	bCheckoutCameraActive = false;
 }
 
 void ACSCheckoutCounterActor::SetCheckoutCustomerBasketVisible(bool bShouldBeVisible)
