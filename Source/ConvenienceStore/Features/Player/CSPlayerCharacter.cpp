@@ -673,6 +673,9 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		// 튜토리얼 청소 단계에서 줍는 쓰레기 (상품과 동일한 방식으로 물리 정리)
 		TrashActor->PrepareForPickupPhysics();
+
+		// 쓰레기 메시가 화면을 너무 가려서 주웠을 때 메시 가림
+		TrashActor->HideMeshForPickup();
 	}
 
 	PickupActor->SetActorEnableCollision(false);
@@ -1867,6 +1870,8 @@ void ACSPlayerCharacter::DropHeldItem()
 	{
 		// 튜토리얼 쓰레기
 		TrashToDrop->EnableWorldDropPhysics();
+		// 떨어지면 메시 다시 보이게
+		TrashToDrop->ShowMeshAfterDrop();
 	}
 
 }

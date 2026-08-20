@@ -31,6 +31,12 @@ public:
 	// CSPlayerCharacter::DropHeldItem()이 부름
 	void EnableWorldDropPhysics();
 
+	// 손에 들었을 때 메시를 안 보이게 함
+	void HideMeshForPickup();
+
+	// 내려놓을 때 메시를 다시 보이게 함
+	void ShowMeshAfterDrop();
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
