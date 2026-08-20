@@ -3,6 +3,7 @@
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Cart/CSCartActor.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -86,6 +87,11 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     HeldItemAnchor->SetupAttachment(FirstPersonCamera);
     HeldItemAnchor->SetRelativeLocation(FVector(80.0f, 20.0f, -20.0f));
 
+	CartPushAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("CartPushAnchor"));
+	CartPushAnchor->SetupAttachment(GetCapsuleComponent());
+	// 기본값은 편집기에서 보이는 기준점이며, 실제 손잡이 높이는 플레이어 BP에서 조절합니다.
+	CartPushAnchor->SetRelativeLocation(FVector(120.0f, 0.0f, -72.0f));
+
 	BuildPlacementPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(
 		TEXT("BuildPlacementPreviewMesh"));
 	BuildPlacementPreviewMesh->SetupAttachment(GetRootComponent());
@@ -126,6 +132,12 @@ void ACSPlayerCharacter::BeginPlay()
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(PushedCart))
+	{
+		// 플레이어가 제거될 때 수레의 Pawn 충돌 응답도 원래대로 되돌립니다.
+		PushedCart->StopPushing(this);
+		PushedCart = nullptr;
+	}
 	ResetBuildRotationInput();
 	RestoreHeldBuildableActorStates();
 	ClearBuildPlacementPreview();
@@ -225,6 +237,15 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 	{
 		EnhancedInputComponent->BindAction(
 			PrimaryUseAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryUsePrimaryTool);
+	}
+
+	if (ToggleCartPushAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			ToggleCartPushAction,
+			ETriggerEvent::Started,
+			this,
+			&ACSPlayerCharacter::ToggleCartPush);
 	}
 
 }
@@ -616,6 +637,21 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 		return;
 	}
 
+	if (IsValid(PushedCart))
+	{
+		// 수레는 손에 붙이지 않고 손잡이 기준점을 향해 Sweep 이동해 바닥과 벽 충돌을 유지합니다.
+		PushedCart->UpdatePushTransform(CartPushAnchor);
+		if (ACSStorePlayerController* StorePlayerController =
+			Cast<ACSStorePlayerController>(GetController()))
+		{
+			StorePlayerController->ClearInteractionContext();
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "ReleaseCartPrompt", "[F] 수레 놓기"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
 	if (IsValid(HeldActor))
 	{
 		if (HeldActor->Implements<UCSUsableTool>())
@@ -636,9 +672,10 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
-    if (IsBuildMode() ||
+	if (IsBuildMode() ||
 		!IsValid(PickupActor) ||
 		PickupActor->Implements<UCSBuildableFacility>() ||
+		IsValid(PushedCart) ||
 		IsValid(HeldActor) ||
 		HeldItemAnchor == nullptr)
     {
@@ -749,7 +786,23 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	}
 
 	AActor* TargetActor = HitResult.GetActor();
-	if (!IsValid(TargetActor) || !TargetActor->Implements<UCSInteractable>())
+	if (!IsValid(TargetActor))
+	{
+		return;
+	}
+
+	if (const ACSCartActor* Cart = Cast<ACSCartActor>(TargetActor))
+	{
+		if (!IsValid(HeldActor) && !Cart->IsBeingPushed())
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "PushCartPrompt", "[F] 수레 잡기"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
+	if (!TargetActor->Implements<UCSInteractable>())
 	{
 		return;
 	}
@@ -1533,6 +1586,9 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 
 void ACSPlayerCharacter::UpdatePlacementPreview()
 {
+	// 수레가 아닌 대상을 다시 조준하면 이전 수레의 상자 고스트를 먼저 제거합니다.
+	ClearCartPlacementPreview();
+
 	ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(GetController());
 	if (IsValid(StorePlayerController))
@@ -1612,7 +1668,8 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 	}
 
 	AActor* PlacementItem = HeldActor;
-	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
+	ACSCartActor* TargetCart = Cast<ACSCartActor>(TargetActor);
+	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr && TargetCart == nullptr)
 	{
 		// 배송 상자 자체가 아니라 실제 상품 타입인 프리뷰 액터로 슬롯 적합성을 검사합니다.
 		PlacementItem = PlacementPreviewActor;
@@ -1633,8 +1690,24 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		{
 			StorePlayerController->ShowPlacementUnavailablePrompt();
 		}
-        return;
-    }
+		return;
+	}
+
+	if (TargetCart != nullptr && Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
+	{
+		// 수레에는 상품 고스트가 아닌 배송 상자 자체가 실리므로, 상품 프리뷰는 표시하지 않습니다.
+		TargetCart->ShowCratePlacementPreview(
+			CastChecked<ACSDeliveryCrateActor>(HeldActor),
+			PreviewTransform);
+		CartPlacementPreviewTarget = TargetCart;
+		if (IsValid(StorePlayerController))
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "LoadCartPrompt", "[Q] 수레에 상자 싣기"),
+				FLinearColor::White);
+		}
+		return;
+	}
 
     if (IsValid(PlacementPreviewActor))
     {
@@ -1677,6 +1750,12 @@ void ACSPlayerCharacter::DropHeldItem()
 	if (IsBuildMode())
 	{
 		TryPlaceHeldBuildableFacility();
+		return;
+	}
+
+	// 수레를 잡고 이동하는 동안에는 상자 적재·집기와 바닥 내려놓기를 모두 막습니다.
+	if (IsValid(PushedCart))
+	{
 		return;
 	}
 
@@ -1740,6 +1819,23 @@ void ACSPlayerCharacter::DropHeldItem()
 			Cast<ACSTrashActor>(HeldActor) == nullptr &&
 			TargetActor->Implements<UCSShelfPlaceable>())
 		{
+			if (ACSCartActor* TargetCart = Cast<ACSCartActor>(TargetActor);
+				IsValid(TargetCart))
+			{
+				if (ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(HeldActor);
+					IsValid(DeliveryCrate) &&
+					ICSShelfPlaceable::Execute_TryPlaceItem(
+						TargetCart,
+						DeliveryCrate,
+						AimHitResult.ImpactPoint))
+				{
+					HeldActor = nullptr;
+					DestroyPlacementPreview();
+					ClearShelfPlacementHighlights();
+				}
+				return;
+			}
+
 			if (ACSDeliveryCrateActor* DeliveryCrate =
 				Cast<ACSDeliveryCrateActor>(HeldActor))
 			{
@@ -2188,6 +2284,7 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 
 void ACSPlayerCharacter::DestroyPlacementPreview()
 {
+	ClearCartPlacementPreview();
 	ClearShelfPlacementHighlights();
 
 	if (ACSStorePlayerController* StorePlayerController =
@@ -2413,6 +2510,12 @@ void ACSPlayerCharacter::ShowStorageWarning(const FDataTableRowHandle& ProductRo
 
 void ACSPlayerCharacter::TryInteract()
 {
+	// 수레를 잡은 상태에서는 E로 물건을 집거나 다른 상호작용을 실행하지 않습니다.
+	if (IsValid(PushedCart))
+	{
+		return;
+	}
+
     if (FirstPersonCamera == nullptr)
     {
         return;
@@ -2462,4 +2565,54 @@ void ACSPlayerCharacter::TryInteract()
     {
         ICSInteractable::Execute_Interact(HitActor, this);
     }
+}
+
+void ACSPlayerCharacter::ClearCartPlacementPreview()
+{
+	if (IsValid(CartPlacementPreviewTarget))
+	{
+		CartPlacementPreviewTarget->HideCratePlacementPreview();
+	}
+	CartPlacementPreviewTarget = nullptr;
+}
+
+void ACSPlayerCharacter::ToggleCartPush()
+{
+	if (IsBuildMode())
+	{
+		return;
+	}
+
+	if (IsValid(PushedCart))
+	{
+		PushedCart->StopPushing(this);
+		PushedCart = nullptr;
+		return;
+	}
+
+	if (IsValid(HeldActor) || FirstPersonCamera == nullptr || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
+	const FVector TraceEnd = TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
+	if (!GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams))
+	{
+		return;
+	}
+
+	if (ACSCartActor* Cart = Cast<ACSCartActor>(HitResult.GetActor());
+		IsValid(Cart) && Cart->BeginPushing(this))
+	{
+		PushedCart = Cart;
+	}
 }
