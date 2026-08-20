@@ -598,7 +598,22 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::EnterState(FStateTreeExecutionCo
 		return EStateTreeRunStatus::Failed;
 	}
 
-	Data.AIController->MoveToLocation(State->StorefrontLocation, Data.AcceptanceRadius);
+	// 반환값을 확인한다. 경로 요청이 실패하면 손님은 제자리에서 판정만 반복해
+	// "가게 앞까지 못 간다"로 보이는데, 조용히 넘기면 원인 추적이 불가능하다.
+	// (목표 좌표를 NavMesh에 투영하지 못하면 여기서 Failed가 나온다)
+	const EPathFollowingRequestResult::Type MoveResult =
+		Data.AIController->MoveToLocation(State->StorefrontLocation, Data.AcceptanceRadius);
+
+	if (MoveResult == EPathFollowingRequestResult::Failed)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 가게 앞으로 가는 경로 요청 실패 - 목표 %s. "
+				 "판정 지점이 NavMesh 위에 있는지, 목표 Z가 지면 높이인지 확인 필요"),
+			*Data.Actor->GetName(), *State->StorefrontLocation.ToCompactString());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
 	return EStateTreeRunStatus::Running;
 }
 

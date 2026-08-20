@@ -66,13 +66,21 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Spawn")
     int32 MaxAliveCustomers = 5;
 
-    //스폰될 위치를 알려주는 액터 참조 (할당안되어있으면 스포너 자신의 위치에서 생성)
+	// 거리 양쪽 끝 지점A.
+	//
+	// 손님마다 A→B 또는 B→A 중 하나를 뽑아 걷습니다.
+	// 이름이 Entrance/Exit가 아닌 이유: 양방향이라 어느 쪽이 시작인지 손님마다 다릅니다.
+	//
+	// 크기가 있는 액터(TriggerBox 등)를 넣으면 그 영역 안에서 임의 지점을 고르고,
+	// 빈 Actor를 넣으면 그 점 하나만 씁니다.
+	// 할당 안 되어 있으면 스포너 자신의 위치에서 생성됩니다.
     UPROPERTY(EditAnywhere, Category = "Spawn")
-    TObjectPtr<AActor> EntrancePoint;
+    TObjectPtr<AActor> StreetEndpointA;
 
-    // 퇴장 지점 (비워두면 입장 지점과 동일)
+	// 거리 양쪽 끝 지점B. 위와 같습니다.
+	// 비워두면 시작 지점과 동일해져 제자리에서 소멸합니다.
     UPROPERTY(EditAnywhere, Category = "Spawn")
-    TObjectPtr<AActor> ExitPoint;
+    TObjectPtr<AActor> StreetEndpointB;
 
 	// 가게 문 앞 판정 지점.
 	// 영업 중이면 매장에 들어가고, 아니면 ExitPoint로 계속 걸어갑니다.
@@ -122,4 +130,17 @@ private:
 
 	// 아키타입의 VillainChance / VillainActionWeights를 읽어 이 손님의 빌런 행동을 결정.
 	ECSVillainAction RollVillainAction(const UCSCustomerArchetypeDataAsset* Archetype,FRandomStream& Stream) const;
+
+	// 손님이 스폰될 때 가지게 될 캡슐의 크기(반경, 반높이)를 계산
+	// 이유: 박스를 캡슐 반경만큼 줄여 손님이 영역 밖으로 삐져나오지 않게 검사하기 위해
+	bool GetSpawnBodySize(float CharacterScale, float& OutRadius, float& OutHalfHeight) const;
+
+    // 지정된 영역 내부에서 NavMesh 위의 랜덤 지점을 반환
+	// 이유: 크기가 있는 영역를 주면 그 안에서 흩어져서 생성되게 만들며, 빈 액터를 주면 예전처럼 한 점으로 작동하도록 함
+	FVector PickPointInArea(const AActor* AreaActor, const FVector& FallbackLocation,
+		float BodyRadius, float BodyHalfHeight) const;
+
+	// 특정 위치에 손님이 스폰되었을 때 벽, 기둥, 진열대 등 지오메트리에 끼이는지 검사
+	// 영역 스폰을 하다가 특정 장애물에 파묻힌 채로 생성을 방지하기 위해 스폰 전 미리 검사
+	bool IsBodyBlockedAt(const FVector& CapsuleCenter, float BodyRadius, float BodyHalfHeight) const;
 };
