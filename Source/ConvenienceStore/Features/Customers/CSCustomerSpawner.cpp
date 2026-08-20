@@ -13,6 +13,9 @@
 #include "Data/CSCustomerTrafficDataAsset.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Data/CSStorePhaseTypes.h"
+#include "NavigationSystem.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
@@ -285,6 +288,143 @@ ECSVillainAction ACSCustomerSpawner::RollVillainAction(const UCSCustomerArchetyp
 	return Archetype->VillainActionWeights.Last().Action;
 }
 
+bool ACSCustomerSpawner::GetSpawnBodySize(float CharacterScale, float& OutRadius, float& OutHalfHeight) const
+{
+	OutRadius = 0.0f;
+	OutHalfHeight = 0.0f;
+
+	if (CustomerClass == nullptr)
+	{
+		return false;
+	}
+
+	// BP_CSCustomer의 기본 캡슐 설정을 여기서 읽어옴
+	const ACSCustomerCharacter* Template = CustomerClass.GetDefaultObject();
+	if (Template == nullptr || Template->GetCapsuleComponent() == nullptr)
+	{
+		return false;
+	}
+
+	// 충돌 판정 영역의 기본 반경 * 스케일 = 게임 내 충돌 크기
+	// 스폰 직후 손님이 가지게 될 캡슐 크기를 미리 알 수 있음
+	const UCapsuleComponent* Capsule = Template->GetCapsuleComponent();
+	OutRadius = Capsule->GetUnscaledCapsuleRadius() * CharacterScale;
+	OutHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight() * CharacterScale;
+	return true;
+}
+
+bool ACSCustomerSpawner::IsBodyBlockedAt(const FVector& CapsuleCenter, float BodyRadius, float BodyHalfHeight) const
+{
+	// 반경이 없으면 판정도 할꺼 없이 예전방식(점)으로 태어나게 한다.
+	if (BodyRadius <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// 이 영역에 손님 캡슐과  Block하는 물체가 있는지 확인합니다. (같은 다른 손님은 이미 Ignore이라서 false를 반환)
+	const FCollisionShape Body = FCollisionShape::MakeCapsule(BodyRadius, BodyHalfHeight);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(CustomerSpawnFit), false, this);
+	return GetWorld()->OverlapBlockingTestByChannel(CapsuleCenter, FQuat::Identity, ECC_Pawn, Body, Params);
+}
+
+FVector ACSCustomerSpawner::PickPointInArea(const AActor* AreaActor, const FVector& FallbackLocation,float BodyRadius, float BodyHalfHeight) const
+{
+	if (AreaActor == nullptr)
+	{
+		return FallbackLocation;
+	}
+
+	FVector Origin = FVector::ZeroVector;
+	FVector BoxExtent = FVector::ZeroVector;
+	AreaActor->GetActorBounds(false, Origin, BoxExtent);
+
+	// 크기가 없는 지점 액터면 예전처럼 그 점 위치를 그대로 쓴다.
+	// 레벨에 아직 영역 액터를 안 깔았어도 기존 동작이 유지되게 하는게 목적
+	if (BoxExtent.X <= KINDA_SMALL_NUMBER && BoxExtent.Y <= KINDA_SMALL_NUMBER) //KINDA_SMALL_NUMBER은 언리얼 엔진이 제공하는 아주 작은 값을 기준
+	{
+		return AreaActor->GetActorLocation();
+	}
+
+	// 영역 크기 - 손님 반경을 뺀 범위
+	// 이유: 좌표를 끝점으로 위치를 뽑아버리면 손님 스폰이 영역 밖으로 됩니다.
+	// 그걸 방지하기 위한 제한
+	const FVector Limit(FMath::Max(BoxExtent.X - BodyRadius, 0.0f),FMath::Max(BoxExtent.Y - BodyRadius, 0.0f),0.0f);
+
+	// Limit가 0 이하가 되었다는 것은 손님의 반경이 배치된 영역보다 크다는 뜻
+	if (Limit.X <= KINDA_SMALL_NUMBER && Limit.Y <= KINDA_SMALL_NUMBER)
+	{
+		UE_LOG(LogTemp, Warning,TEXT("[CSCustomerSpawner] %s 영역이 손님 몸(반경 %.0f)보다 좁아 중심 한 점만 씁니다. 박스를 한 변 %.0f 이상으로 키우세요."),
+			*AreaActor->GetName(), BodyRadius, BodyRadius * 2.0f);
+	}
+
+	//현재 맵(레벨)에 NavMesh 매니저를 호출
+	const UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
+
+
+	// 위에서계산해 둔 영역의 중심 + 제한선(-Limit ~ Limit) 안에서 랜덤 X, Y 좌표를 뽑습니다.
+	// 재현성을 위해 MasterStream을 사용한다.
+	const FVector Sampled(
+		Origin.X + MasterStream.FRandRange(-Limit.X, Limit.X),
+		Origin.Y + MasterStream.FRandRange(-Limit.Y, Limit.Y),
+		Origin.Z);
+
+	// Sampled의 위치를 NavMesh를 이용해 'NavMesh가 지정된 바닥 좌표'로 맞춰줍니다.
+	FVector Ground = Sampled;
+	if (NavSys != nullptr)
+	{
+		// Sampled기준으로  X,Y,Z측으로 NavMesh를 찾기위한 범위 값입니다.
+		const FVector QueryExtent(
+			FMath::Max(BodyRadius, 50.0f),
+			FMath::Max(BodyRadius, 50.0f),
+			FMath::Max(BodyHalfHeight * 2.0f, 200.0f));
+
+		FNavLocation Projected;
+		// ProjectPointToNavigation: Sampled 위치에서 실제 걸을 수 있는 Navmesh 좌표를 찾습니다.
+		if (NavSys->ProjectPointToNavigation(Sampled, Projected, QueryExtent) == false)
+		{
+
+			// NavMesh와 어긋나면 경고 로그 출력
+			// 이 경고가 계속 뜨면 그때 영역 배치와 NavMesh 범위를 보면 된다.
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSCustomerSpawner] %s 영역에서 뽑은 지점이 NavMesh 밖입니다. 영역 배치와 NavMesh 범위를 확인하세요."),
+				*AreaActor->GetName());
+
+			return Origin;
+		}
+		Ground = Projected.Location;
+	}
+
+
+	// 겹침 검사용으로만 캡슐 중심 높이를 만든다.
+	// IsBodyBlockedAt는 캡슐의 중앙 좌표를 요구하므로, 바닥 좌표에 캐릭터의 절반 높이를 더해줍니다.
+	const FVector CapsuleCenter = Ground + FVector(0.0f, 0.0f, BodyHalfHeight);
+
+	// 충돌 오브젝트에 겹치게 생성이 되는지 확인하는 코드
+	// 생성 자체는 안막지만 문제를 파악할 수 있게 로그를 남김
+	if (IsBodyBlockedAt(CapsuleCenter, BodyRadius, BodyHalfHeight))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSCustomerSpawner] %s 영역에서 뽑은 자리가 벽·기둥에 막혔지만 그대로 내보냅니다(반경 %.0f). 영역이 지오메트리를 물고 있는지 확인하세요."),
+			*AreaActor->GetName(), BodyRadius);
+	}
+
+	// =================================================================================
+	// 캡슐 중심이 아니라 바닥(Ground) 좌표를 반환 이유
+	// =================================================================================
+	// 이 함수가 반환하는 좌표는 성질이 완전히 다른 2곳에서 쓰입니다.
+	//
+	// 1) 스폰 위치: 액터를 낳으려면 캡슐의 '중앙 좌표'가 필요합니다.
+	// 2) AI 이동 목표(MoveToLocation): 길을 찾아 걸어갈 목표점은 '발바닥(지면) 좌표'가 필요합니다.
+	//
+	// 만약 여기서 반높이를 더해서 반환해 버리면, 이동 목표점(Nav)이 지면보다 반높이만큼 공중에 뜨게 됩니다.
+	// 그러면 AI가 길을 찾을 때(투영 시) 범위(기본값 250) 안에 땅을 찾지 못해 경로 요청이 실패하는 버그가 생깁니다.
+	// 실제로 오크같이 반높이가 매우 큰(288) 캐릭터들만 공중에 뜬 목표를 인식하지 못해 제자리에서 고장 나는 치명적 버그가 있었습니다.
+	//
+	// 따라서 이 함수는 무조건 '안전한 바닥(Ground) 좌표'만을 반환하고,
+	// 캡슐 중앙 좌표가 필요한 스폰 트랜스폼(SpawnLocation) 쪽에서만 호출부가 알아서 반높이를 더해서 쓰도록 분리한 것입니다.
+	return Ground;
+}
+
 void ACSCustomerSpawner::TrySpawnCustomer()
 {
 	//CustomerClass가 할당안되어있으면 즉시 중단
@@ -331,26 +471,46 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		return;
 	}
 
-	// EntrancePoint 액터(지점) 할당되어 있으면 할당된 위치, 없으면 스포너 자기 위치를 SpawnLocation으로 결정
-	FVector SpawnLocation;
-	if (EntrancePoint != nullptr)
-	{
-		SpawnLocation = EntrancePoint->GetActorLocation();
-	}
-	else
-	{
-		SpawnLocation = GetActorLocation();
-	}
-
-
 	// [한길] 손님을 만들기 전에 종족을 먼저 결정해야 종족별 크기를 스폰 순간부터 적용할 수 있습니다.
 	UCSCustomerArchetypeDataAsset* SelectedArchetype = PickArchetypeBySpawnWeight();
 	const float CharacterScale = SelectedArchetype != nullptr
 		? FMath::Max(SelectedArchetype->CharacterScale, 0.1f)
 		: 4.0f;
 
+	// 이 손님의 실제 캡슐반경을 가져옴
+	float BodyRadius = 0.0f;
+	float BodyHalfHeight = 0.0f;
+	GetSpawnBodySize(CharacterScale, BodyRadius, BodyHalfHeight);
+
+	// 양방향 통행 목적지 설정
+	const AActor* StartArea = nullptr;
+	const AActor* EndArea = nullptr;
+
+	// MasterStream을 이용해 0.0 ~ 1.0 사이의 난수를 뽑음
+	if (MasterStream.FRand() < 0.5f)
+	{
+		// 50% 확률로 방향을 뒤집어서 B에서 스폰되어 A로 걸어갑니다.
+		StartArea = StreetEndpointB;
+		EndArea = StreetEndpointA;
+	}
+	else
+	{
+		// 나머지 50%로 A에서 스폰되어 B로 걸어갑니다.
+		StartArea = StreetEndpointA;
+		EndArea = StreetEndpointB;
+	}
+
+	// 영역 안에서 임의 지점을 고른다. 크기 없는 지점 액터면 그 위치가 그대로 나온다..
+	// 반환값은 지면 좌표다. 아래 퇴장 지점의 폴백으로도 이 값을 그대로 쓴다.
+	const FVector SpawnGround = PickPointInArea(StartArea, GetActorLocation(), BodyRadius, BodyHalfHeight);
+
+	// 스폰 좌표만 캡슐 중심으로 올린다.
+	// SpawnActorDeferred는 액터 원점을 받고, 손님의 원점은 루트인 캡슐의 중심이다.
+	// 안 올리면 큰 종족이 바닥에 파묻힌 채 태어나 첫 프레임에 위로 튕긴다.
+	const FVector SpawnLocation = SpawnGround + FVector(0.0f, 0.0f, BodyHalfHeight);
+
 	// SpawnActorDeferred와 FinishSpawning 양쪽에 같은 값으로 넘긴다.
-	// 스케일도 여기 담겨 있으므로 종족별 크기가 그대로 적용된다.
+	// 스케일도 여기 담겨 있으므로 종족별 크기가 적용
 	const FTransform SpawnTransform(FRotator::ZeroRotator,SpawnLocation,FVector(CharacterScale));
 
 	// =================================================================================
@@ -368,24 +528,24 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		return;
 	}
 
-	//생성된 손님의 GetCustomerState()로 상태 컴포넌트를 얻어서 ExitLocation에서 ExitPoint 있으면 그 위치, 없으면 스폰된 장소로 지정
+	//생성된 손님의 GetCustomerState()로 상태 컴포넌트를 얻어서 목적지들을 주입
 	UCSCustomerStateComponent* State = Customer->GetCustomerState();
 	if (State != nullptr)
 	{
-		if (ExitPoint != nullptr)
-		{
-			State->ExitLocation = ExitPoint->GetActorLocation();
-		}
-		else
-		{
-			State->ExitLocation = SpawnLocation;
-		}
+		// 퇴장 지점도 영역 안에서 각자 다른 지점을 고른다.
+		// 한 점으로 모으면 마지막에 전원이 그 자리에서 겹친 채 소멸을 기다린다.
+		// 목표 지점도 같은 함수를 쓴다. 몸이 큰 손님은 영역 가장자리를 목표로 삼지 않는다.
+		//
+		// 여기는 MoveToLocation의 목표라서 스폰과 달리 캡슐 중심으로 올리지 않는다.
+		// nav 위치는 발바닥 기준이고, 목표를 띄우면 NavMesh 투영에 실패해 경로 요청이 죽는다.
+		// 폴백도 캡슐 중심인 SpawnLocation이 아니라 지면인 SpawnGround를 넘긴다.
+		State->ExitLocation = PickPointInArea(EndArea, SpawnGround, BodyRadius, BodyHalfHeight);
 
-		// 가게 앞 판정 지점.
-		// 비어 있으면 기본 지정했던 값 ZeroVector로 변경
+		// 가게 앞 판정 지점. 이것도 MoveToLocation의 목표라서 지면 좌표를 그대로 쓴다.
+		// 비어 있으면 기본 지정했던 값 ZeroVector로 남고, Approach 태스크가 통행을 건너뛴다.
 		if (StorefrontPoint != nullptr)
 		{
-			State->StorefrontLocation = StorefrontPoint->GetActorLocation();
+			State->StorefrontLocation = PickPointInArea(StorefrontPoint, FVector::ZeroVector, BodyRadius, BodyHalfHeight);
 		}
 
 	}
@@ -434,6 +594,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 				State->RemainingEvaluationBudget = Decision->Archetype->EvaluationBudget;
 			}
 		}
+	}
+
+
+	//[삭제 예정] - 경로가 같아도 손님마다 속도를 다르게 준다 (임시용)
+	UCharacterMovementComponent* Movement = Customer->GetCharacterMovement();
+	if (Movement != nullptr)
+	{
+		Movement->MaxWalkSpeed *= MasterStream.FRandRange(0.85f, 1.15f);
 	}
 
 	// =================================================================================
