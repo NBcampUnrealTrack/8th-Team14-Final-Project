@@ -63,3 +63,23 @@ void ACSTrashActor::EnableWorldDropPhysics()
 	TrashMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	TrashMesh->SetSimulatePhysics(true);
 }
+
+void ACSTrashActor::HideMeshForPickup()
+{
+	if (!IsValid(TrashMesh))
+	{
+		return;
+	}
+
+	TrashMesh->SetVisibility(false, true);
+}
+
+void ACSTrashActor::ShowMeshAfterDrop()
+{
+	if (!IsValid(TrashMesh))
+	{
+		return;
+	}
+
+	TrashMesh->SetVisibility(true, true);
+}

@@ -7,6 +7,8 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Tutorial/CSTutorialShelfSpawnPoint.h"
+#include "Features/Tutorial/CSTutorialCrateSpawnPoint.h"
+#include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
@@ -100,6 +102,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	CleanTrashDisposedCount = 0;
 	StockShelvesPlacedCount = 0;
 	bTutorialShelfSpawned = false;
+	bTutorialCratesSpawned = false;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -138,6 +141,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
 	TrySpawnTutorialShelfDelivery();
+	TrySpawnTutorialCrateDeliveries();
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -161,6 +165,7 @@ void UCSTutorialSubsystem::AdvanceStep()
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
 	TrySpawnTutorialShelfDelivery();
+	TrySpawnTutorialCrateDeliveries();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -213,8 +218,6 @@ void UCSTutorialSubsystem::CompleteTutorial()
 
 void UCSTutorialSubsystem::BroadcastCurrentStep() const
 {
-	const FCSTutorialStepRow& DebugRow = *StepRows[CurrentStepIndex];
-
 	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
@@ -378,6 +381,64 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 	}
 
 	bTutorialShelfSpawned = true;
+}
+
+void UCSTutorialSubsystem::TrySpawnTutorialCrateDeliveries()
+{
+	if (bTutorialCratesSpawned ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::StockShelves)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 레벨에 배치된 크레이트 스폰 지점마다 각자 지정된 상품/수량으로 상자를 하나씩 스폰
+	for (TActorIterator<ACSTutorialCrateSpawnPoint> It(World); It; ++It)
+	{
+		ACSTutorialCrateSpawnPoint* SpawnPoint = *It;
+		if (!IsValid(SpawnPoint) || SpawnPoint->CrateClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Tutorial] ACSTutorialCrateSpawnPoint에 CrateClass가 지정되지 않았습니다."));
+			continue;
+		}
+
+		AActor* SpawnedActor = World->SpawnActor<AActor>(
+			SpawnPoint->CrateClass, SpawnPoint->GetActorTransform());
+		ACSDeliveryCrateActor* SpawnedCrate = Cast<ACSDeliveryCrateActor>(SpawnedActor);
+		if (!IsValid(SpawnedCrate))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Tutorial] CrateClass(%s)가 ACSDeliveryCrateActor 파생 클래스가 아닙니다."),
+				*SpawnPoint->CrateClass->GetName());
+			continue;
+		}
+
+		if (!SpawnedCrate->InitializeCrate(SpawnPoint->ProductRow, SpawnPoint->Quantity))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Tutorial] 튜토리얼 배송 상자 초기화에 실패했습니다 (스폰 지점: %s)."),
+				*SpawnPoint->GetName());
+		}
+
+		// 상자에도 동적으로 마커를 붙여 즉시 아웃라인을 켬
+		UCSTutorialMarkerComponent* HighlightComponent =
+			NewObject<UCSTutorialMarkerComponent>(SpawnedCrate);
+		if (IsValid(HighlightComponent))
+		{
+			HighlightComponent->SetupAttachment(SpawnedCrate->GetRootComponent());
+			HighlightComponent->RegisterComponent();
+			HighlightComponent->ShowMarker(FText::GetEmpty());
+		}
+	}
+
+	bTutorialCratesSpawned = true;
 }
 
 void UCSTutorialSubsystem::HideAllActiveMarkers()
