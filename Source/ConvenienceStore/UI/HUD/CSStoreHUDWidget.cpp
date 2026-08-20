@@ -505,8 +505,8 @@ void UCSStoreHUDWidget::UpdateDailySalesDisplay()
 	if (DailyProfitText != nullptr)
 	{
 		DailyProfitText->SetText(FText::Format(
-			NSLOCTEXT("Store", "DailyProfit", "오늘 이익: {0} 골드"),
-			FText::AsNumber(StoreGameState->DailyProfitGold)));
+			NSLOCTEXT("Store", "DailyNetProfit", "오늘 순수익: {0} 골드"),
+			FText::AsNumber(StoreGameState->GetDailyNetProfitGold())));
 	}
 
 	if (DailySoldQuantityText != nullptr)

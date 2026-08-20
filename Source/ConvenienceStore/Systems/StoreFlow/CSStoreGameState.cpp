@@ -136,8 +136,21 @@ bool ACSStoreGameState::TrySpendFunds(int32 Amount)
 		return true;
 	}
 
+	const int64 NewDailyExpense =
+		static_cast<int64>(DailyExpenseGold) + Amount;
+	if (NewDailyExpense > MAX_int32)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 일일 실제 지출 합계가 int32 범위를 벗어나 지출을 처리하지 않습니다. 현재 지출=%dG, 요청=%dG"),
+			DailyExpenseGold,
+			Amount);
+		return false;
+	}
+
 	CurrentFunds -= Amount;
+	DailyExpenseGold = static_cast<int32>(NewDailyExpense);
 	OnFundsChanged.Broadcast(CurrentFunds);
+	OnDailySalesChanged.Broadcast();
 	return true;
 }
 
@@ -154,17 +167,23 @@ bool ACSStoreGameState::ApplyForcedExpense(int32 Amount)
 	}
 
 	const int64 NewFunds = static_cast<int64>(CurrentFunds) - Amount;
-	if (NewFunds < MIN_int32 || NewFunds > MAX_int32)
+	const int64 NewDailyExpense =
+		static_cast<int64>(DailyExpenseGold) + Amount;
+	if (NewFunds < MIN_int32 || NewFunds > MAX_int32 ||
+		NewDailyExpense > MAX_int32)
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[StoreGameState] 강제 지출 %dG 적용 시 자금이 int32 범위를 벗어나 처리하지 않습니다. 현재 자금=%dG"),
+			TEXT("[StoreGameState] 강제 지출 %dG 적용 시 자금 또는 일일 지출이 int32 범위를 벗어나 처리하지 않습니다. 현재 자금=%dG, 현재 지출=%dG"),
 			Amount,
-			CurrentFunds);
+			CurrentFunds,
+			DailyExpenseGold);
 		return false;
 	}
 
 	CurrentFunds = static_cast<int32>(NewFunds);
+	DailyExpenseGold = static_cast<int32>(NewDailyExpense);
 	OnFundsChanged.Broadcast(CurrentFunds);
+	OnDailySalesChanged.Broadcast();
 	return true;
 }
 
@@ -700,17 +719,19 @@ bool ACSStoreGameState::RecordDisposedProduct(const ACSProductPickupActor* Produ
 
 int32 ACSStoreGameState::GetDailyTotalLossGold() const
 {
-	const int64 TotalLoss =
-		static_cast<int64>(DailyCostGold) +
-		DailyWasteLossGold +
-		DailyRentGold;
-	return static_cast<int32>(FMath::Min<int64>(TotalLoss, MAX_int32));
+	// 기존 Blueprint 호환 이름은 유지하되 현재 기획의 실제 총지출을 반환합니다.
+	return GetDailyTotalExpenseGold();
+}
+
+int32 ACSStoreGameState::GetDailyTotalExpenseGold() const
+{
+	return DailyExpenseGold;
 }
 
 int32 ACSStoreGameState::GetDailyNetProfitGold() const
 {
 	const int64 NetProfit =
-		static_cast<int64>(DailySalesGold) - GetDailyTotalLossGold();
+		static_cast<int64>(DailySalesGold) - DailyExpenseGold;
 	return static_cast<int32>(FMath::Clamp<int64>(
 		NetProfit,
 		static_cast<int64>(MIN_int32),
@@ -749,6 +770,7 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	CompletedCheckoutCount = 0;
 	DailyWasteLossGold = 0;
 	DailyRentGold = 0;
+	DailyExpenseGold = 0;
 	DailyDisposedProductQuantities.Reset();
 	DailyDisposedProductNames.Reset();
 	DailyCheckoutTransactions.Reset();
