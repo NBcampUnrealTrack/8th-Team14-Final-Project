@@ -4,25 +4,38 @@
 
 void UCSCheckoutOrderRowWidget::SetLineItem(const FCSCheckoutLineItem& InLineItem)
 {
+	// 텍스트를 갱신하기 전에 최초 표시 여부를 보존하여 알맞은 WBP 연출을 선택합니다.
+	const bool bIsInitialDisplay = !bHasDisplayedLineItem;
+
 	// 블루프린트에 같은 이름의 TextBlock이 배치된 경우에만 값을 갱신합니다.
-	if (IsValid(ItemNameText))
+	if (IsValid(Text_ProductName))
 	{
-		ItemNameText->SetText(InLineItem.ItemName);
+		Text_ProductName->SetText(InLineItem.ItemName);
 	}
 
-	if (IsValid(QuantityText))
+	if (IsValid(Text_Quantity))
 	{
-		QuantityText->SetText(FText::Format(
-			NSLOCTEXT("Checkout", "OrderRowQuantity", "수량: {0}"),
-			FText::AsNumber(InLineItem.Quantity)));
+		Text_Quantity->SetText(FText::AsNumber(InLineItem.Quantity));
 	}
 
-	if (IsValid(PriceText))
+	if (IsValid(Text_UnitPrice))
 	{
-		// 단가와 수량을 함께 표시하여 계산 결과를 플레이어가 확인할 수 있게 합니다.
-		PriceText->SetText(FText::Format(
-			NSLOCTEXT("Checkout", "OrderRowPrice", "단가: {0} 골드 / 합계: {1} 골드"),
-			FText::AsNumber(InLineItem.UnitSalePrice),
-			FText::AsNumber(InLineItem.LineTotalSalePrice)));
+		Text_UnitPrice->SetText(FText::AsNumber(InLineItem.UnitSalePrice));
+	}
+
+	if (IsValid(Text_LineTotal))
+	{
+		Text_LineTotal->SetText(FText::AsNumber(InLineItem.LineTotalSalePrice));
+	}
+
+	// WBP가 이벤트를 받는 시점에는 모든 표시 값이 새 데이터로 바뀌어 있어야 합니다.
+	bHasDisplayedLineItem = true;
+	if (bIsInitialDisplay)
+	{
+		OnInitialLineItemDisplayed();
+	}
+	else
+	{
+		OnLineItemQuantityUpdated();
 	}
 }
