@@ -9,6 +9,43 @@
 
 namespace
 {
+constexpr int32 ImmediateDeliveryFeePercent = 40;
+
+bool TryCalculateDeliveryAdjustedCost(
+	int64 BaseLineCost,
+	ECSOrderDeliveryType DeliveryType,
+	int64& OutFinalLineCost)
+{
+	if (BaseLineCost < 0 || BaseLineCost > MAX_int32)
+	{
+		return false;
+	}
+
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		// int64 정수 연산으로 Line별 1.4배 금액을 일반 반올림합니다.
+		OutFinalLineCost =
+			(BaseLineCost * (100 + ImmediateDeliveryFeePercent) + 50) / 100;
+	}
+	else
+	{
+		OutFinalLineCost = BaseLineCost;
+	}
+
+	return OutFinalLineCost <= MAX_int32;
+}
+
+void DestroySpawnedActors(const TArray<AActor*>& SpawnedActors)
+{
+	for (AActor* SpawnedActor : SpawnedActors)
+	{
+		if (IsValid(SpawnedActor))
+		{
+			SpawnedActor->Destroy();
+		}
+	}
+}
+
 bool TryParseRequiredStoreLevel(FName StoreLevelCondition, int32& OutRequiredLevel)
 {
 	OutRequiredLevel = 1;
@@ -69,12 +106,22 @@ void UCSOrderSubsystem::Deinitialize()
 	PendingFacilityOrders.Reset();
 	RegisteredDeliveryPortal.Reset();
 	RegisteredFacilityDeliveryPortal.Reset();
+	DeliverySpawnIndexBusinessDay = INDEX_NONE;
+	NextProductDeliverySpawnIndex = 0;
+	NextFacilityDeliverySpawnIndex = 0;
 
 	Super::Deinitialize();
 }
 
 FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 	const TArray<FCSOrderLine>& OrderLines) const
+{
+	return EvaluateOrderWithDelivery(OrderLines, ECSOrderDeliveryType::NextDay);
+}
+
+FCSOrderResult UCSOrderSubsystem::EvaluateOrderWithDelivery(
+	const TArray<FCSOrderLine>& OrderLines,
+	ECSOrderDeliveryType DeliveryType) const
 {
 	FCSOrderResult Result;
 
@@ -140,10 +187,14 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 			return Result;
 		}
 
-		const int64 LineCost =
+		const int64 BaseLineCost =
 			static_cast<int64>(ProductData->PurchasePrice) * LineItemQuantity;
-		if (LineCost > MAX_int32 ||
-			TotalCost > MAX_int32 - LineCost ||
+		int64 FinalLineCost = 0;
+		if (!TryCalculateDeliveryAdjustedCost(
+				BaseLineCost,
+				DeliveryType,
+				FinalLineCost) ||
+			TotalCost > MAX_int32 - FinalLineCost ||
 			TotalCrateCount > MAX_int32 - OrderLine.CrateCount ||
 			TotalItemQuantity > MAX_int32 - LineItemQuantity)
 		{
@@ -151,7 +202,7 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 			return Result;
 		}
 
-		TotalCost += LineCost;
+		TotalCost += FinalLineCost;
 		TotalCrateCount += OrderLine.CrateCount;
 		TotalItemQuantity += LineItemQuantity;
 		bHasSelectedProduct = true;
@@ -181,7 +232,14 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 FCSOrderResult UCSOrderSubsystem::PlaceOrder(
 	const TArray<FCSOrderLine>& OrderLines)
 {
-	FCSOrderResult Result = EvaluateOrder(OrderLines);
+	return PlaceOrderWithDelivery(OrderLines, ECSOrderDeliveryType::NextDay);
+}
+
+FCSOrderResult UCSOrderSubsystem::PlaceOrderWithDelivery(
+	const TArray<FCSOrderLine>& OrderLines,
+	ECSOrderDeliveryType DeliveryType)
+{
+	FCSOrderResult Result = EvaluateOrderWithDelivery(OrderLines, DeliveryType);
 	if (!Result.bSuccess)
 	{
 		return Result;
@@ -205,6 +263,58 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrder(
 		return Result;
 	}
 	TrySubscribeToStoreGameState();
+
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		EnsureDeliverySpawnIndicesForBusinessDay(
+			StoreGameState->CurrentBusinessDay);
+		if (Result.TotalCrateCount >
+			MAX_int32 - NextProductDeliverySpawnIndex)
+		{
+			Result.bSuccess = false;
+			Result.FailureReason = ECOrderFailureReason::CostOverflow;
+			return Result;
+		}
+
+		TArray<ACSDeliveryCrateActor*> SpawnedCrates;
+		if (!DeliveryPortal->SpawnOrderCrates(
+				OrderLines,
+				SpawnedCrates,
+				NextProductDeliverySpawnIndex) ||
+			SpawnedCrates.Num() != Result.TotalCrateCount)
+		{
+			TArray<AActor*> SpawnedActors;
+			SpawnedActors.Reserve(SpawnedCrates.Num());
+			for (ACSDeliveryCrateActor* SpawnedCrate : SpawnedCrates)
+			{
+				SpawnedActors.Add(SpawnedCrate);
+			}
+			DestroySpawnedActors(SpawnedActors);
+			Result.bSuccess = false;
+			Result.FailureReason = ECOrderFailureReason::CrateSpawnFailed;
+			return Result;
+		}
+
+		if (!StoreGameState->TrySpendFunds(Result.TotalCost))
+		{
+			TArray<AActor*> SpawnedActors;
+			SpawnedActors.Reserve(SpawnedCrates.Num());
+			for (ACSDeliveryCrateActor* SpawnedCrate : SpawnedCrates)
+			{
+				SpawnedActors.Add(SpawnedCrate);
+			}
+			DestroySpawnedActors(SpawnedActors);
+			Result.bSuccess = false;
+			Result.FailureReason = ECOrderFailureReason::InsufficientFunds;
+			return Result;
+		}
+
+		const int32 SpawnedCrateCount = SpawnedCrates.Num();
+		NextProductDeliverySpawnIndex += SpawnedCrateCount;
+		DeliveryPortal->OnOrderDelivered(SpawnedCrateCount);
+		OnOrderPlaced.Broadcast(Result);
+		return Result;
+	}
 
 	if (!StoreGameState->TrySpendFunds(Result.TotalCost))
 	{
@@ -232,6 +342,15 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrder(
 
 FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrder(
 	const TArray<FCSFacilityOrderLine>& OrderLines) const
+{
+	return EvaluateFacilityOrderWithDelivery(
+		OrderLines,
+		ECSOrderDeliveryType::NextDay);
+}
+
+FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrderWithDelivery(
+	const TArray<FCSFacilityOrderLine>& OrderLines,
+	ECSOrderDeliveryType DeliveryType) const
 {
 	FCSFacilityOrderResult Result;
 
@@ -314,18 +433,22 @@ FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrder(
 			return Result;
 		}
 
-		const int64 LineCost =
+		const int64 BaseLineCost =
 			static_cast<int64>(FacilityData->PurchasePriceGold) *
 			OrderLine.Quantity;
-		if (LineCost > MAX_int32 ||
-			TotalCost > MAX_int32 - LineCost ||
+		int64 FinalLineCost = 0;
+		if (!TryCalculateDeliveryAdjustedCost(
+				BaseLineCost,
+				DeliveryType,
+				FinalLineCost) ||
+			TotalCost > MAX_int32 - FinalLineCost ||
 			TotalFacilityCount > MAX_int32 - OrderLine.Quantity)
 		{
 			Result.FailureReason = ECFacilityOrderFailureReason::CostOverflow;
 			return Result;
 		}
 
-		TotalCost += LineCost;
+		TotalCost += FinalLineCost;
 		TotalFacilityCount += OrderLine.Quantity;
 		bHasSelectedFacility = true;
 	}
@@ -352,7 +475,18 @@ FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrder(
 FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrder(
 	const TArray<FCSFacilityOrderLine>& OrderLines)
 {
-	FCSFacilityOrderResult Result = EvaluateFacilityOrder(OrderLines);
+	return PlaceFacilityOrderWithDelivery(
+		OrderLines,
+		ECSOrderDeliveryType::NextDay);
+}
+
+FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
+	const TArray<FCSFacilityOrderLine>& OrderLines,
+	ECSOrderDeliveryType DeliveryType)
+{
+	FCSFacilityOrderResult Result = EvaluateFacilityOrderWithDelivery(
+		OrderLines,
+		DeliveryType);
 	if (!Result.bSuccess)
 	{
 		return Result;
@@ -388,6 +522,52 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrder(
 	}
 	TrySubscribeToStoreGameState();
 
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		EnsureDeliverySpawnIndicesForBusinessDay(
+			StoreGameState->CurrentBusinessDay);
+		if (Result.TotalFacilityCount >
+			MAX_int32 - NextFacilityDeliverySpawnIndex)
+		{
+			Result.bSuccess = false;
+			Result.FailureReason = ECFacilityOrderFailureReason::CostOverflow;
+			return Result;
+		}
+
+		TArray<AActor*> SpawnedFacilities;
+		const ECFacilityOrderFailureReason SpawnFailureReason =
+			DeliveryPortal->SpawnOrderFacilities(
+				OrderLines,
+				SpawnedFacilities,
+				NextFacilityDeliverySpawnIndex);
+		if (SpawnFailureReason != ECFacilityOrderFailureReason::None ||
+			SpawnedFacilities.Num() != Result.TotalFacilityCount)
+		{
+			DestroySpawnedActors(SpawnedFacilities);
+			Result.bSuccess = false;
+			Result.FailureReason =
+				SpawnFailureReason != ECFacilityOrderFailureReason::None
+					? SpawnFailureReason
+					: ECFacilityOrderFailureReason::FacilitySpawnFailed;
+			return Result;
+		}
+
+		if (!StoreGameState->TrySpendFunds(Result.TotalCost))
+		{
+			DestroySpawnedActors(SpawnedFacilities);
+			Result.bSuccess = false;
+			Result.FailureReason =
+				ECFacilityOrderFailureReason::InsufficientFunds;
+			return Result;
+		}
+
+		const int32 SpawnedFacilityCount = SpawnedFacilities.Num();
+		NextFacilityDeliverySpawnIndex += SpawnedFacilityCount;
+		DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilityCount);
+		OnFacilityOrderPlaced.Broadcast(Result);
+		return Result;
+	}
+
 	if (!StoreGameState->TrySpendFunds(Result.TotalCost))
 	{
 		Result.bSuccess = false;
@@ -407,6 +587,79 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrder(
 	Result.FailureReason = ECFacilityOrderFailureReason::None;
 	OnFacilityOrderPlaced.Broadcast(Result);
 	return Result;
+}
+
+int32 UCSOrderSubsystem::CalculateProductOrderLineCost(
+	const FDataTableRowHandle& ProductRow,
+	int32 CrateCount,
+	ECSOrderDeliveryType DeliveryType) const
+{
+	if (CrateCount <= 0 || ProductRow.DataTable == nullptr ||
+		ProductRow.RowName.IsNone())
+	{
+		return 0;
+	}
+
+	const FCSProductDataRow* ProductData =
+		ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("UCSOrderSubsystem::CalculateProductOrderLineCost"));
+	if (ProductData == nullptr || ProductData->PurchasePrice < 0 ||
+		ProductData->OrderPackQuantity < 1)
+	{
+		return 0;
+	}
+
+	const int64 ItemQuantity =
+		static_cast<int64>(ProductData->OrderPackQuantity) * CrateCount;
+	if (ItemQuantity > MAX_int32)
+	{
+		return 0;
+	}
+
+	int64 FinalLineCost = 0;
+	const int64 BaseLineCost =
+		static_cast<int64>(ProductData->PurchasePrice) * ItemQuantity;
+	return TryCalculateDeliveryAdjustedCost(
+		BaseLineCost,
+		DeliveryType,
+		FinalLineCost)
+		? static_cast<int32>(FinalLineCost)
+		: 0;
+}
+
+int32 UCSOrderSubsystem::CalculateFacilityOrderLineCost(
+	const FDataTableRowHandle& FacilityRow,
+	int32 Quantity,
+	ECSOrderDeliveryType DeliveryType) const
+{
+	if (Quantity <= 0 || FacilityRow.DataTable == nullptr ||
+		FacilityRow.RowName.IsNone())
+	{
+		return 0;
+	}
+
+	const FCSFacilityDataRow* FacilityData =
+		FacilityRow.GetRow<FCSFacilityDataRow>(
+			TEXT("UCSOrderSubsystem::CalculateFacilityOrderLineCost"));
+	if (FacilityData == nullptr || FacilityData->PurchasePriceGold < 0)
+	{
+		return 0;
+	}
+
+	int64 FinalLineCost = 0;
+	const int64 BaseLineCost =
+		static_cast<int64>(FacilityData->PurchasePriceGold) * Quantity;
+	return TryCalculateDeliveryAdjustedCost(
+		BaseLineCost,
+		DeliveryType,
+		FinalLineCost)
+		? static_cast<int32>(FinalLineCost)
+		: 0;
+}
+
+int32 UCSOrderSubsystem::GetImmediateDeliveryFeePercent() const
+{
+	return ImmediateDeliveryFeePercent;
 }
 
 bool UCSOrderSubsystem::RegisterDeliveryPortal(ACSDeliveryPortalActor* Portal)
@@ -510,10 +763,23 @@ void UCSOrderSubsystem::UnsubscribeFromStoreGameState()
 	SubscribedStoreGameState = nullptr;
 }
 
+void UCSOrderSubsystem::EnsureDeliverySpawnIndicesForBusinessDay(
+	int32 BusinessDay)
+{
+	if (DeliverySpawnIndexBusinessDay == BusinessDay)
+	{
+		return;
+	}
+
+	DeliverySpawnIndexBusinessDay = BusinessDay;
+	NextProductDeliverySpawnIndex = 0;
+	NextFacilityDeliverySpawnIndex = 0;
+}
+
 void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
 {
 	// 접수 순서대로 처리하며 성공한 실제 생성 수량만 다음 주문의 위치 offset에 반영합니다.
-	int32 ProductSpawnIndex = 0;
+	EnsureDeliverySpawnIndicesForBusinessDay(NewBusinessDay);
 	for (int32 PendingIndex = 0;
 		PendingIndex < PendingProductOrders.Num();)
 	{
@@ -535,12 +801,35 @@ void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
 			continue;
 		}
 
+		int64 ExpectedCrateCount = 0;
+		for (const FCSOrderLine& OrderLine : PendingOrder.OrderLines)
+		{
+			ExpectedCrateCount += OrderLine.CrateCount;
+		}
+		if (ExpectedCrateCount < 0 || ExpectedCrateCount > MAX_int32 ||
+			ExpectedCrateCount > MAX_int32 - NextProductDeliverySpawnIndex)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 상품 Pending 배송 수량 또는 SpawnIndex가 범위를 초과했습니다. 예정일=%d"),
+				PendingOrder.DeliveryBusinessDay);
+			++PendingIndex;
+			continue;
+		}
+
 		TArray<ACSDeliveryCrateActor*> SpawnedCrates;
 		if (!DeliveryPortal->SpawnOrderCrates(
 			PendingOrder.OrderLines,
 			SpawnedCrates,
-			ProductSpawnIndex))
+			NextProductDeliverySpawnIndex) ||
+			SpawnedCrates.Num() != static_cast<int32>(ExpectedCrateCount))
 		{
+			TArray<AActor*> SpawnedActors;
+			SpawnedActors.Reserve(SpawnedCrates.Num());
+			for (ACSDeliveryCrateActor* SpawnedCrate : SpawnedCrates)
+			{
+				SpawnedActors.Add(SpawnedCrate);
+			}
+			DestroySpawnedActors(SpawnedActors);
 			UE_LOG(LogTemp, Warning,
 				TEXT("[OrderSubsystem] 상품 Pending 배송 Spawn에 실패했습니다. 예정일=%d"),
 				PendingOrder.DeliveryBusinessDay);
@@ -549,12 +838,11 @@ void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
 		}
 
 		const int32 SpawnedCrateCount = SpawnedCrates.Num();
-		ProductSpawnIndex += SpawnedCrateCount;
+		NextProductDeliverySpawnIndex += SpawnedCrateCount;
 		PendingProductOrders.RemoveAt(PendingIndex);
 		DeliveryPortal->OnOrderDelivered(SpawnedCrateCount);
 	}
 
-	int32 FacilitySpawnIndex = 0;
 	for (int32 PendingIndex = 0;
 		PendingIndex < PendingFacilityOrders.Num();)
 	{
@@ -577,12 +865,27 @@ void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
 			continue;
 		}
 
+		int64 ExpectedFacilityCount = 0;
+		for (const FCSFacilityOrderLine& OrderLine : PendingOrder.OrderLines)
+		{
+			ExpectedFacilityCount += OrderLine.Quantity;
+		}
+		if (ExpectedFacilityCount < 0 || ExpectedFacilityCount > MAX_int32 ||
+			ExpectedFacilityCount > MAX_int32 - NextFacilityDeliverySpawnIndex)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[OrderSubsystem] 시설 Pending 배송 수량 또는 SpawnIndex가 범위를 초과했습니다. 예정일=%d"),
+				PendingOrder.DeliveryBusinessDay);
+			++PendingIndex;
+			continue;
+		}
+
 		TArray<AActor*> SpawnedFacilities;
 		const ECFacilityOrderFailureReason SpawnFailureReason =
 			DeliveryPortal->SpawnOrderFacilities(
 				PendingOrder.OrderLines,
 				SpawnedFacilities,
-				FacilitySpawnIndex);
+				NextFacilityDeliverySpawnIndex);
 		if (SpawnFailureReason != ECFacilityOrderFailureReason::None)
 		{
 			UE_LOG(LogTemp, Warning,
@@ -593,32 +896,20 @@ void UCSOrderSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
 			continue;
 		}
 
-		int32 ExpectedFacilityCount = 0;
-		for (const FCSFacilityOrderLine& OrderLine : PendingOrder.OrderLines)
+		if (SpawnedFacilities.Num() != static_cast<int32>(ExpectedFacilityCount))
 		{
-			ExpectedFacilityCount += OrderLine.Quantity;
-		}
-
-		if (SpawnedFacilities.Num() != ExpectedFacilityCount)
-		{
-			for (AActor* SpawnedFacility : SpawnedFacilities)
-			{
-				if (IsValid(SpawnedFacility))
-				{
-					SpawnedFacility->Destroy();
-				}
-			}
+			DestroySpawnedActors(SpawnedFacilities);
 
 			UE_LOG(LogTemp, Warning,
 				TEXT("[OrderSubsystem] 시설 Pending 배송 수량이 일치하지 않습니다. 예정=%d, 생성=%d"),
-				ExpectedFacilityCount,
+				static_cast<int32>(ExpectedFacilityCount),
 				SpawnedFacilities.Num());
 			++PendingIndex;
 			continue;
 		}
 
 		const int32 SpawnedFacilityCount = SpawnedFacilities.Num();
-		FacilitySpawnIndex += SpawnedFacilityCount;
+		NextFacilityDeliverySpawnIndex += SpawnedFacilityCount;
 		PendingFacilityOrders.RemoveAt(PendingIndex);
 		DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilityCount);
 	}

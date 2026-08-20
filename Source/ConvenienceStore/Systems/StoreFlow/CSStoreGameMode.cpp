@@ -165,8 +165,25 @@ void ACSStoreGameMode::CompleteDailySummary()
 	}
 
 	StoreGameState->CompleteDailySummary();
-	StoreGameState->SetStorePhase(MakePhaseData(
-		ECStorePhase::ClosingFreeRoam, NSLOCTEXT("Store", "ClosingFreeRoam", "마감 활동")));
+	StartNextBusinessDay();
+}
+
+bool ACSStoreGameMode::RequestClosingDailySummary()
+{
+	if (StoreGameState == nullptr)
+	{
+		StoreGameState = GetGameState<ACSStoreGameState>();
+	}
+
+	if (!IsValid(StoreGameState) ||
+		StoreGameState->CurrentPhase != ECStorePhase::ClosingFreeRoam ||
+		StoreGameState->bIsDailySummaryPending)
+	{
+		return false;
+	}
+
+	StoreGameState->RequestDailySummary();
+	return true;
 }
 
 void ACSStoreGameMode::StartPhase(ECStorePhase NewPhase)
@@ -275,11 +292,13 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 	StoreGameState->bIsStoreOpen = false;
 	StoreGameState->OnStoreOpenStateChanged.Broadcast(false);
 
-	// 오늘 정산이 표시되기 전에 임대료를 확정하여 Summary 손실과 순이익에 포함합니다.
+	// 마감 자유 활동에 들어가기 전에 오늘 임대료를 실제 지출로 확정합니다.
 	StoreGameState->ProcessDailyRent();
 
-	// 통계 확인 전에는 UI만 표시하고, 확인 후에 마감 자유 활동 단계로 전환합니다.
-	StoreGameState->RequestDailySummary();
+	// 통계는 자동으로 열지 않고 플레이어가 마감종을 확인할 때 요청합니다.
+	StoreGameState->SetStorePhase(MakePhaseData(
+		ECStorePhase::ClosingFreeRoam,
+		NSLOCTEXT("Store", "ClosingFreeRoam", "마감 활동")));
 }
 
 void ACSStoreGameMode::CompleteCurrentEndOfDayTask()
