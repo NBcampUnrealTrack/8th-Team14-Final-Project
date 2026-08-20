@@ -175,6 +175,10 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
 	int32 DailyRentGold = 0;
 
+	// 오늘 CurrentFunds에서 실제로 차감된 모든 지출의 합계입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyExpenseGold = 0;
+
 	// 상품 분석에서 오늘 폐기된 상품별 수량을 표시하기 위한 집계입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TMap<FName, int32> DailyDisposedProductQuantities;
@@ -345,6 +349,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyTotalLossGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Sales")
+	int32 GetDailyTotalExpenseGold() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyNetProfitGold() const;

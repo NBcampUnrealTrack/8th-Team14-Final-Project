@@ -70,7 +70,7 @@ void UCSDailySummaryWidget::RefreshSummary()
 	const FText RentDDayDisplayText = FText::Format(
 		NSLOCTEXT("StoreSummary", "RentDDay", "D - {0}"),
 		FText::AsNumber(State->GetDaysUntilNextRentPayment()));
-	const FText TotalLossText = FText::AsNumber(State->GetDailyTotalLossGold());
+	const FText TotalLossText = FText::AsNumber(State->GetDailyTotalExpenseGold());
 	const FText NetProfitText = FText::AsNumber(State->GetDailyNetProfitGold());
 
 	if (IsValid(BusinessDayResultText))
