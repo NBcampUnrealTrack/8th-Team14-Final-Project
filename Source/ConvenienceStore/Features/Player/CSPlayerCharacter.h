@@ -11,6 +11,7 @@ class UInputMappingContext;
 class UMaterialInterface;
 class USceneComponent;
 class UStaticMeshComponent;
+class ACSCartActor;
 class ACSDeliveryCrateActor;
 class ACSMagicWandActor;
 class ACSProductPickupActor;
@@ -79,11 +80,19 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> HeldItemAnchor;
 
+	// 수레 손잡이가 따라갈 플레이어 앞쪽의 기준점입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> CartPushAnchor;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BuildPlacementPreviewMesh;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Interaction")
 	TObjectPtr<AActor> HeldActor;
+
+	// 현재 손잡이를 잡고 밀고 있는 수레입니다. 손에 드는 HeldActor와는 분리합니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Cart")
+	TObjectPtr<ACSCartActor> PushedCart;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|Mode")
 	ECSPlayerMode CurrentPlayerMode = ECSPlayerMode::Normal;
@@ -165,6 +174,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSProductPlacementPreviewActor> PlacementPreviewActor;
 
+	// 현재 배송 상자 적재 프리뷰를 표시 중인 수레입니다.
+	UPROPERTY(Transient)
+	TObjectPtr<ACSCartActor> CartPlacementPreviewTarget;
+
 	// 에디터에서 만든 입력 에셋을 연결합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputMappingContext> PlayerMappingContext;
@@ -190,6 +203,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> DropAction;
+
+	// F 입력으로 수레 손잡이를 잡거나 바닥에 내려놓습니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ToggleCartPushAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleBuildModeAction;
@@ -226,6 +243,7 @@ private:
 	void StopCrouch();
 	void TryInteract();
 	void DropHeldItem();
+	void ToggleCartPush();
 	void ToggleBuildMode();
 	void StartRotateBuildLeft();
 	void StopRotateBuildLeft();
@@ -292,6 +310,7 @@ private:
 	// 들고 있던 상품이 없어졌을 때 모든 진열대 외곽선을 해제합니다.
 	void ClearShelfPlacementHighlights();
 	void SetPlacementPreviewVisible(bool bIsVisible);
+	void ClearCartPlacementPreview();
 	bool TryPlaceProductFromCrate(
 		ACSDeliveryCrateActor* DeliveryCrate,
 		AActor* ShelfActor,
