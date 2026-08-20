@@ -94,6 +94,9 @@ protected:
 	// 지금 스텝이 DeliveryArrived이고 아직 스폰 안 했으면 매장 밖 스폰 지점에 튜토리얼 전용 선반을 하나 만듦
 	void TrySpawnTutorialShelfDelivery();
 
+	// 지금 스텝이 StockShelves이고 아직 안 만들었으면 스폰 지점들에 튜토리얼 전용 배송 상자를 만듦
+	void TrySpawnTutorialCrateDeliveries();
+
 	// 현재 켜져 있는 마커를 전부 끄고 목록을 비움
 	void HideAllActiveMarkers();
 
@@ -188,6 +191,7 @@ private:
 	int32 StockShelvesPlacedCount = 0;
 	bool bTutorialCompleted = false;
 	bool bTutorialShelfSpawned = false;
+	bool bTutorialCratesSpawned = false;
 
 	// TrySpawnTutorialShelfDelivery가 스폰한 선반을 기억해둠
 	// cs.TNext로 PlaceFacility를 건너뛸 때 실제 배치 이벤트 없이도 아웃라인을 끄기 위해 필요
