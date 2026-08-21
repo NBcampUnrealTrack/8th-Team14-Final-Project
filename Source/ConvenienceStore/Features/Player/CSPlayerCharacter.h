@@ -141,6 +141,12 @@ protected:
 	bool bCanPlaceHeldBuildableFacility = false;
 
 	UPROPERTY(Transient)
+	bool bIsHeldBuildableInsidePlacementArea = true;
+
+	UPROPERTY(Transient)
+	bool bHasHeldBuildablePlacementOverlap = false;
+
+	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> HeldBuildableStateActors;
 
 	UPROPERTY(Transient)

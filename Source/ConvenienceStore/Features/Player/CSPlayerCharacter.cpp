@@ -1056,6 +1056,8 @@ void ACSPlayerCharacter::ClearBuildPlacementPreview()
 {
 	bHasBuildPlacementPreview = false;
 	bCanPlaceHeldBuildableFacility = false;
+	bIsHeldBuildableInsidePlacementArea = true;
+	bHasHeldBuildablePlacementOverlap = false;
 	CachedBuildPlacementLocation = FVector::ZeroVector;
 	CachedBuildPlacementRotation = FRotator::ZeroRotator;
 	HeldBuildableSourceMesh = nullptr;
@@ -1771,6 +1773,9 @@ bool ACSPlayerCharacter::TryCalculateBuildSnapTransform(
 
 void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 {
+	// 계산 실패 시 이전 프레임의 불가 사유가 Q 입력에 남지 않도록 먼저 초기화합니다.
+	bIsHeldBuildableInsidePlacementArea = true;
+	bHasHeldBuildablePlacementOverlap = false;
 	if (!IsBuildMode() ||
 		!IsValid(HeldActor) ||
 		!HeldActor->Implements<UCSBuildableFacility>() ||
@@ -1859,6 +1864,8 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 			BuildPlacementCollisionBoxes,
 			CachedBuildPlacementLocation,
 			CachedBuildPlacementRotation);
+	bIsHeldBuildableInsidePlacementArea = bIsInsideBuildPlacementArea;
+	bHasHeldBuildablePlacementOverlap = bHasFacilityOverlap;
 	bCanPlaceHeldBuildableFacility =
 		bIsSurfaceValid &&
 		bIsInsideBuildPlacementArea &&
@@ -2411,9 +2418,19 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	{
 		return;
 	}
-	if (!bCanPlaceHeldBuildableFacility)
+	// 다른 시설과 겹치면 Area 안팎과 무관하게 설치와 미설치 Drop을 모두 차단합니다.
+	if (bHasHeldBuildablePlacementOverlap)
+	{
+		return;
+	}
+	if (!bIsHeldBuildableInsidePlacementArea)
 	{
 		DropHeldBuildableFacilityAsUninstalled();
+		return;
+	}
+	// 향후 다른 불가 조건이 추가되어도 자동으로 미설치 Drop하지 않습니다.
+	if (!bCanPlaceHeldBuildableFacility)
+	{
 		return;
 	}
 
