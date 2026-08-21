@@ -13,6 +13,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -117,7 +118,7 @@ void ACSCheckoutCounterActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	// 레벨 종료나 계산대 제거 시 UI와 입력 상태가 남지 않도록 정리합니다.
-	CloseCheckoutWidget();
+	CloseCheckoutWidget(true);
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -613,10 +614,10 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 	}
 }
 
-void ACSCheckoutCounterActor::CloseCheckoutWidget()
+void ACSCheckoutCounterActor::CloseCheckoutWidget(const bool bRestorePawnImmediately)
 {
 	// 위젯이 이미 사라진 예외 상황에서도 계산대 카메라에 시점이 남지 않도록 먼저 복원합니다.
-	RestoreCheckoutCamera();
+	RestoreCheckoutCamera(bRestorePawnImmediately);
 
 	// UI가 어떤 이유로 닫히더라도 표시용 상품이 월드에 남지 않게 정리합니다.
 	ClearCheckoutDisplayProducts();
@@ -664,6 +665,17 @@ void ACSCheckoutCounterActor::ActivateCheckoutCamera(
 
 	CheckoutPlayerController = PlayerController;
 	PreviousCheckoutViewTarget = PlayerController->GetViewTarget();
+
+	// 이전 계산의 지연 복원이 남아 있더라도 먼저 원상복구한 뒤 이번 Pawn의 상태를 새로 저장합니다.
+	RestoreCheckoutPlayerVisibility(true);
+	if (APawn* PlayerPawn = PlayerController->GetPawn(); IsValid(PlayerPawn))
+	{
+		CheckoutPlayerPawn = PlayerPawn;
+		bCheckoutPlayerPawnWasHidden = PlayerPawn->IsHidden();
+		bCheckoutPlayerVisibilityOverridden = true;
+		PlayerPawn->SetActorHiddenInGame(true);
+	}
+
 	CheckoutCamera->SetActive(true);
 	PlayerController->SetViewTargetWithBlend(
 		this,
@@ -674,13 +686,18 @@ void ACSCheckoutCounterActor::ActivateCheckoutCamera(
 	bCheckoutCameraActive = true;
 }
 
-void ACSCheckoutCounterActor::RestoreCheckoutCamera()
+void ACSCheckoutCounterActor::RestoreCheckoutCamera(const bool bRestorePawnImmediately)
 {
 	if (!bCheckoutCameraActive)
 	{
+		if (bRestorePawnImmediately)
+		{
+			RestoreCheckoutPlayerVisibility(true);
+		}
 		return;
 	}
 
+	bool bStartedReturnBlend = false;
 	APlayerController* PlayerController = CheckoutPlayerController.Get();
 	if (IsValid(PlayerController))
 	{
@@ -698,6 +715,7 @@ void ACSCheckoutCounterActor::RestoreCheckoutCamera()
 				EViewTargetBlendFunction::VTBlend_Cubic,
 				0.0f,
 				true);
+			bStartedReturnBlend = CheckoutCameraBlendTime > 0.0f;
 		}
 	}
 
@@ -709,6 +727,49 @@ void ACSCheckoutCounterActor::RestoreCheckoutCamera()
 	CheckoutPlayerController = nullptr;
 	PreviousCheckoutViewTarget = nullptr;
 	bCheckoutCameraActive = false;
+
+	// 정상 종료는 시점 Blend가 끝난 뒤 복원하고, 전환 불가/예외 종료는 즉시 원래 상태로 되돌립니다.
+	RestoreCheckoutPlayerVisibility(
+		bRestorePawnImmediately || !bStartedReturnBlend);
+}
+
+void ACSCheckoutCounterActor::RestoreCheckoutPlayerVisibility(const bool bImmediate)
+{
+	UWorld* World = GetWorld();
+	if (IsValid(World))
+	{
+		World->GetTimerManager().ClearTimer(CheckoutPlayerVisibilityRestoreTimer);
+	}
+
+	if (!bCheckoutPlayerVisibilityOverridden)
+	{
+		return;
+	}
+
+	if (!bImmediate && IsValid(World) && CheckoutCameraBlendTime > 0.0f)
+	{
+		World->GetTimerManager().SetTimer(
+			CheckoutPlayerVisibilityRestoreTimer,
+			this,
+			&ACSCheckoutCounterActor::HandleCheckoutPlayerVisibilityRestore,
+			CheckoutCameraBlendTime,
+			false);
+		return;
+	}
+
+	if (APawn* PlayerPawn = CheckoutPlayerPawn.Get(); IsValid(PlayerPawn))
+	{
+		PlayerPawn->SetActorHiddenInGame(bCheckoutPlayerPawnWasHidden);
+	}
+
+	CheckoutPlayerPawn = nullptr;
+	bCheckoutPlayerPawnWasHidden = false;
+	bCheckoutPlayerVisibilityOverridden = false;
+}
+
+void ACSCheckoutCounterActor::HandleCheckoutPlayerVisibilityRestore()
+{
+	RestoreCheckoutPlayerVisibility(true);
 }
 
 void ACSCheckoutCounterActor::SetCheckoutCustomerBasketVisible(bool bShouldBeVisible)
