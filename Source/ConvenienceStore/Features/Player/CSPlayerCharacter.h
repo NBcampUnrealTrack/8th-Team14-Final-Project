@@ -6,6 +6,7 @@
 #include "CSPlayerCharacter.generated.h"
 
 class UCameraComponent;
+class UBoxComponent;
 class UInputAction;
 class UInputMappingContext;
 class UMaterialInterface;
@@ -138,6 +139,12 @@ protected:
 
 	UPROPERTY(Transient)
 	bool bCanPlaceHeldBuildableFacility = false;
+
+	UPROPERTY(Transient)
+	bool bIsHeldBuildableInsidePlacementArea = true;
+
+	UPROPERTY(Transient)
+	bool bHasHeldBuildablePlacementOverlap = false;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> HeldBuildableStateActors;
@@ -285,8 +292,22 @@ private:
 		const FRotator& ManualRotation,
 		FVector& OutSnappedLocation,
 		FRotator& OutSnappedRotation) const;
+	void RefreshBuildPlacementAreaCache();
+	void CollectBuildPlacementCollisionBoxes(
+		AActor* FacilityActor,
+		TArray<UBoxComponent*>& OutCollisionBoxes) const;
+	bool IsBuildPlacementInsideCachedAreas(
+		const TArray<UBoxComponent*>& CollisionBoxes,
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation) const;
+	bool HasBuildPlacementCollisionOverlap(
+		AActor* FacilityActor,
+		const TArray<UBoxComponent*>& CollisionBoxes,
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation) const;
 	bool TryPickUpBuildableFacility(AActor* FacilityActor);
 	void TryPlaceHeldBuildableFacility();
+	void DropHeldBuildableFacilityAsUninstalled();
 	bool TryCalculateBuildPlacementLocation(
 		AActor* FacilityActor,
 		FVector& OutPlacementLocation,
@@ -315,6 +336,9 @@ private:
 		ACSDeliveryCrateActor* DeliveryCrate,
 		AActor* ShelfActor,
 		FVector PlacementHint);
+
+	TArray<TWeakObjectPtr<UBoxComponent>> CachedBuildPlacementAreas;
+	bool bBuildPlacementAreaCacheInitialized = false;
 
 
 public:
