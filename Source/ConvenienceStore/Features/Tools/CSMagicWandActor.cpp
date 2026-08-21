@@ -37,6 +37,51 @@ ACSMagicWandActor::ACSMagicWandActor()
 	Muzzle->SetRelativeLocation(FVector(60.0f, 0.0f, 0.0f));
 }
 
+bool ACSMagicWandActor::RememberHomeDockFromCurrentAttachment()
+{
+	USceneComponent* ExistingHomeDock = HomeDockComponent.Get();
+	AActor* ExistingHomeOwner = HomeDockOwner.Get();
+	if (IsValid(ExistingHomeDock) &&
+		IsValid(ExistingHomeOwner) &&
+		ExistingHomeDock->GetOwner() == ExistingHomeOwner)
+	{
+		return true;
+	}
+
+	USceneComponent* WandRoot = GetRootComponent();
+	USceneComponent* CurrentAttachParent = IsValid(WandRoot)
+		? WandRoot->GetAttachParent()
+		: nullptr;
+	AActor* CurrentAttachOwner = IsValid(CurrentAttachParent)
+		? CurrentAttachParent->GetOwner()
+		: nullptr;
+	if (!IsValid(CurrentAttachParent) || !IsValid(CurrentAttachOwner))
+	{
+		return false;
+	}
+
+	HomeDockComponent = CurrentAttachParent;
+	HomeDockOwner = CurrentAttachOwner;
+	return true;
+}
+
+USceneComponent* ACSMagicWandActor::GetHomeDockComponent() const
+{
+	USceneComponent* HomeDock = HomeDockComponent.Get();
+	AActor* HomeOwner = HomeDockOwner.Get();
+	return IsValid(HomeDock) && IsValid(HomeOwner) &&
+		HomeDock->GetOwner() == HomeOwner
+		? HomeDock
+		: nullptr;
+}
+
+AActor* ACSMagicWandActor::GetHomeDockOwner() const
+{
+	return GetHomeDockComponent() != nullptr
+		? HomeDockOwner.Get()
+		: nullptr;
+}
+
 bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 {
 	if (!bIsEquipped || !IsValid(User) || MagicProjectileClass == nullptr || GetWorld() == nullptr)

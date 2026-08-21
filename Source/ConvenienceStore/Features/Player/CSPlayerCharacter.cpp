@@ -539,12 +539,11 @@ bool ACSPlayerCharacter::IsAimingAtMagicWandHomeDock(
 		return false;
 	}
 
-	const UChildActorComponent* HomeComponent = MagicWand->GetParentComponent();
-	const AActor* HomeFacility = MagicWand->GetParentActor();
+	const USceneComponent* HomeComponent = MagicWand->GetHomeDockComponent();
+	const AActor* HomeFacility = MagicWand->GetHomeDockOwner();
 	if (!IsValid(HomeComponent) ||
 		!IsValid(HomeFacility) ||
-		HomeComponent->GetOwner() != HomeFacility ||
-		HomeComponent->GetChildActor() != MagicWand)
+		HomeComponent->GetOwner() != HomeFacility)
 	{
 		return false;
 	}
@@ -580,20 +579,12 @@ bool ACSPlayerCharacter::RestoreMagicWandToHomeDock(ACSMagicWandActor* MagicWand
 		return false;
 	}
 
-	UChildActorComponent* HomeComponent = MagicWand->GetParentComponent();
-	AActor* HomeFacility = MagicWand->GetParentActor();
+	USceneComponent* HomeComponent = MagicWand->GetHomeDockComponent();
+	AActor* HomeFacility = MagicWand->GetHomeDockOwner();
 	if (!IsValid(HomeComponent) ||
 		!IsValid(HomeFacility) ||
 		HomeComponent->GetOwner() != HomeFacility)
 	{
-		return false;
-	}
-
-	if (HomeComponent->GetChildActor() != MagicWand)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("%s: 원래 ChildActorComponent가 현재 마법봉 인스턴스를 소유하지 않아 복귀를 건너뜁니다."),
-			*MagicWand->GetName());
 		return false;
 	}
 
@@ -614,7 +605,7 @@ bool ACSPlayerCharacter::RestoreMagicWandToHomeDock(ACSMagicWandActor* MagicWand
 			MagicWand->EnableWorldDropPhysics();
 		}
 		UE_LOG(LogTemp, Warning,
-			TEXT("%s: 원래 ChildActorComponent에 마법봉을 다시 부착하지 못했습니다."),
+			TEXT("%s: 원래 Home Dock Component에 마법봉을 다시 부착하지 못했습니다."),
 			*MagicWand->GetName());
 		return false;
 	}
@@ -629,6 +620,18 @@ void ACSPlayerCharacter::RestoreFacilityMagicWands(AActor* FacilityActor)
 	if (!IsValid(FacilityActor))
 	{
 		return;
+	}
+
+	// 런타임 Spawn 후 일반 SceneComponent Anchor에 붙은 마법봉도 시설 이동 전에 복귀 상태를 확정합니다.
+	TArray<AActor*> RuntimeAttachedActors;
+	FacilityActor->GetAttachedActors(RuntimeAttachedActors, true, true);
+	for (AActor* AttachedActor : RuntimeAttachedActors)
+	{
+		if (ACSMagicWandActor* MagicWand = Cast<ACSMagicWandActor>(AttachedActor))
+		{
+			MagicWand->RememberHomeDockFromCurrentAttachment();
+			RestoreMagicWandToHomeDock(MagicWand);
+		}
 	}
 
 	TSet<AActor*> VisitedActors;
@@ -659,6 +662,8 @@ void ACSPlayerCharacter::RestoreFacilityMagicWands(AActor* FacilityActor)
 
 			if (ACSMagicWandActor* MagicWand = Cast<ACSMagicWandActor>(ChildActor))
 			{
+				// 기존 ChildActorComponent 구성도 동일한 Home Dock 저장 경로로 계속 지원합니다.
+				MagicWand->RememberHomeDockFromCurrentAttachment();
 				RestoreMagicWandToHomeDock(MagicWand);
 			}
 			else
@@ -749,6 +754,11 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	}
 	else if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(PickupActor))
 	{
+		if (ACSMagicWandActor* MagicWand = Cast<ACSMagicWandActor>(ToolActor))
+		{
+			// 최초 집기 직전의 WandAnchor/ChildActorComponent를 기억하며 기존 유효값은 유지합니다.
+			MagicWand->RememberHomeDockFromCurrentAttachment();
+		}
 		// 물리 상태의 루트 메시를 부착하면 실패할 수 있으므로 부착 전에 먼저 물리를 해제합니다.
 		ToolActor->PrepareForPickupPhysics();
 	}

@@ -18,6 +18,11 @@ public:
 
 	virtual bool UsePrimary_Implementation(AActor* User) override;
 
+	// 최초 집기 전 현재 AttachParent를 원래 거치대로 기억하며, 유효한 기존 정보는 덮어쓰지 않습니다.
+	bool RememberHomeDockFromCurrentAttachment();
+	USceneComponent* GetHomeDockComponent() const;
+	AActor* GetHomeDockOwner() const;
+
 protected:
 	// 블루프린트에서 지팡이 끝에 배치하는 실제 투사체 발사 위치입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -31,5 +36,11 @@ protected:
 	float PrimaryUseCooldown = 0.35f;
 
 private:
+	UPROPERTY(Transient)
+	TWeakObjectPtr<USceneComponent> HomeDockComponent;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> HomeDockOwner;
+
 	float LastPrimaryUseTime = -FLT_MAX;
 };
