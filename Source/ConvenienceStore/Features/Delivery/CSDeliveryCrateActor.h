@@ -84,6 +84,12 @@ public:
 		return HeldRelativeLocation;
 	}
 
+	// 수레 적재 프리뷰가 실제 배송 상자와 같은 메시·상대 Transform을 복사할 수 있도록 제공합니다.
+	const UStaticMeshComponent* GetCrateMeshComponent() const
+	{
+		return CrateMesh;
+	}
+
 	UPROPERTY(BlueprintAssignable, Category = "Delivery")
 	FCSOnCrateQuantityChanged OnQuantityChanged;
 

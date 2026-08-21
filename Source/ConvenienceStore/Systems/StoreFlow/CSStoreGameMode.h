@@ -36,6 +36,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
 	void CompleteDailySummary();
 
+	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
+	bool RequestClosingDailySummary();
+
 	// 현재 마감 업무를 완료하고 다음 업무를 활성화합니다.
 	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
 	void CompleteCurrentEndOfDayTask();

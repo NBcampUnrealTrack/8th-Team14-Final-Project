@@ -16,7 +16,8 @@ void ACSStoreClosingBellActor::BeginPlay() { Super::BeginPlay(); StoreGameState 
 void ACSStoreClosingBellActor::Interact_Implementation(AActor* Interactor)
 {
 	if (!IsValid(StoreGameState) || StoreGameState->CurrentPhase != ECStorePhase::ClosingFreeRoam ||
-		IsValid(ActiveConfirmWidget) || ConfirmWidgetClass == nullptr) return;
+		StoreGameState->bIsDailySummaryPending || IsValid(ActiveConfirmWidget) ||
+		ConfirmWidgetClass == nullptr) return;
 	const APawn* Pawn = Cast<APawn>(Interactor);
 	APlayerController* Controller = IsValid(Pawn) ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
 	if (!IsValid(Controller)) return;
@@ -32,7 +33,7 @@ void ACSStoreClosingBellActor::HandleConfirmed()
 	CloseConfirmWidget();
 	if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode()))
 	{
-		Mode->StartNextBusinessDay();
+		Mode->RequestClosingDailySummary();
 	}
 }
 void ACSStoreClosingBellActor::HandleCancelled() { CloseConfirmWidget(); }
@@ -52,7 +53,9 @@ FText ACSStoreClosingBellActor::GetInteractionText_Implementation() const
 
 	if (StoreGameState->CurrentPhase == ECStorePhase::ClosingFreeRoam)
 	{
-		return NSLOCTEXT("Store", "FinishClosing", "마감 종료");
+		return StoreGameState->bIsDailySummaryPending
+			? FText::GetEmpty()
+			: NSLOCTEXT("Store", "FinishClosing", "마감 종료");
 	}
 
 	// 준비·영업 단계에도 마감 종의 사용 시점을 HUD 안내로 알려드립니다.

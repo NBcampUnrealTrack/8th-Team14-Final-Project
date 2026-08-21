@@ -59,16 +59,51 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Order")
 	FCSOrderResult EvaluateOrder(const TArray<FCSOrderLine>& OrderLines) const;
 
+	UFUNCTION(BlueprintPure, Category = "Store|Order")
+	FCSOrderResult EvaluateOrderWithDelivery(
+		const TArray<FCSOrderLine>& OrderLines,
+		ECSOrderDeliveryType DeliveryType) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Store|Order")
 	FCSOrderResult PlaceOrder(const TArray<FCSOrderLine>& OrderLines);
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Order")
+	FCSOrderResult PlaceOrderWithDelivery(
+		const TArray<FCSOrderLine>& OrderLines,
+		ECSOrderDeliveryType DeliveryType);
 
 	UFUNCTION(BlueprintPure, Category = "Store|Order|Facility")
 	FCSFacilityOrderResult EvaluateFacilityOrder(
 		const TArray<FCSFacilityOrderLine>& OrderLines) const;
 
+	UFUNCTION(BlueprintPure, Category = "Store|Order|Facility")
+	FCSFacilityOrderResult EvaluateFacilityOrderWithDelivery(
+		const TArray<FCSFacilityOrderLine>& OrderLines,
+		ECSOrderDeliveryType DeliveryType) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Store|Order|Facility")
 	FCSFacilityOrderResult PlaceFacilityOrder(
 		const TArray<FCSFacilityOrderLine>& OrderLines);
+
+	UFUNCTION(BlueprintCallable, Category = "Store|Order|Facility")
+	FCSFacilityOrderResult PlaceFacilityOrderWithDelivery(
+		const TArray<FCSFacilityOrderLine>& OrderLines,
+		ECSOrderDeliveryType DeliveryType);
+
+	UFUNCTION(BlueprintPure, Category = "Store|Order")
+	int32 CalculateProductOrderLineCost(
+		const FDataTableRowHandle& ProductRow,
+		int32 CrateCount,
+		ECSOrderDeliveryType DeliveryType) const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Order|Facility")
+	int32 CalculateFacilityOrderLineCost(
+		const FDataTableRowHandle& FacilityRow,
+		int32 Quantity,
+		ECSOrderDeliveryType DeliveryType) const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Order")
+	int32 GetImmediateDeliveryFeePercent() const;
 
 	bool RegisterDeliveryPortal(ACSDeliveryPortalActor* Portal);
 	void UnregisterDeliveryPortal(ACSDeliveryPortalActor* Portal);
@@ -85,6 +120,7 @@ public:
 private:
 	void TrySubscribeToStoreGameState();
 	void UnsubscribeFromStoreGameState();
+	void EnsureDeliverySpawnIndicesForBusinessDay(int32 BusinessDay);
 
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);
@@ -101,4 +137,8 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> SubscribedStoreGameState;
+
+	int32 DeliverySpawnIndexBusinessDay = INDEX_NONE;
+	int32 NextProductDeliverySpawnIndex = 0;
+	int32 NextFacilityDeliverySpawnIndex = 0;
 };

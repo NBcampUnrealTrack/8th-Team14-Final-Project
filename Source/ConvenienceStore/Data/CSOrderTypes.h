@@ -5,6 +5,13 @@
 #include "CSOrderTypes.generated.h"
 
 UENUM(BlueprintType)
+enum class ECSOrderDeliveryType : uint8
+{
+	NextDay,
+	Immediate
+};
+
+UENUM(BlueprintType)
 enum class ECOrderFailureReason : uint8
 {
 	None,

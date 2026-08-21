@@ -3,6 +3,7 @@
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Cart/CSCartActor.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -24,18 +25,55 @@
 #include "GameFramework/Controller.h"
 #include "InputActionValue.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/GameInstance.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 
 namespace
 {
+const FName BuildPlacementCollisionTag(TEXT("BuildPlacementCollision"));
+const FName BuildPlacementAreaTag(TEXT("BuildPlacementArea"));
+
+bool TryCalculateProspectiveBox(
+	const UBoxComponent* BoxComponent,
+	const AActor* FacilityActor,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation,
+	FTransform& OutBoxTransform,
+	FVector& OutScaledExtent)
+{
+	if (!IsValid(BoxComponent) || !IsValid(FacilityActor) ||
+		FacilityLocation.ContainsNaN() || FacilityRotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	const FTransform RelativeTransform =
+		BoxComponent->GetComponentTransform().GetRelativeTransform(
+			FacilityActor->GetActorTransform());
+	const FTransform ProspectiveFacilityTransform(
+		FacilityRotation,
+		FacilityLocation,
+		FacilityActor->GetActorScale3D());
+	OutBoxTransform = RelativeTransform * ProspectiveFacilityTransform;
+	OutScaledExtent =
+		BoxComponent->GetUnscaledBoxExtent() *
+		OutBoxTransform.GetScale3D().GetAbs();
+
+	return !OutBoxTransform.GetLocation().ContainsNaN() &&
+		!OutBoxTransform.GetRotation().ContainsNaN() &&
+		!OutScaledExtent.ContainsNaN() &&
+		OutScaledExtent.GetMin() > UE_KINDA_SMALL_NUMBER;
+}
+
 void PlayPlayerGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
 {
 	if (!IsValid(WorldContextActor))
@@ -86,6 +124,11 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     HeldItemAnchor->SetupAttachment(FirstPersonCamera);
     HeldItemAnchor->SetRelativeLocation(FVector(80.0f, 20.0f, -20.0f));
 
+	CartPushAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("CartPushAnchor"));
+	CartPushAnchor->SetupAttachment(GetCapsuleComponent());
+	// 기본값은 편집기에서 보이는 기준점이며, 실제 손잡이 높이는 플레이어 BP에서 조절합니다.
+	CartPushAnchor->SetRelativeLocation(FVector(120.0f, 0.0f, -72.0f));
+
 	BuildPlacementPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(
 		TEXT("BuildPlacementPreviewMesh"));
 	BuildPlacementPreviewMesh->SetupAttachment(GetRootComponent());
@@ -122,13 +165,24 @@ void ACSPlayerCharacter::BeginPlay()
             }
         }
     }
+
+	// 정적 레벨 구성인 건축 가능 영역을 한 번 캐시하고, 건축모드 진입 때 갱신합니다.
+	RefreshBuildPlacementAreaCache();
 }
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(PushedCart))
+	{
+		// 플레이어가 제거될 때 수레의 Pawn 충돌 응답도 원래대로 되돌립니다.
+		PushedCart->StopPushing(this);
+		PushedCart = nullptr;
+	}
 	ResetBuildRotationInput();
 	RestoreHeldBuildableActorStates();
 	ClearBuildPlacementPreview();
+	CachedBuildPlacementAreas.Reset();
+	bBuildPlacementAreaCacheInitialized = false;
 	// 플레이어가 제거될 때 프리뷰 액터도 함께 정리하여 월드에 남지 않게 합니다.
 	DestroyPlacementPreview();
 
@@ -227,6 +281,15 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 			PrimaryUseAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryUsePrimaryTool);
 	}
 
+	if (ToggleCartPushAction != nullptr)
+	{
+		EnhancedInputComponent->BindAction(
+			ToggleCartPushAction,
+			ETriggerEvent::Started,
+			this,
+			&ACSPlayerCharacter::ToggleCartPush);
+	}
+
 }
 
 void ACSPlayerCharacter::Move(const FInputActionValue& Value)
@@ -302,6 +365,10 @@ void ACSPlayerCharacter::ToggleBuildMode()
 	CurrentPlayerMode = IsBuildMode()
 		? ECSPlayerMode::Normal
 		: ECSPlayerMode::Build;
+	if (IsBuildMode())
+	{
+		RefreshBuildPlacementAreaCache();
+	}
 	//B 입력 직후 모드 아이콘과 전환 애니메이션을 동기화합니다.
 	if (ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(GetController()))
@@ -616,6 +683,21 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 		return;
 	}
 
+	if (IsValid(PushedCart))
+	{
+		// 수레는 손에 붙이지 않고 손잡이 기준점을 향해 Sweep 이동해 바닥과 벽 충돌을 유지합니다.
+		PushedCart->UpdatePushTransform(CartPushAnchor);
+		if (ACSStorePlayerController* StorePlayerController =
+			Cast<ACSStorePlayerController>(GetController()))
+		{
+			StorePlayerController->ClearInteractionContext();
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "ReleaseCartPrompt", "[F] 수레 놓기"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
 	if (IsValid(HeldActor))
 	{
 		if (HeldActor->Implements<UCSUsableTool>())
@@ -636,9 +718,10 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
-    if (IsBuildMode() ||
+	if (IsBuildMode() ||
 		!IsValid(PickupActor) ||
 		PickupActor->Implements<UCSBuildableFacility>() ||
+		IsValid(PushedCart) ||
 		IsValid(HeldActor) ||
 		HeldItemAnchor == nullptr)
     {
@@ -749,7 +832,23 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	}
 
 	AActor* TargetActor = HitResult.GetActor();
-	if (!IsValid(TargetActor) || !TargetActor->Implements<UCSInteractable>())
+	if (!IsValid(TargetActor))
+	{
+		return;
+	}
+
+	if (const ACSCartActor* Cart = Cast<ACSCartActor>(TargetActor))
+	{
+		if (!IsValid(HeldActor) && !Cart->IsBeingPushed())
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "PushCartPrompt", "[F] 수레 잡기"),
+				FLinearColor::White);
+		}
+		return;
+	}
+
+	if (!TargetActor->Implements<UCSInteractable>())
 	{
 		return;
 	}
@@ -957,6 +1056,8 @@ void ACSPlayerCharacter::ClearBuildPlacementPreview()
 {
 	bHasBuildPlacementPreview = false;
 	bCanPlaceHeldBuildableFacility = false;
+	bIsHeldBuildableInsidePlacementArea = true;
+	bHasHeldBuildablePlacementOverlap = false;
 	CachedBuildPlacementLocation = FVector::ZeroVector;
 	CachedBuildPlacementRotation = FRotator::ZeroRotator;
 	HeldBuildableSourceMesh = nullptr;
@@ -1233,6 +1334,220 @@ void ACSPlayerCharacter::RestoreHeldBuildableActorStates()
 	HeldBuildableCollisionStates.Reset();
 }
 
+void ACSPlayerCharacter::RefreshBuildPlacementAreaCache()
+{
+	CachedBuildPlacementAreas.Reset();
+	bBuildPlacementAreaCacheInitialized = true;
+	UWorld* World = GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	// Tick 판정에서는 월드를 다시 순회하지 않도록 건축모드 진입 시 tagged Box만 캐시합니다.
+	for (TActorIterator<AActor> ActorIterator(World); ActorIterator; ++ActorIterator)
+	{
+		AActor* AreaOwner = *ActorIterator;
+		if (!IsValid(AreaOwner))
+		{
+			continue;
+		}
+
+		TArray<UBoxComponent*> BoxComponents;
+		AreaOwner->GetComponents<UBoxComponent>(BoxComponents);
+		for (UBoxComponent* BoxComponent : BoxComponents)
+		{
+			if (IsValid(BoxComponent) &&
+				BoxComponent->ComponentHasTag(BuildPlacementAreaTag))
+			{
+				CachedBuildPlacementAreas.Add(BoxComponent);
+			}
+		}
+	}
+}
+
+void ACSPlayerCharacter::CollectBuildPlacementCollisionBoxes(
+	AActor* FacilityActor,
+	TArray<UBoxComponent*>& OutCollisionBoxes) const
+{
+	OutCollisionBoxes.Reset();
+	if (!IsValid(FacilityActor))
+	{
+		return;
+	}
+
+	TArray<UBoxComponent*> BoxComponents;
+	FacilityActor->GetComponents<UBoxComponent>(BoxComponents);
+	for (UBoxComponent* BoxComponent : BoxComponents)
+	{
+		if (IsValid(BoxComponent) &&
+			BoxComponent->ComponentHasTag(BuildPlacementCollisionTag))
+		{
+			OutCollisionBoxes.Add(BoxComponent);
+		}
+	}
+}
+
+bool ACSPlayerCharacter::IsBuildPlacementInsideCachedAreas(
+	const TArray<UBoxComponent*>& CollisionBoxes,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation) const
+{
+	if (CollisionBoxes.IsEmpty())
+	{
+		return true;
+	}
+
+	TArray<UBoxComponent*> ValidAreaBoxes;
+	for (const TWeakObjectPtr<UBoxComponent>& AreaBoxWeak : CachedBuildPlacementAreas)
+	{
+		if (UBoxComponent* AreaBox = AreaBoxWeak.Get();
+			IsValid(AreaBox) && AreaBox->ComponentHasTag(BuildPlacementAreaTag))
+		{
+			ValidAreaBoxes.Add(AreaBox);
+		}
+	}
+	// Area가 아직 설정되지 않은 프로젝트 상태에서는 기존 건축 기능을 막지 않습니다.
+	if (ValidAreaBoxes.IsEmpty())
+	{
+		return true;
+	}
+
+	auto IsPointInsideAreaUnion = [&ValidAreaBoxes](const FVector& WorldPoint)
+	{
+		for (const UBoxComponent* AreaBox : ValidAreaBoxes)
+		{
+			const FTransform AreaTransform = AreaBox->GetComponentTransform();
+			const FVector AreaScale = AreaTransform.GetScale3D().GetAbs();
+			if (AreaScale.GetMin() <= UE_KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			const FVector LocalPoint =
+				AreaTransform.InverseTransformPosition(WorldPoint);
+			const FVector AreaExtent = AreaBox->GetUnscaledBoxExtent();
+			if (!LocalPoint.ContainsNaN() &&
+				FMath::Abs(LocalPoint.X) <= AreaExtent.X + KINDA_SMALL_NUMBER &&
+				FMath::Abs(LocalPoint.Y) <= AreaExtent.Y + KINDA_SMALL_NUMBER &&
+				FMath::Abs(LocalPoint.Z) <= AreaExtent.Z + KINDA_SMALL_NUMBER)
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
+	for (const UBoxComponent* CollisionBox : CollisionBoxes)
+	{
+		FTransform ProspectiveBoxTransform;
+		FVector ScaledExtent;
+		if (!TryCalculateProspectiveBox(
+				CollisionBox,
+				CollisionBox->GetOwner(),
+				FacilityLocation,
+				FacilityRotation,
+				ProspectiveBoxTransform,
+				ScaledExtent))
+		{
+			continue;
+		}
+
+		const FVector Center = ProspectiveBoxTransform.GetLocation();
+		const FQuat Rotation = ProspectiveBoxTransform.GetRotation();
+		if (!IsPointInsideAreaUnion(Center))
+		{
+			return false;
+		}
+
+		for (int32 XSign = -1; XSign <= 1; XSign += 2)
+		{
+			for (int32 YSign = -1; YSign <= 1; YSign += 2)
+			{
+				for (int32 ZSign = -1; ZSign <= 1; ZSign += 2)
+				{
+					const FVector CornerOffset(
+						ScaledExtent.X * XSign,
+						ScaledExtent.Y * YSign,
+						ScaledExtent.Z * ZSign);
+					if (!IsPointInsideAreaUnion(
+						Center + Rotation.RotateVector(CornerOffset)))
+					{
+						return false;
+					}
+				}
+			}
+		}
+	}
+
+	// 잘못된 크기의 tagged Box는 건너뛰어 기존 배치를 fail-open으로 유지합니다.
+	return true;
+}
+
+bool ACSPlayerCharacter::HasBuildPlacementCollisionOverlap(
+	AActor* FacilityActor,
+	const TArray<UBoxComponent*>& CollisionBoxes,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation) const
+{
+	if (!IsValid(FacilityActor) || CollisionBoxes.IsEmpty() || GetWorld() == nullptr)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(BuildPlacementCollision), false);
+	QueryParams.AddIgnoredActor(this);
+	QueryParams.AddIgnoredActor(FacilityActor);
+	TArray<AActor*> AttachedActors;
+	FacilityActor->GetAttachedActors(AttachedActors, true, true);
+	QueryParams.AddIgnoredActors(AttachedActors);
+	const FCollisionObjectQueryParams ObjectQueryParams(
+		FCollisionObjectQueryParams::AllObjects);
+
+	for (const UBoxComponent* CollisionBox : CollisionBoxes)
+	{
+		FTransform ProspectiveBoxTransform;
+		FVector ScaledExtent;
+		if (!TryCalculateProspectiveBox(
+				CollisionBox,
+				FacilityActor,
+				FacilityLocation,
+				FacilityRotation,
+				ProspectiveBoxTransform,
+				ScaledExtent))
+		{
+			continue;
+		}
+
+		TArray<FOverlapResult> Overlaps;
+		GetWorld()->OverlapMultiByObjectType(
+			Overlaps,
+			ProspectiveBoxTransform.GetLocation(),
+			ProspectiveBoxTransform.GetRotation(),
+			ObjectQueryParams,
+			FCollisionShape::MakeBox(ScaledExtent),
+			QueryParams);
+		for (const FOverlapResult& Overlap : Overlaps)
+		{
+			UBoxComponent* OtherBox =
+				Cast<UBoxComponent>(Overlap.Component.Get());
+			AActor* OtherFacility = IsValid(OtherBox)
+				? OtherBox->GetOwner()
+				: nullptr;
+			if (IsValid(OtherBox) &&
+				OtherBox->ComponentHasTag(BuildPlacementCollisionTag) &&
+				IsValid(OtherFacility) &&
+				OtherFacility != FacilityActor &&
+				OtherFacility->Implements<UCSBuildableFacility>())
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 bool ACSPlayerCharacter::TryCalculateBuildSnapTransform(
 	const FVector& BasePlacementLocation,
 	const FRotator& ManualRotation,
@@ -1458,6 +1773,9 @@ bool ACSPlayerCharacter::TryCalculateBuildSnapTransform(
 
 void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 {
+	// 계산 실패 시 이전 프레임의 불가 사유가 Q 입력에 남지 않도록 먼저 초기화합니다.
+	bIsHeldBuildableInsidePlacementArea = true;
+	bHasHeldBuildablePlacementOverlap = false;
 	if (!IsBuildMode() ||
 		!IsValid(HeldActor) ||
 		!HeldActor->Implements<UCSBuildableFacility>() ||
@@ -1526,13 +1844,41 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 	CachedBuildPlacementLocation = FinalPlacementLocation;
 	CachedBuildPlacementRotation = FinalPlacementRotation;
 	bHasBuildPlacementPreview = true;
-	bCanPlaceHeldBuildableFacility = bIsSurfaceValid;
+	if (!bBuildPlacementAreaCacheInitialized)
+	{
+		RefreshBuildPlacementAreaCache();
+	}
+
+	TArray<UBoxComponent*> BuildPlacementCollisionBoxes;
+	CollectBuildPlacementCollisionBoxes(
+		HeldActor,
+		BuildPlacementCollisionBoxes);
+	const bool bIsInsideBuildPlacementArea =
+		IsBuildPlacementInsideCachedAreas(
+			BuildPlacementCollisionBoxes,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation);
+	const bool bHasFacilityOverlap =
+		HasBuildPlacementCollisionOverlap(
+			HeldActor,
+			BuildPlacementCollisionBoxes,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation);
+	bIsHeldBuildableInsidePlacementArea = bIsInsideBuildPlacementArea;
+	bHasHeldBuildablePlacementOverlap = bHasFacilityOverlap;
+	bCanPlaceHeldBuildableFacility =
+		bIsSurfaceValid &&
+		bIsInsideBuildPlacementArea &&
+		!bHasFacilityOverlap;
 	ApplyBuildPlacementPreviewMaterial(bCanPlaceHeldBuildableFacility);
 	SetBuildPlacementPreviewVisible(true);
 }
 
 void ACSPlayerCharacter::UpdatePlacementPreview()
 {
+	// 수레가 아닌 대상을 다시 조준하면 이전 수레의 상자 고스트를 먼저 제거합니다.
+	ClearCartPlacementPreview();
+
 	ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(GetController());
 	if (IsValid(StorePlayerController))
@@ -1612,7 +1958,8 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 	}
 
 	AActor* PlacementItem = HeldActor;
-	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
+	ACSCartActor* TargetCart = Cast<ACSCartActor>(TargetActor);
+	if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr && TargetCart == nullptr)
 	{
 		// 배송 상자 자체가 아니라 실제 상품 타입인 프리뷰 액터로 슬롯 적합성을 검사합니다.
 		PlacementItem = PlacementPreviewActor;
@@ -1633,8 +1980,24 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		{
 			StorePlayerController->ShowPlacementUnavailablePrompt();
 		}
-        return;
-    }
+		return;
+	}
+
+	if (TargetCart != nullptr && Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr)
+	{
+		// 수레에는 상품 고스트가 아닌 배송 상자 자체가 실리므로, 상품 프리뷰는 표시하지 않습니다.
+		TargetCart->ShowCratePlacementPreview(
+			CastChecked<ACSDeliveryCrateActor>(HeldActor),
+			PreviewTransform);
+		CartPlacementPreviewTarget = TargetCart;
+		if (IsValid(StorePlayerController))
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Interaction", "LoadCartPrompt", "[Q] 수레에 상자 싣기"),
+				FLinearColor::White);
+		}
+		return;
+	}
 
     if (IsValid(PlacementPreviewActor))
     {
@@ -1677,6 +2040,12 @@ void ACSPlayerCharacter::DropHeldItem()
 	if (IsBuildMode())
 	{
 		TryPlaceHeldBuildableFacility();
+		return;
+	}
+
+	// 수레를 잡고 이동하는 동안에는 상자 적재·집기와 바닥 내려놓기를 모두 막습니다.
+	if (IsValid(PushedCart))
+	{
 		return;
 	}
 
@@ -1740,6 +2109,23 @@ void ACSPlayerCharacter::DropHeldItem()
 			Cast<ACSTrashActor>(HeldActor) == nullptr &&
 			TargetActor->Implements<UCSShelfPlaceable>())
 		{
+			if (ACSCartActor* TargetCart = Cast<ACSCartActor>(TargetActor);
+				IsValid(TargetCart))
+			{
+				if (ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(HeldActor);
+					IsValid(DeliveryCrate) &&
+					ICSShelfPlaceable::Execute_TryPlaceItem(
+						TargetCart,
+						DeliveryCrate,
+						AimHitResult.ImpactPoint))
+				{
+					HeldActor = nullptr;
+					DestroyPlacementPreview();
+					ClearShelfPlacementHighlights();
+				}
+				return;
+			}
+
 			if (ACSDeliveryCrateActor* DeliveryCrate =
 				Cast<ACSDeliveryCrateActor>(HeldActor))
 			{
@@ -2028,7 +2414,22 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	}
 
 	UpdateBuildPlacementPreview();
-	if (!bHasBuildPlacementPreview || !bCanPlaceHeldBuildableFacility)
+	if (!bHasBuildPlacementPreview)
+	{
+		return;
+	}
+	// 다른 시설과 겹치면 Area 안팎과 무관하게 설치와 미설치 Drop을 모두 차단합니다.
+	if (bHasHeldBuildablePlacementOverlap)
+	{
+		return;
+	}
+	if (!bIsHeldBuildableInsidePlacementArea)
+	{
+		DropHeldBuildableFacilityAsUninstalled();
+		return;
+	}
+	// 향후 다른 불가 조건이 추가되어도 자동으로 미설치 Drop하지 않습니다.
+	if (!bCanPlaceHeldBuildableFacility)
 	{
 		return;
 	}
@@ -2052,6 +2453,39 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 
 	// FinalizeBuildPlacement까지 끝난 실제 배치만 범용 성공 이벤트로 알립니다.
 	OnBuildableFacilityPlaced.Broadcast(FacilityToPlace);
+}
+
+void ACSPlayerCharacter::DropHeldBuildableFacilityAsUninstalled()
+{
+	if (!IsBuildMode() ||
+		!bHasBuildPlacementPreview ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		return;
+	}
+
+	AActor* FacilityToDrop = HeldActor;
+	FacilityToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	FacilityToDrop->SetActorLocationAndRotation(
+		CachedBuildPlacementLocation,
+		CachedBuildPlacementRotation,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	RestoreHeldBuildableActorStates();
+	FacilityToDrop->SetActorEnableCollision(true);
+	ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(FacilityToDrop);
+
+	HeldActor = nullptr;
+	ResetBuildRotationInput();
+	HeldBuildableFacilityRotation = FRotator::ZeroRotator;
+	ClearBuildPlacementPreview();
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController()))
+	{
+		StorePlayerController->ClearInteractionContext();
+	}
 }
 
 void ACSPlayerCharacter::TryUsePrimaryTool()
@@ -2188,6 +2622,7 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 
 void ACSPlayerCharacter::DestroyPlacementPreview()
 {
+	ClearCartPlacementPreview();
 	ClearShelfPlacementHighlights();
 
 	if (ACSStorePlayerController* StorePlayerController =
@@ -2413,6 +2848,12 @@ void ACSPlayerCharacter::ShowStorageWarning(const FDataTableRowHandle& ProductRo
 
 void ACSPlayerCharacter::TryInteract()
 {
+	// 수레를 잡은 상태에서는 E로 물건을 집거나 다른 상호작용을 실행하지 않습니다.
+	if (IsValid(PushedCart))
+	{
+		return;
+	}
+
     if (FirstPersonCamera == nullptr)
     {
         return;
@@ -2462,4 +2903,54 @@ void ACSPlayerCharacter::TryInteract()
     {
         ICSInteractable::Execute_Interact(HitActor, this);
     }
+}
+
+void ACSPlayerCharacter::ClearCartPlacementPreview()
+{
+	if (IsValid(CartPlacementPreviewTarget))
+	{
+		CartPlacementPreviewTarget->HideCratePlacementPreview();
+	}
+	CartPlacementPreviewTarget = nullptr;
+}
+
+void ACSPlayerCharacter::ToggleCartPush()
+{
+	if (IsBuildMode())
+	{
+		return;
+	}
+
+	if (IsValid(PushedCart))
+	{
+		PushedCart->StopPushing(this);
+		PushedCart = nullptr;
+		return;
+	}
+
+	if (IsValid(HeldActor) || FirstPersonCamera == nullptr || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+	const FVector TraceStart = FirstPersonCamera->GetComponentLocation();
+	const FVector TraceEnd = TraceStart + FirstPersonCamera->GetForwardVector() * InteractionDistance;
+	if (!GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams))
+	{
+		return;
+	}
+
+	if (ACSCartActor* Cart = Cast<ACSCartActor>(HitResult.GetActor());
+		IsValid(Cart) && Cart->BeginPushing(this))
+	{
+		PushedCart = Cart;
+	}
 }
