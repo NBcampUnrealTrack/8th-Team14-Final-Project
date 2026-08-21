@@ -14,5 +14,8 @@ enum class ECSAudioEvent : uint8
 	ProductStock UMETA(DisplayName = "Product Stock"),
 	FacilityPlace UMETA(DisplayName = "Facility Place"),
 	TrashDispose UMETA(DisplayName = "Trash Dispose"),
-	DeliveryCrateDisappear UMETA(DisplayName = "Delivery Crate Disappear")
+	DeliveryCrateDisappear UMETA(DisplayName = "Delivery Crate Disappear"),
+	CrystalBallOpen UMETA(DisplayName = "Crystal Ball Open"),
+	LedgerOpen UMETA(DisplayName = "Ledger Open"),
+	LedgerClose UMETA(DisplayName = "Ledger Close")
 };
