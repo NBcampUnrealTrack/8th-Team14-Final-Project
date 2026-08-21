@@ -9,6 +9,7 @@
 #include "CSCheckoutCounterActor.generated.h"
 
 class APlayerController;
+class APawn;
 class UArrowComponent;
 class UBoxComponent;
 class UCameraComponent;
@@ -87,13 +88,17 @@ protected:
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
 
 	// 계산 UI를 닫고 플레이어 입력을 게임 조작으로 되돌립니다.
-	void CloseCheckoutWidget();
+	void CloseCheckoutWidget(bool bRestorePawnImmediately = false);
 
 	// 계산 시작 전 시점을 저장하고 계산대에 배치한 카메라로 전환합니다.
 	void ActivateCheckoutCamera(APlayerController* PlayerController);
 
 	// 계산 시작 전에 저장한 플레이어 시점으로 되돌립니다.
-	void RestoreCheckoutCamera();
+	void RestoreCheckoutCamera(bool bRestorePawnImmediately = false);
+
+	// 계산 시작 전에 저장한 Hidden 상태로 플레이어 Pawn을 복원합니다.
+	void RestoreCheckoutPlayerVisibility(bool bImmediate);
+	void HandleCheckoutPlayerVisibilityRestore();
 
 	// 대기열 맨 앞 손님의 상품 BP를 계산대 상판에 표시용으로 생성합니다.
 	void SpawnCheckoutDisplayProducts();
@@ -177,11 +182,20 @@ protected:
 
 	// UI가 예외적으로 먼저 사라져도 원래 시점을 복원할 수 있도록 계산 중인 컨트롤러를 저장합니다.
 	UPROPERTY(Transient)
-	TObjectPtr<APlayerController> CheckoutPlayerController;
+	TWeakObjectPtr<APlayerController> CheckoutPlayerController;
 
 	// 계산 시작 직전 플레이어가 바라보던 ViewTarget입니다.
 	UPROPERTY(Transient)
-	TObjectPtr<AActor> PreviousCheckoutViewTarget;
+	TWeakObjectPtr<AActor> PreviousCheckoutViewTarget;
+
+	// 계산대 카메라에 몸이 가리지 않도록 계산 중에만 숨길 플레이어 Pawn입니다.
+	UPROPERTY(Transient)
+	TWeakObjectPtr<APawn> CheckoutPlayerPawn;
+
+	// 계산 시작 전 Pawn의 Hidden 상태를 종료 시 정확히 복원하기 위해 저장합니다.
+	bool bCheckoutPlayerPawnWasHidden = false;
+	bool bCheckoutPlayerVisibilityOverridden = false;
+	FTimerHandle CheckoutPlayerVisibilityRestoreTimer;
 
 	bool bCheckoutCameraActive = false;
 
