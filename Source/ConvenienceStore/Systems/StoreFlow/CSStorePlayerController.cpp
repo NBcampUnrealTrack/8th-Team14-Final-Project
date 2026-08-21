@@ -4,6 +4,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
+#include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 void ACSStorePlayerController::BeginPlay()
@@ -28,6 +29,8 @@ void ACSStorePlayerController::BeginPlay()
 			this, &ACSStorePlayerController::HandleEndOfDayTaskChanged);
 		StoreGameState->OnStorePhaseChanged.AddDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
+		StoreGameState->OnStoreOpenStateChanged.AddUniqueDynamic(
+			this, &ACSStorePlayerController::HandleStoreOpenStateChanged);
 		StoreGameState->OnDailySummaryRequested.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
 		UpdateClosingInputMode();
 	}
@@ -41,10 +44,68 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			this, &ACSStorePlayerController::HandleEndOfDayTaskChanged);
 		StoreGameState->OnStorePhaseChanged.RemoveDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
+		StoreGameState->OnStoreOpenStateChanged.RemoveDynamic(
+			this, &ACSStorePlayerController::HandleStoreOpenStateChanged);
 		StoreGameState->OnDailySummaryRequested.RemoveDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
 	}
 
+	if (IsValid(ActiveStatusAnnouncementWidget))
+	{
+		ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
+			this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+		ActiveStatusAnnouncementWidget->RemoveFromParent();
+		ActiveStatusAnnouncementWidget = nullptr;
+	}
+
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACSStorePlayerController::HandleStoreOpenStateChanged(bool bNewStoreOpen)
+{
+	if (!IsLocalPlayerController() || !IsValid(StoreGameState) ||
+		StatusAnnouncementWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	// 하루를 초기화하면서 방송하는 닫힘 상태는 실제 영업 종료 안내가 아닙니다.
+	if (!bNewStoreOpen && !StoreGameState->bHasStoreOpenedToday)
+	{
+		return;
+	}
+
+	if (!IsValid(ActiveStatusAnnouncementWidget))
+	{
+		ActiveStatusAnnouncementWidget = CreateWidget<UCSStatusAnnouncementWidget>(
+			this,
+			StatusAnnouncementWidgetClass);
+		if (!IsValid(ActiveStatusAnnouncementWidget))
+		{
+			return;
+		}
+
+		ActiveStatusAnnouncementWidget->OnAnnouncementFinished.AddUniqueDynamic(
+			this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+		ActiveStatusAnnouncementWidget->AddToPlayerScreen(100);
+	}
+
+	ActiveStatusAnnouncementWidget->PlayAnnouncement(
+		bNewStoreOpen
+			? ECSStatusAnnouncementType::Opened
+			: ECSStatusAnnouncementType::Closed);
+}
+
+void ACSStorePlayerController::HandleStatusAnnouncementFinished()
+{
+	if (!IsValid(ActiveStatusAnnouncementWidget))
+	{
+		return;
+	}
+
+	ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
+		this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+	ActiveStatusAnnouncementWidget->RemoveFromParent();
+	ActiveStatusAnnouncementWidget = nullptr;
 }
 
 void ACSStorePlayerController::HandleDailySummaryRequested()

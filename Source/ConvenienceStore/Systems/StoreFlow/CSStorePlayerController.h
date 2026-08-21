@@ -10,6 +10,7 @@ class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UUserWidget;
 class UCSDailySummaryWidget;
+class UCSStatusAnnouncementWidget;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
 // 튜토리얼이 어떤 UI가 열렸는지 감지하는 경로
@@ -71,6 +72,8 @@ protected:
 
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
+	UFUNCTION() void HandleStoreOpenStateChanged(bool bNewStoreOpen);
+	UFUNCTION() void HandleStatusAnnouncementFinished();
 	UFUNCTION() void HandleDailySummaryRequested();
 	UFUNCTION() void HandleDailySummaryConfirmed();
 
@@ -83,6 +86,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
 	TSubclassOf<UCSDailySummaryWidget> DailySummaryWidgetClass;
 	UPROPERTY(Transient) TObjectPtr<UCSDailySummaryWidget> ActiveDailySummaryWidget;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Announcement")
+	TSubclassOf<UCSStatusAnnouncementWidget> StatusAnnouncementWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStatusAnnouncementWidget> ActiveStatusAnnouncementWidget;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
