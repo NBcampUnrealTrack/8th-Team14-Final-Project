@@ -53,6 +53,31 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> PhaseNameText;
 
+	// 영업 단계와 별개로 신규 손님 입장 가능 여부를 표시하는 배너입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> CustomerEntryBanner;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_BannerBackground;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CustomerEntryStatusText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CustomerEntryShortStatusText;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Customer Entry")
+	FLinearColor EntryOpenTextColor = FLinearColor(0.68f, 1.0f, 0.38f, 1.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Customer Entry")
+	FLinearColor EntryPausedTextColor = FLinearColor(0.82f, 0.82f, 0.82f, 1.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Customer Entry")
+	FLinearColor EntryOpenBannerColor = FLinearColor(0.72f, 1.0f, 0.48f, 1.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Customer Entry")
+	FLinearColor EntryPausedBannerColor = FLinearColor(0.72f, 0.42f, 0.38f, 1.0f);
+
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> RemainingTimeText;
 
@@ -72,6 +97,9 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ClockMinuteText;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Clock")
+	FLinearColor ClosingClockColor = FLinearColor(0.85f, 0.12f, 0.08f, 1.0f);
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> BusinessDayText;
@@ -116,6 +144,10 @@ protected:
 	// 위치 이동 방식은 WBP 애니메이션이 담당하고 C++은 목표 Y값만 전달합니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Store|HUD")
 	void OnPhaseSelectionChanged(float TargetTranslationY, bool bAnimate);
+
+	// 문구와 색상은 C++에서 적용하며 WBP는 배너의 이동 연출만 담당합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Store|HUD")
+	void OnCustomerEntryStatusChanged(bool bEntryEnabled, bool bAnimate);
 
 	// 상태 표시는 C++에서 끝낸 뒤 WBP에는 시각 연출 재생만 요청합니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Store|HUD")
@@ -203,11 +235,17 @@ private:
 	float GetPhaseSelectionTranslationY() const;
 	void UpdatePhaseSelection();
 	void UpdatePhaseNameDisplay();
+	void UpdateCustomerEntryBanner(bool bAnimate);
 	void UpdateStoreProgressDisplay();
 	void UpdateEndOfDayPanel();
 	void UpdateDailySalesDisplay();
+	void ApplyClosingClockColor(float ClosingColorAlpha);
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	float CurrentPhaseSelectionY = 0.0f;
 	bool bPhaseSelectionInitialized = false;
+	FLinearColor InitialClockColor = FLinearColor::White;
+	FLinearColor InitialClockHourColor = FLinearColor::White;
+	FLinearColor InitialClockColonColor = FLinearColor::White;
+	FLinearColor InitialClockMinuteColor = FLinearColor::White;
 };

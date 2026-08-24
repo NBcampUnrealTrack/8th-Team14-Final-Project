@@ -4,6 +4,8 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
+#include "UI/Store/CSStatusAnnouncementWidget.h"
+#include "UI/Store/CSClosingWarningWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 void ACSStorePlayerController::BeginPlay()
@@ -24,11 +26,14 @@ void ACSStorePlayerController::BeginPlay()
 	StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
 	if (StoreGameState != nullptr)
 	{
+		LastObservedStorePhase = StoreGameState->CurrentPhase;
 		StoreGameState->OnEndOfDayTaskChanged.AddDynamic(
 			this, &ACSStorePlayerController::HandleEndOfDayTaskChanged);
 		StoreGameState->OnStorePhaseChanged.AddDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
 		StoreGameState->OnDailySummaryRequested.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
+		StoreGameState->OnClosingWarningRequested.AddUniqueDynamic(
+			this, &ACSStorePlayerController::HandleClosingWarningRequested);
 		UpdateClosingInputMode();
 	}
 }
@@ -42,9 +47,108 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		StoreGameState->OnStorePhaseChanged.RemoveDynamic(
 			this, &ACSStorePlayerController::HandleStorePhaseChanged);
 		StoreGameState->OnDailySummaryRequested.RemoveDynamic(this, &ACSStorePlayerController::HandleDailySummaryRequested);
+		StoreGameState->OnClosingWarningRequested.RemoveDynamic(
+			this, &ACSStorePlayerController::HandleClosingWarningRequested);
+	}
+
+	if (IsValid(ActiveStatusAnnouncementWidget))
+	{
+		ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
+			this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+		ActiveStatusAnnouncementWidget->RemoveFromParent();
+		ActiveStatusAnnouncementWidget = nullptr;
+	}
+
+	if (IsValid(ActiveClosingWarningWidget))
+	{
+		ActiveClosingWarningWidget->OnWarningFinished.RemoveDynamic(
+			this, &ACSStorePlayerController::HandleClosingWarningFinished);
+		ActiveClosingWarningWidget->RemoveFromParent();
+		ActiveClosingWarningWidget = nullptr;
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACSStorePlayerController::ShowStatusAnnouncement(
+	ECSStatusAnnouncementType AnnouncementType)
+{
+	if (!IsLocalPlayerController() || !IsValid(StoreGameState) ||
+		StatusAnnouncementWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(ActiveStatusAnnouncementWidget))
+	{
+		ActiveStatusAnnouncementWidget = CreateWidget<UCSStatusAnnouncementWidget>(
+			this,
+			StatusAnnouncementWidgetClass);
+		if (!IsValid(ActiveStatusAnnouncementWidget))
+		{
+			return;
+		}
+
+		ActiveStatusAnnouncementWidget->OnAnnouncementFinished.AddUniqueDynamic(
+			this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+		ActiveStatusAnnouncementWidget->AddToPlayerScreen(100);
+	}
+
+	ActiveStatusAnnouncementWidget->PlayAnnouncement(AnnouncementType);
+}
+
+void ACSStorePlayerController::HandleStatusAnnouncementFinished()
+{
+	if (!IsValid(ActiveStatusAnnouncementWidget))
+	{
+		return;
+	}
+
+	ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
+		this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
+	ActiveStatusAnnouncementWidget->RemoveFromParent();
+	ActiveStatusAnnouncementWidget = nullptr;
+}
+
+void ACSStorePlayerController::HandleClosingWarningRequested(int32 RemainingMinutes)
+{
+	if (!IsLocalPlayerController() || ClosingWarningWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(ActiveClosingWarningWidget))
+	{
+		ActiveClosingWarningWidget = CreateWidget<UCSClosingWarningWidget>(
+			this,
+			ClosingWarningWidgetClass);
+		if (!IsValid(ActiveClosingWarningWidget))
+		{
+			return;
+		}
+
+		ActiveClosingWarningWidget->OnWarningFinished.AddUniqueDynamic(
+			this,
+			&ACSStorePlayerController::HandleClosingWarningFinished);
+		ActiveClosingWarningWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		ActiveClosingWarningWidget->AddToPlayerScreen(50);
+	}
+
+	ActiveClosingWarningWidget->ShowWarning(RemainingMinutes);
+}
+
+void ACSStorePlayerController::HandleClosingWarningFinished()
+{
+	if (!IsValid(ActiveClosingWarningWidget))
+	{
+		return;
+	}
+
+	ActiveClosingWarningWidget->OnWarningFinished.RemoveDynamic(
+		this,
+		&ACSStorePlayerController::HandleClosingWarningFinished);
+	ActiveClosingWarningWidget->RemoveFromParent();
+	ActiveClosingWarningWidget = nullptr;
 }
 
 void ACSStorePlayerController::HandleDailySummaryRequested()
@@ -86,6 +190,26 @@ void ACSStorePlayerController::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
 
 void ACSStorePlayerController::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
+	const bool bBusinessStarted =
+		LastObservedStorePhase != ECStorePhase::Open &&
+		NewPhase == ECStorePhase::Open;
+	const bool bBusinessEnded =
+		LastObservedStorePhase == ECStorePhase::Open &&
+		NewPhase != ECStorePhase::Open;
+
+	if (bBusinessStarted)
+	{
+		bClosingAnnouncementPending = false;
+		ShowStatusAnnouncement(ECSStatusAnnouncementType::Opened);
+	}
+	else if (bBusinessEnded)
+	{
+		bClosingAnnouncementPending = true;
+		TryShowPendingClosingAnnouncement();
+	}
+
+	LastObservedStorePhase = NewPhase;
+
 	UpdateClosingInputMode();
 }
 
@@ -163,6 +287,23 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 
 	// 이 함수를 거쳐가는 모든 UI 열림/닫힘을 방송
 	OnGameplayUIInputLockChanged.Broadcast(RequestingWidget, bShouldLock);
+
+	// 마감 순간 결제 완료 연출이 재생 중이었다면 계산 UI의 잠금이 풀린 뒤 종료 공지를 띄웁니다.
+	if (!bShouldLock)
+	{
+		TryShowPendingClosingAnnouncement();
+	}
+}
+
+void ACSStorePlayerController::TryShowPendingClosingAnnouncement()
+{
+	if (!bClosingAnnouncementPending || HasGameplayUIInputLock())
+	{
+		return;
+	}
+
+	bClosingAnnouncementPending = false;
+	ShowStatusAnnouncement(ECSStatusAnnouncementType::Closed);
 }
 
 bool ACSStorePlayerController::IsGameplayUIInputLocked() const

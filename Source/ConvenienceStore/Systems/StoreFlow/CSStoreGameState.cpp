@@ -41,6 +41,14 @@ void ACSStoreGameState::SetGameClock(
 	SetCurrentGameMinutes(NewGameMinutes);
 }
 
+void ACSStoreGameState::SetClosingTimeSettings(
+	float NewClosingTimeMinutes,
+	float NewCountdownMinutes)
+{
+	AutomaticClosingTimeMinutes = FMath::Max(0.0f, NewClosingTimeMinutes);
+	ClosingClockCountdownMinutes = FMath::Max(1.0f, NewCountdownMinutes);
+}
+
 void ACSStoreGameState::SetGameClockRunning(bool bNewClockRunning)
 {
 	if (bIsGameClockRunning == bNewClockRunning)

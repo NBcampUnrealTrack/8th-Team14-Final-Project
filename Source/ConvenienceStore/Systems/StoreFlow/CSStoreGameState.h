@@ -69,6 +69,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDailySummaryRequested);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnStoreClosingWarningRequested,
+	int32,
+	RemainingMinutes);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnStoreExperienceChanged,
 	int32,
 	NewExperience);
@@ -117,6 +122,12 @@ public:
 	// 시간이 진행 중인지 나타냅니다. 마감 업무 중에는 거짓입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Time")
 	bool bIsGameClockRunning = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Time")
+	float AutomaticClosingTimeMinutes = 1440.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Time")
+	float ClosingClockCountdownMinutes = 10.0f;
 
 	// 자정 이후 플레이어가 처리해야 하는 현재 마감 업무입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Closing")
@@ -246,9 +257,13 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Closing")
 	FOnDailySummaryRequested OnDailySummaryRequested;
 
+	UPROPERTY(BlueprintAssignable, Category = "Store|Closing")
+	FOnStoreClosingWarningRequested OnClosingWarningRequested;
+
 	void SetStorePhase(const FCSStorePhaseData& PhaseData);
 	void SetRemainingSeconds(float NewRemainingSeconds);
 	void SetGameClock(float NewGameMinutes, float NewGameMinutesPerRealSecond, bool bNewClockRunning);
+	void SetClosingTimeSettings(float NewClosingTimeMinutes, float NewCountdownMinutes);
 	void SetGameClockRunning(bool bNewClockRunning);
 	void SetCurrentGameMinutes(float NewGameMinutes);
 	void SetEndOfDayTask(ECEndOfDayTask NewTask);
