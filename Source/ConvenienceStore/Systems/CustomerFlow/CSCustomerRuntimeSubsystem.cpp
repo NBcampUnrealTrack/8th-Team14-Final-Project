@@ -837,6 +837,13 @@ bool UCSCustomerRuntimeSubsystem::ShouldForceLeaveStore(const ACSCustomerCharact
 		return false;
 	}
 
+	// 제압된 손님은 이미 소멸 대기 중이다.
+	// 이 부분이 없으면 자정 마감이 겹칠 때 ForceLeave가 쓰러진 손님을 다시 걷게 만든다.
+	if (State->IsSubdued())
+	{
+		return false;
+	}
+
 	// 계산을 마친 손님은 어차피 나가는 중이다.
 	// 체크를 해야 이미 계산완료한 손님은 봉투를 든 채 나간다.
 	if (State->bCheckoutDone)
@@ -1006,6 +1013,9 @@ void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)
 
 	State->MarkVillainActionDone();
 
+	// 절도가 시작된 순간부터 빨간 외곽선으로 추격 대상을 표시
+	Customer->SetVillainHighlight(true);
+
 	// 디버그용
 	// 들고 나가려는 상품의 판매가 합계.
 	int64 AtRiskGoldTotal = 0;
@@ -1068,6 +1078,99 @@ void UCSCustomerRuntimeSubsystem::ReportShopliftEscaped(ACSCustomerCharacter* Cu
 
 	//빌러 도주 성공했다고 전파
 	OnShopliftEscaped.Broadcast(Customer, LostGold);
+}
+
+bool UCSCustomerRuntimeSubsystem::CanSubdueCustomer(const ACSCustomerCharacter* Customer) const
+{
+	if (IsValid(Customer) == false)
+	{
+		return false;
+	}
+
+	const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	// 이미 쓰러진 손님을 다시 때려도 아무 일도 일어나지 않게 함
+	if (State->IsSubdued())
+	{
+		return false;
+	}
+
+	// 일반 손님은 제압 대상이 아님, 기존 피격 디버그만 뜬다.
+	if (State->PlannedVillainAction != ECSVillainAction::Shoplift)
+	{
+		return false;
+	}
+
+	// 실행 전 빌런은 겉보기에 일반 손님과 구분되지 않으므로 기본적으로 제외
+	if (State->bVillainActionDone == false && bAllowSubdueBeforeShoplift == false)
+	{
+		return false;
+	}
+
+	// 정상적으로 계산을 마친 손님
+	if (State->bCheckoutDone)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool UCSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer(ACSCustomerCharacter* Customer,const FVector& ImpactDirection,const float KnockbackStrength)
+{
+	if (CanSubdueCustomer(Customer) == false)
+	{
+		return false;
+	}
+
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+
+	// 방송은 첫 공격에서만 처리
+	if (State->MarkSubdued() == false)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[제압] %s 는 이미 쓰러진 상태"), *Customer->GetName());
+		return true;
+	}
+
+	// 쓰러진 빌런은 더 이상 추격 대상이 아니므로 외곽선을 끈다.
+	Customer->SetVillainHighlight(false);
+
+	// 회수액은 반드시 낙하 전에 계산한다.
+	// DropCustomerItems가 SelectProducts를 비우기 때문에 뒤에서 계산하면 항상 0이 됨.
+	int64 RecoveredGoldTotal = 0;
+	for (int32 i = 0; i < State->SelectProducts.Num(); i++)
+	{
+		RecoveredGoldTotal += State->SelectProducts[i].SalePriceAtPickup;
+	}
+	const int32 RecoveredGold = static_cast<int32>(FMath::Min<int64>(RecoveredGoldTotal, MAX_int32));
+
+	// 줄에서 맞았을 때 파괴된 손님이 대기열에 남아 뒷사람 순번이 밀리는 것을 막는다.
+	LeaveQueue(Customer);
+
+	// 훔친 상품을 전부 발밑에 떨어뜨린다. 목록과 장바구니 표시 정리까지 이 함수가 처리한다.
+	// 쓰러지는 연출보다 먼저 하는 이유: 낙하 기준점이 손님에 붙은 화살표 컴포넌트라서
+	// 나중에 랙돌로 몸이 뒤집힌 뒤에 부르면 상품이 땅밑이나 벽에 박힌다.
+	const int32 DroppedCount = DropCustomerItems(Customer);
+
+	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제. 상세는 VillainSubdue_Design.md 4-6절
+	// 쓰러지는 연출을 넣을 자리. 연출이 후순위라 훅 자체를 주석 처리해 둔 상태
+	// 종족별 분기는 캐릭터 쪽 C++ 구현이 담당
+
+	if (GEngine != nullptr)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Green,
+			FString::Printf(TEXT("[빌런 제압] %s | 상품 %d개 회수 (%d G)"),
+				*Customer->GetName(), DroppedCount, RecoveredGold));
+	}
+
+	// 제압 성공을 전파. 평판 상승이나 통계는 구독하는 쪽에서 처리한다.
+	OnVillainSubdued.Broadcast(Customer, RecoveredGold);
+
+	return true;
 }
 
 void UCSCustomerRuntimeSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)

@@ -13,6 +13,7 @@ class USceneComponent;
 class ACSCustomerBasketActor;
 class ACSCustomerShoppingBagActor;
 class UCSPurchaseDecisionComponent;
+class UPrimitiveComponent;
 struct FCSSelectProduct;
 
 UCLASS()
@@ -40,9 +41,24 @@ public:
 		FVector ImpactDirection,
 		float KnockbackStrength) override;
 
+	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제.
+	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
+	//void BeginSubduedReaction(FVector ImpactDirection, float KnockbackStrength);
+	//virtual void BeginSubduedReaction_Implementation(FVector ImpactDirection, float KnockbackStrength);
+
+	// TODO(제압 연출): 소멸 직전 1회. 랙돌 정리나 사라지는 연출을 붙일 자리
+	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
+	//void EndSubduedReaction();
+	//virtual void EndSubduedReaction_Implementation();
+
 
 	// 계산을 포기했을 때 상품을 내려놓기 시작할 지점 SideIndex: 0 = 왼쪽, 1 = 오른쪽
 	const UArrowComponent* GetDropOrigin(const int32 SideIndex) const;
+
+	// 절도를 시작한 빌런을 추적할 수 있게 빨간 외곽선을 켜고 끕니다.
+	// 켜는 곳: CSCustomerRuntimeSubsystem::CommitShoplift()
+	// 끄는 곳: CSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer() (제압 성공)
+	void SetVillainHighlight(bool bEnabled);
 
 protected:
 	virtual void BeginPlay() override;
@@ -90,5 +106,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Magic Hit",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float MagicKnockbackUpwardStrength = 250.0f;
+
+	// Post Process 외곽선 머티리얼에서 빨강으로 설정하여 사용
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Villain",
+		meta = (ClampMin = "0"))
+	int32 VillainOutlineStencilValue = 4;
+
+private:
+	// 외곽선을 켜기 전 원래 상태를 기억해뒀다가 끌 때 복원
+	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
+	TMap<TObjectPtr<UPrimitiveComponent>, int32> OriginalCustomStencilValues;
 
 };

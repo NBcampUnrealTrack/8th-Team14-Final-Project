@@ -386,6 +386,63 @@ struct FCSTask_PrepareForcedLeave : public FStateTreeTaskCommonBase
 };
 
 // =====================================================================
+// SubduedDespawn : 제압된 빌런을 그 자리에 붙잡아 두고 시간이 지나면 파괴
+//
+// 상품 낙하와 방송은 피격 시점에 서브시스템이 이미 처리
+// 이 Task는 "멈춤 + 시간 + 파괴" 세 가지뿐입니다.
+// =====================================================================
+
+USTRUCT()
+struct FCSTask_SubduedDespawnInstanceData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<AAIController> AIController = nullptr;
+
+	// 0보다 크면 이 값을, 0이면 서브시스템의 SubduedDespawnDelay를 사용합니다.
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float DespawnDelayOverride = 0.0f;
+
+	// 내부용 경과 시간
+	UPROPERTY()
+	float ElapsedTime = 0.0f;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Subdued Despawn"))
+struct FCSTask_SubduedDespawn : public FStateTreeTaskCommonBase
+{
+	GENERATED_BODY()
+
+	// 재선택 시 EnterState를 받지 않습니다.
+	// 진입 조건인 IsSubdued는 한 번 켜지면 꺼지지 않으므로
+	// Root의 On Tick 전이가 이미 Subdued에 있는데도 매 틱 다시 발동합니다.
+	// 기본값(true)이면 그때마다 EnterState가 불려 ElapsedTime이 0으로 리셋되고,
+	// 손님이 멈춘 채 영원히 사라지지 않음
+
+	FCSTask_SubduedDespawn()
+	{
+		bShouldStateChangeOnReselect = false;
+	}
+
+	using FInstanceDataType = FCSTask_SubduedDespawnInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
+
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
+		const float DeltaTime) const override;
+};
+
+// =====================================================================
 // ApproachStorefront : 스폰 지점에서 가게 앞까지 걸어가 입장 여부를 판정
 //
 // [핵심] 가게 앞에 도착하는 순간 태스크가 끝
