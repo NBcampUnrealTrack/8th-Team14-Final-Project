@@ -53,6 +53,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCustomerDespawned, ACSCustomer
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftStarted,ACSCustomerCharacter*, Customer, int32, AtRiskGold);
 // 빌런 도주 성공 방송, 매출/평판 집계는 이것을 구독하세요.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftEscaped,ACSCustomerCharacter*, Customer, int32, LostGold);
+// 빌런 제압 성공 방송. RecoveredGold는 되찾은 상품의 판매가 합계.
+// 평판 상승 / 통계 / 업적은 이것을 구독하세요.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnVillainSubdued,ACSCustomerCharacter*, Customer, int32, RecoveredGold);
 // 영업시간 종료로 강제 퇴장된 손님 방송, 통계 파트가 자발적 빈손 퇴장 / 계산 포기와 구분하기 위한 별도 채널
 DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerCharacter* /*Customer*/);
 
@@ -271,6 +274,23 @@ public:
 	// NotifyCustomerDespawned 안에서 불리므로 태스크가 직접 부를 일은 없습니다.
 	void ReportShopliftEscaped(ACSCustomerCharacter* Customer);
 
+	// 빌런 제압 -------
+
+	// 제압이 성립하는 손님인지 판정. 피격 시점에 한 번만 쓰는 판정
+	bool CanSubdueCustomer(const ACSCustomerCharacter* Customer) const;
+
+	// 지팡이 피격이 들어오는 함수. 제압이 성립했으면 true를 반환
+	bool HandleMagicHitOnCustomer(ACSCustomerCharacter* Customer,const FVector& ImpactDirectionconst,float KnockbackStrength);
+
+	// 제압된 손님 남아 있는 시간. 이 시간이 지나면 파괴
+	UPROPERTY(EditAnywhere, Category = "Store|Villain", meta = (ClampMin = "0.0"))
+	float SubduedDespawnDelay = 3.0f;
+
+	// 아직 절도를 저지르지 않은 빌런도 때려서 잡을 수 있게 할지.
+	// 기본값이 false인 이유: 실행 전 빌런은 겉보기에 일반 손님과 구분되지 않으므로, 허용하면 아무나 때리게 됨
+	UPROPERTY(EditAnywhere, Category = "Store|Villain")
+	bool bAllowSubdueBeforeShoplift = false;
+
 	// =====================================================================
 	// 이벤트
 	// =====================================================================
@@ -292,6 +312,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnShopliftEscaped OnShopliftEscaped; // 도주 성공. 손실/평판 집계용
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnVillainSubdued OnVillainSubdued; // 제압 성공. 회수액/평판 집계용
 
 private:
 	UPROPERTY()

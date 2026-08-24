@@ -11,7 +11,9 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
 // Sets default values
 ACSCustomerCharacter::ACSCustomerCharacter()
@@ -137,6 +139,17 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	FVector ImpactDirection,
 	float KnockbackStrength)
 {
+	// 공격 판정을 받았을 때 Subsystem에서 빌런
+	UWorld* World = GetWorld();
+    if (IsValid(World))
+    {
+        UCSCustomerRuntimeSubsystem* Subsystem = World->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+        if (Subsystem != nullptr)
+        {
+            Subsystem->HandleMagicHitOnCustomer(this, ImpactDirection, KnockbackStrength);
+        }
+    }
+
 	// 투사체가 배 쪽에서 들어오면 등 방향으로 밀리도록 공격 진행 방향을 사용합니다.
 	FVector LaunchVelocity = ImpactDirection.GetSafeNormal() * FMath::Max(0.0f, KnockbackStrength);
 	LaunchVelocity.Z += MagicKnockbackUpwardStrength;

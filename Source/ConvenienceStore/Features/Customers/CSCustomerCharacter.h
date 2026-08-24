@@ -40,6 +40,16 @@ public:
 		FVector ImpactDirection,
 		float KnockbackStrength) override;
 
+	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제.
+	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
+	//void BeginSubduedReaction(FVector ImpactDirection, float KnockbackStrength);
+	//virtual void BeginSubduedReaction_Implementation(FVector ImpactDirection, float KnockbackStrength);
+
+	// TODO(제압 연출): 소멸 직전 1회. 랙돌 정리나 사라지는 연출을 붙일 자리
+	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
+	//void EndSubduedReaction();
+	//virtual void EndSubduedReaction_Implementation();
+
 
 	// 계산을 포기했을 때 상품을 내려놓기 시작할 지점 SideIndex: 0 = 왼쪽, 1 = 오른쪽
 	const UArrowComponent* GetDropOrigin(const int32 SideIndex) const;
