@@ -1013,6 +1013,9 @@ void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)
 
 	State->MarkVillainActionDone();
 
+	// 절도가 시작된 순간부터 빨간 외곽선으로 추격 대상을 표시
+	Customer->SetVillainHighlight(true);
+
 	// 디버그용
 	// 들고 나가려는 상품의 판매가 합계.
 	int64 AtRiskGoldTotal = 0;
@@ -1132,6 +1135,9 @@ bool UCSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer(ACSCustomerCharacter*
 		UE_LOG(LogTemp, Verbose, TEXT("[제압] %s 는 이미 쓰러진 상태"), *Customer->GetName());
 		return true;
 	}
+
+	// 쓰러진 빌런은 더 이상 추격 대상이 아니므로 외곽선을 끈다.
+	Customer->SetVillainHighlight(false);
 
 	// 회수액은 반드시 낙하 전에 계산한다.
 	// DropCustomerItems가 SelectProducts를 비우기 때문에 뒤에서 계산하면 항상 0이 됨.

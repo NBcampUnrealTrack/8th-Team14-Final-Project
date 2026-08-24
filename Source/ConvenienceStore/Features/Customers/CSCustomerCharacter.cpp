@@ -9,6 +9,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -139,7 +140,7 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	FVector ImpactDirection,
 	float KnockbackStrength)
 {
-	// 공격 판정을 받았을 때 Subsystem에서 빌런
+	// 공격 판정을 받았을 때 Subsystem에서 빌런인지 확인
 	UWorld* World = GetWorld();
     if (IsValid(World))
     {
@@ -171,6 +172,54 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	}
 
 	// LaunchCharacter(LaunchVelocity, true, true);
+}
+
+void ACSCustomerCharacter::SetVillainHighlight(bool bEnabled)
+{
+	if (bEnabled == false)
+	{
+		// 백업해 둔 원래 렌더링 설정으로 복구
+		for (const TPair<TObjectPtr<UPrimitiveComponent>, bool>& Pair : OriginalCustomDepthStates)
+		{
+			UPrimitiveComponent* PrimitiveComponent = Pair.Key.Get();
+			if (!IsValid(PrimitiveComponent))
+			{
+				continue;
+			}
+
+			PrimitiveComponent->SetRenderCustomDepth(Pair.Value);
+			if (const int32* OriginalStencilValue =
+				OriginalCustomStencilValues.Find(PrimitiveComponent))
+			{
+				PrimitiveComponent->SetCustomDepthStencilValue(*OriginalStencilValue);
+			}
+		}
+
+		OriginalCustomDepthStates.Empty();
+		OriginalCustomStencilValues.Empty();
+		return;
+	}
+
+	// 손님에 Attach된 장바구니는 별개 액터라서 여기에 포함되지 않음.
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!IsValid(PrimitiveComponent))
+		{
+			continue;
+		}
+
+		// 최초 표시 시의 값만 저장하여 외곽선 해제 후 원래 설정으로 되돌림
+		if (!OriginalCustomDepthStates.Contains(PrimitiveComponent))
+		{
+			OriginalCustomDepthStates.Add(PrimitiveComponent,PrimitiveComponent->bRenderCustomDepth);
+			OriginalCustomStencilValues.Add(PrimitiveComponent,PrimitiveComponent->CustomDepthStencilValue);
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(true);
+		PrimitiveComponent->SetCustomDepthStencilValue(VillainOutlineStencilValue);
+	}
 }
 
 const UArrowComponent* ACSCustomerCharacter::GetDropOrigin(const int32 SideIndex) const
