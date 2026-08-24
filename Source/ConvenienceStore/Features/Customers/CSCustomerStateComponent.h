@@ -122,6 +122,17 @@ public:
 	// 빌런 행동을 실행한 뒤 호출. 안 부르면 트리가 그 상태에 갇힙니다
 	void MarkVillainActionDone();
 
+	// 제압된 빌런인지 확인하는 변수
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Villain")
+	bool bIsSubdued = false;
+
+	UFUNCTION(BlueprintPure, Category = "Customer|Villain")
+	bool IsSubdued() const;
+
+	// 제압 확정 시 호출. 이번 호출이 실제 전환이면 true, 이미 제압된 상태였으면 false.
+	// 중복을 걸러낼 근거가 필요
+	bool MarkSubdued();
+
 	// 예산 -------
 
 	// 이번 방문에서 쓸 생각이었던 돈 (소프트 예산)

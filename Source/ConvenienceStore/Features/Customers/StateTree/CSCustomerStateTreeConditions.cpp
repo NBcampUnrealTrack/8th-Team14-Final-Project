@@ -185,6 +185,32 @@ bool FCSCond_ShouldForceLeave::TestCondition(FStateTreeExecutionContext& Context
 	return bResult;
 }
 
+bool FCSCond_IsSubdued::TestCondition(FStateTreeExecutionContext& Context) const
+{
+	const FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	bool bResult = false;
+
+	if (Data.Actor != nullptr)
+	{
+		// 제압 여부는 개인 데이터이므로 서브시스템을 안 거치고 바로 상태 컴포넌트에서 판정
+		const UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+		if (State != nullptr)
+		{
+			bResult = State->IsSubdued();
+		}
+	}
+
+	if (Data.bInvert)
+	{
+		return (bResult == false);
+	}
+	else
+	{
+		return bResult;
+	}
+}
+
 bool FCSCond_HasEnteredStore::TestCondition(FStateTreeExecutionContext& Context) const
 {
 	const FInstanceDataType& Data = Context.GetInstanceData(*this);

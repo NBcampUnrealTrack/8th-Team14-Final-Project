@@ -554,6 +554,84 @@ EStateTreeRunStatus FCSTask_PrepareForcedLeave::EnterState(FStateTreeExecutionCo
 }
 
 // =====================================================================
+// SubduedDespawn
+// =====================================================================
+
+EStateTreeRunStatus FCSTask_SubduedDespawn::EnterState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 이전 상태의 ExitState가 이미 StopMovement를 불렀지만,
+	// 어느 상태에서 들어왔는지에 의존하지 않도록 여기서도 한 번 확실히 끊는다.
+	if (Data.AIController != nullptr)
+	{
+		Data.AIController->StopMovement();
+	}
+
+	// Shoplift가 올려둔 도주 속도가 남아 있어도 밀려나지 않게 이동 자체를 막는다.
+	if (UCharacterMovementComponent* Movement = Data.Actor->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+
+	Data.ElapsedTime = 0.0f;
+
+	UE_LOG(LogTemp, Log, TEXT("[제압] %s 소멸 대기 시작"), *Data.Actor->GetName());
+
+	return EStateTreeRunStatus::Running;
+}
+
+EStateTreeRunStatus FCSTask_SubduedDespawn::Tick(FStateTreeExecutionContext& Context,
+	const float DeltaTime) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+
+	if (Data.Actor == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	UCSCustomerRuntimeSubsystem* Subsystem =
+		Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+
+	// 파라미터가 0이면 서브시스템의 공용 값을 쓴다. 서브시스템까지 없으면 최후 폴백.
+	float DespawnDelay = Data.DespawnDelayOverride;
+	if (DespawnDelay <= 0.0f)
+	{
+		DespawnDelay = (Subsystem != nullptr) ? Subsystem->SubduedDespawnDelay : 3.0f;
+	}
+
+	Data.ElapsedTime += DeltaTime;
+	if (Data.ElapsedTime < DespawnDelay)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제. 상세는 VillainSubdue_Design.md 4-6절
+	// 연출 정리 자리. 랙돌이 들어오더라도 소멸 시점은 아래 그대로 유지된다.
+	//Data.Actor->EndSubduedReaction();
+
+	// 통계 방송. 제압 시점에 상품 목록이 비워졌으므로
+	// 이 안의 ReportShopliftEscaped는 손실을 방송하지 않고 조용히 빠져나간다.
+	if (Subsystem != nullptr)
+	{
+		Subsystem->NotifyCustomerDespawned(Data.Actor);
+	}
+
+	// Destroyed()가 AIController와 장바구니, 봉투까지 정리한다.
+	Data.Actor->Destroy();
+
+	return EStateTreeRunStatus::Succeeded;
+}
+
+// =====================================================================
 // ApproachStorefront
 // =====================================================================
 

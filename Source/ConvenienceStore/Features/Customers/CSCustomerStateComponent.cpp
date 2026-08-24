@@ -128,6 +128,23 @@ void UCSCustomerStateComponent::MarkVillainActionDone()
 	bVillainActionDone = true;
 }
 
+bool UCSCustomerStateComponent::IsSubdued() const
+{
+	return bIsSubdued;
+}
+
+bool UCSCustomerStateComponent::MarkSubdued()
+{
+	// 이미 쓰러진 손님이면 호출자가 낙하와 방송을 건너뛸 수 있게 false를 돌려준다.
+	if (bIsSubdued)
+	{
+		return false;
+	}
+
+	bIsSubdued = true;
+	return true;
+}
+
 void UCSCustomerStateComponent::RecordSpending(int32 Amount)
 {
 	SpentGold += Amount;
