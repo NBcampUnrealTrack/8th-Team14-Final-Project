@@ -110,6 +110,15 @@ protected:
 		meta = (ClampMin = "1440.0", ClampMax = "1440.0"))
 	float AutomaticClosingTimeMinutes = 1440.0f;
 
+	// 자동 마감 몇 분 전에 일회성 경고를 표시할지 지정합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time",
+		meta = (ClampMin = "1.0"))
+	float ClosingWarningLeadMinutes = 30.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time",
+		meta = (ClampMin = "1.0"))
+	float ClosingClockCountdownMinutes = 10.0f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Time")
 	float BusinessStartTimeMinutes = 540.0f;
 
@@ -151,4 +160,5 @@ private:
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	FTimerHandle GameClockTimerHandle;
 	TSet<FName> FiredScheduleEventRows;
+	bool bClosingWarningFired = false;
 };

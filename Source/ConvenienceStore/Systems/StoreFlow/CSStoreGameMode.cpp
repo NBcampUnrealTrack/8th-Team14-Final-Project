@@ -113,8 +113,12 @@ void ACSStoreGameMode::StartStoreFlow()
 	}
 
 	FiredScheduleEventRows.Empty();
+	bClosingWarningFired = false;
 	StoreGameState->SetEndOfDayTask(ECEndOfDayTask::None);
 	StoreGameState->CompleteDailySummary();
+	StoreGameState->SetClosingTimeSettings(
+		AutomaticClosingTimeMinutes,
+		ClosingClockCountdownMinutes);
 	StoreGameState->SetGameClock(
 		InitialGameTimeMinutes,
 		GameMinutesPerRealSecond,
@@ -228,6 +232,16 @@ void ACSStoreGameMode::UpdateGameClock()
 	const float PreviousGameMinutes = StoreGameState->CurrentGameMinutes;
 	const float NewGameMinutes = PreviousGameMinutes +
 		StoreGameState->GameMinutesPerRealSecond * 0.1f;
+	const float ClosingWarningTime =
+		AutomaticClosingTimeMinutes - ClosingWarningLeadMinutes;
+	if (!bClosingWarningFired && ClosingWarningLeadMinutes > 0.0f &&
+		PreviousGameMinutes < ClosingWarningTime &&
+		NewGameMinutes >= ClosingWarningTime)
+	{
+		bClosingWarningFired = true;
+		StoreGameState->OnClosingWarningRequested.Broadcast(
+			FMath::RoundToInt(ClosingWarningLeadMinutes));
+	}
 
 	if (NewGameMinutes >= AutomaticClosingTimeMinutes)
 	{
