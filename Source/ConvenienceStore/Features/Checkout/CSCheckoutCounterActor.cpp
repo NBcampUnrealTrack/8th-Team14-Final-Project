@@ -606,9 +606,16 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
 	(void)NewPhase;
 
-	// 정산 등 계산 불가 단계로 전환되면 미완료 거래를 기록하지 않고 UI만 닫습니다.
+	// 결제 완료 뒤 영수증 퇴장 연출이 진행 중이라면 이미 기록된 거래의 마무리까지 보여 줍니다.
+	// 연출 완료 콜백에서는 CanProcessCheckout()이 false이므로 다음 손님으로 넘어가지 않고 UI를 닫습니다.
 	if (!CanProcessCheckout())
 	{
+		if (bCheckoutPaymentCompleted && bIsCheckoutTransitioning)
+		{
+			return;
+		}
+
+		// 결제 완료 전 강제 마감이라면 거래를 기록하지 않고 계산 UI를 즉시 닫습니다.
 		CloseCheckoutWidget();
 	}
 }

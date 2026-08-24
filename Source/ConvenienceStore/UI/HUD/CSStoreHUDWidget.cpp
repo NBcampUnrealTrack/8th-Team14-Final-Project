@@ -20,6 +20,23 @@ void UCSStoreHUDWidget::NativeConstruct()
 		return;
 	}
 
+	if (IsValid(ClockText))
+	{
+		InitialClockColor = ClockText->GetColorAndOpacity().GetSpecifiedColor();
+	}
+	if (IsValid(ClockHourText))
+	{
+		InitialClockHourColor = ClockHourText->GetColorAndOpacity().GetSpecifiedColor();
+	}
+	if (IsValid(ClockColonText))
+	{
+		InitialClockColonColor = ClockColonText->GetColorAndOpacity().GetSpecifiedColor();
+	}
+	if (IsValid(ClockMinuteText))
+	{
+		InitialClockMinuteColor = ClockMinuteText->GetColorAndOpacity().GetSpecifiedColor();
+	}
+
 	StoreGameState->OnStorePhaseChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandlePhaseChanged);
 	StoreGameState->OnStoreOpenStateChanged.AddDynamic(
@@ -54,6 +71,7 @@ void UCSStoreHUDWidget::NativeConstruct()
 	}
 
 	HandlePhaseChanged(StoreGameState->CurrentPhase);
+	UpdateCustomerEntryBanner(false);
 	HandleRemainingTimeChanged(StoreGameState->RemainingSeconds);
 	HandleGameTimeChanged(StoreGameState->CurrentGameMinutes);
 	HandleGameClockRunningChanged(StoreGameState->bIsGameClockRunning);
@@ -211,6 +229,7 @@ void UCSStoreHUDWidget::HandlePhaseChanged(ECStorePhase NewPhase)
 {
 	UpdatePhaseNameDisplay();
 	UpdatePhaseSelection();
+	UpdateCustomerEntryBanner(false);
 
 	if (NewPhase == ECStorePhase::Settlement || NewPhase == ECStorePhase::Finished)
 	{
@@ -225,9 +244,12 @@ void UCSStoreHUDWidget::HandleStoreOpenStateChanged(bool bNewStoreOpen)
 {
 	(void)bNewStoreOpen;
 
-	// 영업 단계에서 입간판으로 상태를 바꾸면 HUD 문구도 즉시 함께 갱신합니다.
+	// 최초 개점에서는 Phase 변경 직후 bHasStoreOpenedToday가 갱신되므로
+	// 메인 영업 표시도 다시 평가해야 합니다. 영업 중 입간판만 돌린 경우에는
+	// 표시 로직상 메인 상태는 그대로이고 입장 상태 배너만 달라집니다.
 	UpdatePhaseNameDisplay();
 	UpdatePhaseSelection();
+	UpdateCustomerEntryBanner(true);
 }
 
 void UCSStoreHUDWidget::HandleRemainingTimeChanged(float NewRemainingSeconds)
@@ -240,9 +262,19 @@ void UCSStoreHUDWidget::HandleRemainingTimeChanged(float NewRemainingSeconds)
 
 void UCSStoreHUDWidget::HandleGameTimeChanged(float NewGameMinutes)
 {
-	// 실제 시간은 유지하고 HUD 숫자만 직전 10분 단위로 표시합니다.
-	const int32 DisplayMinutes =
-		(FMath::FloorToInt(FMath::Max(0.0f, NewGameMinutes)) / 10) * 10;
+	const float CountdownDuration = FMath::Max(
+		1.0f,
+		StoreGameState->ClosingClockCountdownMinutes);
+	const float CountdownStartMinutes =
+		StoreGameState->AutomaticClosingTimeMinutes - CountdownDuration;
+	const bool bIsClosingCountdown =
+		NewGameMinutes >= CountdownStartMinutes &&
+		NewGameMinutes <= StoreGameState->AutomaticClosingTimeMinutes;
+
+	const int32 WholeGameMinutes = FMath::FloorToInt(FMath::Max(0.0f, NewGameMinutes));
+	const int32 DisplayMinutes = bIsClosingCountdown
+		? WholeGameMinutes
+		: (WholeGameMinutes / 10) * 10;
 	const int32 WrappedMinutes = DisplayMinutes % 1440;
 	const int32 Hour24 = WrappedMinutes / 60;
 	const int32 Minutes = WrappedMinutes % 60;
@@ -264,7 +296,50 @@ void UCSStoreHUDWidget::HandleGameTimeChanged(float NewGameMinutes)
 
 	if (ClockText != nullptr)
 	{
-		ClockText->SetText(FormatGameClock(NewGameMinutes));
+		ClockText->SetText(FormatGameClock(static_cast<float>(DisplayMinutes)));
+	}
+
+	const int32 ElapsedCountdownMinutes = bIsClosingCountdown
+		? FMath::Clamp(
+			WholeGameMinutes - FMath::CeilToInt(CountdownStartMinutes),
+			0,
+			FMath::CeilToInt(CountdownDuration))
+		: 0;
+	const float ClosingColorAlpha = bIsClosingCountdown
+		? static_cast<float>(ElapsedCountdownMinutes) / CountdownDuration
+		: 0.0f;
+	ApplyClosingClockColor(FMath::Clamp(ClosingColorAlpha, 0.0f, 1.0f));
+}
+
+void UCSStoreHUDWidget::ApplyClosingClockColor(float ClosingColorAlpha)
+{
+	if (IsValid(ClockText))
+	{
+		ClockText->SetColorAndOpacity(FMath::Lerp(
+			InitialClockColor,
+			ClosingClockColor,
+			ClosingColorAlpha));
+	}
+	if (IsValid(ClockHourText))
+	{
+		ClockHourText->SetColorAndOpacity(FMath::Lerp(
+			InitialClockHourColor,
+			ClosingClockColor,
+			ClosingColorAlpha));
+	}
+	if (IsValid(ClockColonText))
+	{
+		ClockColonText->SetColorAndOpacity(FMath::Lerp(
+			InitialClockColonColor,
+			ClosingClockColor,
+			ClosingColorAlpha));
+	}
+	if (IsValid(ClockMinuteText))
+	{
+		ClockMinuteText->SetColorAndOpacity(FMath::Lerp(
+			InitialClockMinuteColor,
+			ClosingClockColor,
+			ClosingColorAlpha));
 	}
 }
 
@@ -353,12 +428,7 @@ float UCSStoreHUDWidget::GetPhaseSelectionTranslationY() const
 
 	if (StoreGameState->CurrentPhase == ECStorePhase::Open)
 	{
-		if (StoreGameState->bIsStoreOpen)
-		{
-			return 55.0f;
-		}
-
-		return StoreGameState->bHasStoreOpenedToday ? 115.0f : 0.0f;
+		return StoreGameState->bHasStoreOpenedToday ? 55.0f : 0.0f;
 	}
 
 	// 마감 자유 활동부터 다음 날 시작 전까지는 영업 종료 위치를 유지합니다.
@@ -384,24 +454,61 @@ void UCSStoreHUDWidget::UpdatePhaseNameDisplay()
 		return;
 	}
 
-	// 영업 가능 시간에는 단계명이 아닌 실제 영업 상태를 우선 표시합니다.
+	// 입간판을 닫아도 영업 단계 자체는 계속 유지합니다.
 	if (StoreGameState->CurrentPhase == ECStorePhase::Open)
 	{
-		if (StoreGameState->bIsStoreOpen)
-		{
-			PhaseNameText->SetText(NSLOCTEXT("Store", "BusinessOpen", "영업중"));
-		}
-		else
-		{
-			// 오늘 영업을 시작하지 않았다면 종료가 아닌 개점 대기 상태로 안내합니다.
-			PhaseNameText->SetText(StoreGameState->bHasStoreOpenedToday
-				? NSLOCTEXT("Store", "BusinessClosed", "영업 종료")
-				: NSLOCTEXT("Store", "AwaitingOpening", "개점 대기"));
-		}
+		PhaseNameText->SetText(StoreGameState->bHasStoreOpenedToday
+			? NSLOCTEXT("Store", "BusinessOpen", "영업중")
+			: NSLOCTEXT("Store", "AwaitingOpening", "개점 대기"));
 		return;
 	}
 
 	PhaseNameText->SetText(StoreGameState->CurrentPhaseDisplayName);
+}
+
+void UCSStoreHUDWidget::UpdateCustomerEntryBanner(bool bAnimate)
+{
+	if (!IsValid(StoreGameState))
+	{
+		return;
+	}
+
+	if (IsValid(CustomerEntryBanner))
+	{
+		// 준비·영업·마감 단계 모두 입간판 상태 배너를 유지합니다.
+		CustomerEntryBanner->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+
+	const bool bEntryEnabled = StoreGameState->bIsStoreOpen;
+	const FLinearColor TextColor = bEntryEnabled
+		? EntryOpenTextColor
+		: EntryPausedTextColor;
+	const FLinearColor BannerColor = bEntryEnabled
+		? EntryOpenBannerColor
+		: EntryPausedBannerColor;
+
+	if (IsValid(CustomerEntryStatusText))
+	{
+		CustomerEntryStatusText->SetText(bEntryEnabled
+			? NSLOCTEXT("StoreHUD", "CustomerEntryEnabled", "입장\n가능")
+			: NSLOCTEXT("StoreHUD", "CustomerEntryPaused", "잠시\n휴점"));
+		CustomerEntryStatusText->SetColorAndOpacity(TextColor);
+	}
+
+	if (IsValid(CustomerEntryShortStatusText))
+	{
+		CustomerEntryShortStatusText->SetText(bEntryEnabled
+			? NSLOCTEXT("StoreHUD", "CustomerEntryOpenShort", "OPEN")
+			: NSLOCTEXT("StoreHUD", "CustomerEntryClosedShort", "CLOSED"));
+		CustomerEntryShortStatusText->SetColorAndOpacity(TextColor);
+	}
+
+	if (IsValid(Image_BannerBackground))
+	{
+		Image_BannerBackground->SetColorAndOpacity(BannerColor);
+	}
+
+	OnCustomerEntryStatusChanged(bEntryEnabled, bAnimate);
 }
 
 void UCSStoreHUDWidget::UpdateStoreProgressDisplay()

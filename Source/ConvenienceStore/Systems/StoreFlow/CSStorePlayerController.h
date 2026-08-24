@@ -11,6 +11,8 @@ class UCSStoreHUDWidget;
 class UUserWidget;
 class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
+class UCSClosingWarningWidget;
+enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
 // 튜토리얼이 어떤 UI가 열렸는지 감지하는 경로
@@ -72,12 +74,15 @@ protected:
 
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
-	UFUNCTION() void HandleStoreOpenStateChanged(bool bNewStoreOpen);
 	UFUNCTION() void HandleStatusAnnouncementFinished();
 	UFUNCTION() void HandleDailySummaryRequested();
 	UFUNCTION() void HandleDailySummaryConfirmed();
+	UFUNCTION() void HandleClosingWarningRequested(int32 RemainingMinutes);
+	UFUNCTION() void HandleClosingWarningFinished();
 
 	void UpdateClosingInputMode();
+	void ShowStatusAnnouncement(ECSStatusAnnouncementType AnnouncementType);
+	void TryShowPendingClosingAnnouncement();
 	bool HasGameplayUIInputLock() const;
 	UUserWidget* GetFocusedGameplayUIWidget() const;
 
@@ -90,6 +95,10 @@ protected:
 	TSubclassOf<UCSStatusAnnouncementWidget> StatusAnnouncementWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSStatusAnnouncementWidget> ActiveStatusAnnouncementWidget;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing Warning")
+	TSubclassOf<UCSClosingWarningWidget> ClosingWarningWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSClosingWarningWidget> ActiveClosingWarningWidget;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
@@ -104,4 +113,6 @@ protected:
 	TArray<TObjectPtr<UUserWidget>> GameplayUIInputLockWidgets;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
+	ECStorePhase LastObservedStorePhase = ECStorePhase::Preparation;
+	bool bClosingAnnouncementPending = false;
 };
