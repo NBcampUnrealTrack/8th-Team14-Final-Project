@@ -66,13 +66,21 @@ void ACSTimeOfDayLightingController::HandleGameTimeChanged(float NewGameMinutes)
 	// 투명 재질·Volumetric Fog에는 Directional Light 하나만 적용되므로,
 	// 달빛이 켜진 시간에는 달을 우선하고 그 외 시간에는 태양을 우선합니다.
 	const bool bMoonIsActive = IsValid(MoonLight) && MoonBrightness > KINDA_SMALL_NUMBER;
-	if (IsValid(SunLight) && IsValid(SunLight->GetComponent()))
+	if (IsValid(SunLight))
 	{
-		SunLight->GetComponent()->SetForwardShadingPriority(bMoonIsActive ? 0 : 1);
+		if (UDirectionalLightComponent* SunComponent =
+			Cast<UDirectionalLightComponent>(SunLight->GetLightComponent()))
+		{
+			SunComponent->SetForwardShadingPriority(bMoonIsActive ? 0 : 1);
+		}
 	}
-	if (IsValid(MoonLight) && IsValid(MoonLight->GetComponent()))
+	if (IsValid(MoonLight))
 	{
-		MoonLight->GetComponent()->SetForwardShadingPriority(bMoonIsActive ? 1 : 0);
+		if (UDirectionalLightComponent* MoonComponent =
+			Cast<UDirectionalLightComponent>(MoonLight->GetLightComponent()))
+		{
+			MoonComponent->SetForwardShadingPriority(bMoonIsActive ? 1 : 0);
+		}
 	}
 }
 
