@@ -181,12 +181,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			FCSPurchaseCandidate Selected;
 			const bool bPicked = Decision->DecidePurchase(Candidates, Selected);
 
-			UE_LOG(LogTemp, Log, TEXT("[1-0] %s | %s | %.3f | 후보%d"),
+			UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s"),
 				Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("종족없음"),
-				bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"),
-				bPicked ? Selected.Score : 0.0f,
-				Candidates.Num());
-
+				bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"));
 			if (bPicked)
 			{
 				Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
