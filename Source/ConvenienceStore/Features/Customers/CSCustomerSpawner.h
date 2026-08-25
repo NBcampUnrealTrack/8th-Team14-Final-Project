@@ -38,11 +38,6 @@ protected:
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
 
-	// 평판 등급이 바뀌면 생성 간격과 동시 인원 상한이 함께 바뀜
-	// 등급은 하루 마감 시점에만 바뀌므로 영업 중에는 불리지 않음
-	UFUNCTION()
-	void HandleReputationGradeChanged(ECSReputationGrade NewReputationGrade);
-
 	// 스폰할 손님 클래스 (BP_CSCustomer 지정)
     UPROPERTY(EditAnywhere, Category = "Spawn")
     TSubclassOf<ACSCustomerCharacter> CustomerClass;
@@ -110,7 +105,17 @@ private:
 	// 피크 시작 이벤트와 종료 이벤트 사이에서만 참
 	bool bIsPeakActive = false;
 
-	// 게임 상태가 없을 때도 안전하도록 평판 등급은 이 함수로만 읽음
+	// 그날 영업에 적용 중인 평판 등급
+	// 개점 때 한 번 저장하고 그날 마감까지 바뀌지 않는다.
+	// 영업 도중 평판이 달라져도 이 값은 그대로이므로 스폰률이 일정
+	ECSReputationGrade AppliedReputationGrade = ECSReputationGrade::Normal;
+
+	// 게임 상태에서 현재 평판 등급을 읽어 AppliedReputationGrade에 반영
+	// 호출처는 BeginPlay와 개점 전환 둘뿐이다.
+	void RefreshAppliedReputationGrade();
+
+	// 생성 간격과 동시 인원 상한을 계산할 때 쓰는 평판 등급.
+	// 게임 상태를 실시간으로 조회하지 않고 개점에 찍어 둔 평판으로 돌려준다.
 	ECSReputationGrade GetReputationGrade() const;
 
 	// 현재 평판 등급과 피크 상태에 해당하는 생성 간격과 동시 인원 상한

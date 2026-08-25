@@ -36,9 +36,10 @@ void ACSCustomerSpawner::BeginPlay()
 	CachedStoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
 	if (IsValid(CachedStoreGameState))
 	{
+		// 평판 델리게이트는 구독하지 않는다.
+		// 이유) 그날의 생성 간격과 동시 인원 상한은 개점에 찍는 AppliedReputationGrade로 고정되므로, 영업 중에 등급이 바뀌었다는 신호를 받아도 스포너가 할 일이 없음
 		CachedStoreGameState->OnScheduleEventFired.AddDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
 		CachedStoreGameState->OnStorePhaseChanged.AddDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
-		CachedStoreGameState->OnReputationGradeChanged.AddDynamic(this, &ACSCustomerSpawner::HandleReputationGradeChanged);
 	}
 
 	if (!IsValid(TrafficDataAsset))
@@ -47,24 +48,9 @@ void ACSCustomerSpawner::BeginPlay()
 			SpawnInterval, MaxAliveCustomers);
 	}
 
-	// =================================================================================
-	// [게임 시작 시 수동으로 타이머를 한 번 켜주는(ApplySpawnTimer) 이유]
-	//
-	// 이벤트(알람)가 실행안되는 문제 발생:
-	//    이 스포너는 평판 등급이 바뀔 때 발생하는 'OnReputationGradeChanged' 이벤트를 듣고 스폰 타이머를 설정합니다.
-	//    하지만 C++ 코드에 적혀있는 기본 평판 점수(6000점)와 에셋(DA)에 설정된 초기 평판 점수(6000점)가 완전히 똑같습니다.
-	//    엔진은 최적화를 위해 "값이 안 변했으면 이벤트를 안 울리는 구조"로 되어 있어서,
-	//    게임이 처음 켜질 때 평판 이벤트가 단 한 번도 발생하지 않습니다.
-	//
-	// 해결 방법 (강제 시동):
-	//    이벤트가 올 때까지 기다리지 않고, BeginPlay에서 이 함수를 강제로 한 번 실행시켜서 스폰 타이머의 첫 시동을 걸어줍니다.
-	//
-	// 이 방법이 안전하게 작동하는 이유:
-	//    우리 스포너는 평판 등급을 변수에 저장해두고 쓰지 않습니다.
-	//    GetCurrentSpawnInterval() 함수가 불릴 때마다 실시간으로 GameState에 현재 등급을 확인하고 사용합니다.
-	//    따라서 게임 로딩 순서가 어떻게 꼬이든 상관없이, 언제나 현재 등급(Normal 등)을 가져와서
-	//    정확한 생성 간격으로 첫 타이머를 돌릴 수 있습니다.
-	// =================================================================================
+
+	// ApplySpawnTimer()가 평판값을 읽어 간격을 계산하므로, 반드시 AppliedReputationGrade값을 할당하고 타이머를 시작한다.
+	RefreshAppliedReputationGrade();
 	ApplySpawnTimer();
 }
 
@@ -74,7 +60,6 @@ void ACSCustomerSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		CachedStoreGameState->OnScheduleEventFired.RemoveDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
 		CachedStoreGameState->OnStorePhaseChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
-		CachedStoreGameState->OnReputationGradeChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleReputationGradeChanged);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -106,28 +91,24 @@ void ACSCustomerSpawner::HandleScheduleEventFired(FName EventId, FText Message)
 		GetCurrentMaxAlive());
 }
 
-void ACSCustomerSpawner::HandleReputationGradeChanged(ECSReputationGrade NewReputationGrade)
-{
-	// 평판 등급이 오르내리면 생성 간격과 동시 인원 상한이 함께 바뀐다.
-	//
-	// 등급은 하루 마감 시점에만 갱신되므로 이 콜백은 하루 최대 한 번, 그것도 영업 시간 밖에서만 불린다.
-	// 따라서 여기서 타이머를 다시 걸어도 진행 중인 스폰이 밀릴 일이 없다.
-	ApplySpawnTimer();
-
-	UE_LOG(LogTemp, Log,
-		TEXT("[CSCustomerSpawner] 평판 등급 %s - 생성 간격 %.2f초 / 동시 상한 %d명%s"),
-		*UEnum::GetDisplayValueAsText(NewReputationGrade).ToString(),
-		GetCurrentSpawnInterval(),
-		GetCurrentMaxAlive(),
-		bIsPeakActive ? TEXT(" (피크타임 적용 중)") : TEXT(""));
-}
-
 void ACSCustomerSpawner::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
-	// 영업 단계가 아니면 피크를 유지할 이유가 없다.
-	// 피크 종료 시각을 24:00 이후로 옮기더라도 피크가 다음 날까지 켜진 채 넘어가지 않게 막는다.
-	if (NewPhase != ECStorePhase::Open)
+	if (NewPhase == ECStorePhase::Open)
 	{
+		// 개점하는 이 순간이 그날의 평판 등급을 확정하는 유일한 지점이다.
+		// 여기서 찍은 값으로 마감까지 스폰 간격과 동시 인원 상한이 결정된다.
+		RefreshAppliedReputationGrade();
+
+		UE_LOG(LogTemp, Log,
+			TEXT("[CSCustomerSpawner] 개점 - 오늘 적용 평판 등급 %s / 생성 간격 %.2f초 / 동시 상한 %d명"),
+			*UEnum::GetDisplayValueAsText(AppliedReputationGrade).ToString(),
+			GetCurrentSpawnInterval(),
+			GetCurrentMaxAlive());
+	}
+	else
+	{
+		// 영업 단계가 아니면 피크를 유지할 이유가 없다.
+		// 피크 종료 시각을 24:00 이후로 옮기더라도 피크가 다음 날까지 켜진 채 넘어가지 않게 막는다.
 		bIsPeakActive = false;
 	}
 
@@ -136,15 +117,25 @@ void ACSCustomerSpawner::HandleStorePhaseChanged(ECStorePhase NewPhase)
 	ApplySpawnTimer();
 }
 
+void ACSCustomerSpawner::RefreshAppliedReputationGrade()
+{
+	if (IsValid(CachedStoreGameState))
+	{
+		// GameState에서 현재 설정된 평판 등급을 가져와 적용
+		AppliedReputationGrade = CachedStoreGameState->GetReputationGrade();
+	}
+	else
+	{
+		// 만약  문제가 생겼다면,에러가 나지 않도록 가장 안전한 기본값인 'Normal' 등급을 임시로 적용
+		AppliedReputationGrade = ECSReputationGrade::Normal;
+	}
+}
+
 ECSReputationGrade ACSCustomerSpawner::GetReputationGrade() const
 {
-	// 게임 상태가 아직 없어도 안전한 기본값(Normal)으로 동작해야 한다.
-	if (!IsValid(CachedStoreGameState))
-	{
-		return ECSReputationGrade::Normal;
-	}
-
-	return CachedStoreGameState->GetReputationGrade();
+	// GameState에서 안받아오고 미리 저장한 평판을 반환
+	// 이유: 실시간 평판 등급을 조회하면 TrySpawnCustomer()가 상한을 다시 읽는 탓에 영업 도중 평판이 바뀌는 즉시 동시 인원 상한이 따라 움직여 버린다.
+	return AppliedReputationGrade;
 }
 
 float ACSCustomerSpawner::GetCurrentSpawnInterval() const
