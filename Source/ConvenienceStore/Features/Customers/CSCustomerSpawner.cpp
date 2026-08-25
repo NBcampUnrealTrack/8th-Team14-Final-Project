@@ -38,19 +38,33 @@ void ACSCustomerSpawner::BeginPlay()
 	{
 		CachedStoreGameState->OnScheduleEventFired.AddDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
 		CachedStoreGameState->OnStorePhaseChanged.AddDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
-		CachedStoreGameState->OnStoreLevelChanged.AddDynamic(this, &ACSCustomerSpawner::HandleStoreLevelChanged);
+		CachedStoreGameState->OnReputationGradeChanged.AddDynamic(this, &ACSCustomerSpawner::HandleReputationGradeChanged);
 	}
 
 	if (!IsValid(TrafficDataAsset))
 	{
-		UE_LOG(LogTemp, Error,TEXT("[CSCustomerSpawner] TrafficDataAsset이 지정되지 않아 상점 레벨과 피크타임이 손님 생성에 반영되지 않습니다. %.1f초 간격 / 최대 %d명으로만 동작합니다."),
+		UE_LOG(LogTemp, Error,TEXT("[CSCustomerSpawner] TrafficDataAsset이 지정되지 않아 평판 등급과 피크타임이 손님 생성에 반영되지 않습니다. %.1f초 간격 / 최대 %d명으로만 동작합니다."),
 			SpawnInterval, MaxAliveCustomers);
 	}
 
-	// 구독만으로는 부족하고 여기서 현재 레벨을 한 번 읽어야 초기화 순서에 상관없이 맞는다.
-	// 스포너의 BeginPlay가 ACSStoreGameMode::BeginPlay보다 먼저 돌면 아직 레벨이 확정되지 않았지만,
-	// 그 경우엔 게임모드가 초기화하면서 OnStoreLevelChanged를 쏴 주므로 위 구독이 받아 준다.
-	// 반대로 게임모드가 먼저 돌아 브로드캐스트를 놓쳤다면 여기서 읽는 값이 이미 올바른 레벨이다.
+	// =================================================================================
+	// [게임 시작 시 수동으로 타이머를 한 번 켜주는(ApplySpawnTimer) 이유]
+	//
+	// 이벤트(알람)가 실행안되는 문제 발생:
+	//    이 스포너는 평판 등급이 바뀔 때 발생하는 'OnReputationGradeChanged' 이벤트를 듣고 스폰 타이머를 설정합니다.
+	//    하지만 C++ 코드에 적혀있는 기본 평판 점수(6000점)와 에셋(DA)에 설정된 초기 평판 점수(6000점)가 완전히 똑같습니다.
+	//    엔진은 최적화를 위해 "값이 안 변했으면 이벤트를 안 울리는 구조"로 되어 있어서,
+	//    게임이 처음 켜질 때 평판 이벤트가 단 한 번도 발생하지 않습니다.
+	//
+	// 해결 방법 (강제 시동):
+	//    이벤트가 올 때까지 기다리지 않고, BeginPlay에서 이 함수를 강제로 한 번 실행시켜서 스폰 타이머의 첫 시동을 걸어줍니다.
+	//
+	// 이 방법이 안전하게 작동하는 이유:
+	//    우리 스포너는 평판 등급을 변수에 저장해두고 쓰지 않습니다.
+	//    GetCurrentSpawnInterval() 함수가 불릴 때마다 실시간으로 GameState에 현재 등급을 확인하고 사용합니다.
+	//    따라서 게임 로딩 순서가 어떻게 꼬이든 상관없이, 언제나 현재 등급(Normal 등)을 가져와서
+	//    정확한 생성 간격으로 첫 타이머를 돌릴 수 있습니다.
+	// =================================================================================
 	ApplySpawnTimer();
 }
 
@@ -60,7 +74,7 @@ void ACSCustomerSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		CachedStoreGameState->OnScheduleEventFired.RemoveDynamic(this, &ACSCustomerSpawner::HandleScheduleEventFired);
 		CachedStoreGameState->OnStorePhaseChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleStorePhaseChanged);
-		CachedStoreGameState->OnStoreLevelChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleStoreLevelChanged);
+		CachedStoreGameState->OnReputationGradeChanged.RemoveDynamic(this, &ACSCustomerSpawner::HandleReputationGradeChanged);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -86,21 +100,23 @@ void ACSCustomerSpawner::HandleScheduleEventFired(FName EventId, FText Message)
 	ApplySpawnTimer();
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSCustomerSpawner] 피크타임 %s (상점 레벨 %d) - 생성 간격 %.2f초 / 동시 상한 %d명"),
+		TEXT("[CSCustomerSpawner] 피크타임 %s - 생성 간격 %.2f초 / 동시 상한 %d명"),
 		bIsPeakActive ? TEXT("시작") : TEXT("종료"),
-		GetStoreLevel(),
 		GetCurrentSpawnInterval(),
 		GetCurrentMaxAlive());
 }
 
-void ACSCustomerSpawner::HandleStoreLevelChanged(int32 NewLevel)
+void ACSCustomerSpawner::HandleReputationGradeChanged(ECSReputationGrade NewReputationGrade)
 {
-	// 레벨이 오르면 생성 간격과 동시 인원 상한이 함께 바뀐다.
+	// 평판 등급이 오르내리면 생성 간격과 동시 인원 상한이 함께 바뀐다.
+	//
+	// 등급은 하루 마감 시점에만 갱신되므로 이 콜백은 하루 최대 한 번, 그것도 영업 시간 밖에서만 불린다.
+	// 따라서 여기서 타이머를 다시 걸어도 진행 중인 스폰이 밀릴 일이 없다.
 	ApplySpawnTimer();
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSCustomerSpawner] 상점 레벨 %d - 생성 간격 %.2f초 / 동시 상한 %d명%s"),
-		NewLevel,
+		TEXT("[CSCustomerSpawner] 평판 등급 %s - 생성 간격 %.2f초 / 동시 상한 %d명%s"),
+		*UEnum::GetDisplayValueAsText(NewReputationGrade).ToString(),
 		GetCurrentSpawnInterval(),
 		GetCurrentMaxAlive(),
 		bIsPeakActive ? TEXT(" (피크타임 적용 중)") : TEXT(""));
@@ -116,17 +132,19 @@ void ACSCustomerSpawner::HandleStorePhaseChanged(ECStorePhase NewPhase)
 	}
 
 	// 개점 시점에 맞춰 첫 손님까지의 대기 시간을 다시 잡는다.
+	// 피크 해제도 여기서 함께 반영된다.
 	ApplySpawnTimer();
 }
 
-int32 ACSCustomerSpawner::GetStoreLevel() const
+ECSReputationGrade ACSCustomerSpawner::GetReputationGrade() const
 {
+	// 게임 상태가 아직 없어도 안전한 기본값(Normal)으로 동작해야 한다.
 	if (!IsValid(CachedStoreGameState))
 	{
-		return 1;
+		return ECSReputationGrade::Normal;
 	}
 
-	return CachedStoreGameState->GetStoreLevel();
+	return CachedStoreGameState->GetReputationGrade();
 }
 
 float ACSCustomerSpawner::GetCurrentSpawnInterval() const
@@ -137,7 +155,7 @@ float ACSCustomerSpawner::GetCurrentSpawnInterval() const
 		return FMath::Max(SpawnInterval, 0.1f);
 	}
 
-	return TrafficDataAsset->GetSpawnIntervalSeconds(GetStoreLevel(), bIsPeakActive);
+	return TrafficDataAsset->GetSpawnIntervalSeconds(GetReputationGrade(), bIsPeakActive);
 }
 
 int32 ACSCustomerSpawner::GetCurrentMaxAlive() const
@@ -147,18 +165,21 @@ int32 ACSCustomerSpawner::GetCurrentMaxAlive() const
 		return FMath::Max(MaxAliveCustomers, 1);
 	}
 
-	return TrafficDataAsset->GetMaxAliveCustomers(GetStoreLevel(), bIsPeakActive);
+	return TrafficDataAsset->GetMaxAliveCustomers(GetReputationGrade(), bIsPeakActive);
 }
 
 void ACSCustomerSpawner::ApplySpawnTimer()
 {
-	const int32 StoreLevel = GetStoreLevel();
-
-	// 개점, 피크 전환, 레벨업처럼 조건이 바뀔 때만 불리는 함수
-	if (IsValid(TrafficDataAsset) && !TrafficDataAsset->HasValuesForLevel(StoreLevel))
+	// 개점, 피크 전환, 평판 등급 변화처럼 조건이 바뀔 때만 불리는 함수
+	if (IsValid(TrafficDataAsset))
 	{
-		UE_LOG(LogTemp, Error,TEXT("[CSCustomerSpawner] 상점 레벨 %d에 해당하는 값이 %s에 없어 가장 가까운 레벨의 값으로 대체합니다."),
-			StoreLevel, *TrafficDataAsset->GetName());
+		FString Reason;
+		if (!TrafficDataAsset->ValidateTrafficData(Reason))
+		{
+			UE_LOG(LogTemp, Error,
+				TEXT("[CSCustomerSpawner] %s 설정 오류: %s"),
+				*TrafficDataAsset->GetName(), *Reason);
+		}
 	}
 
 	const float Interval = GetCurrentSpawnInterval();
@@ -464,8 +485,9 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		}
 	}
 
-	//정리 후 현재 레벨(+피크)의 동시 인원 상한 이상이면 리턴(상한체크)
-	// 고정값이 아니라 이 조회를 거쳐야 레벨별 상한과 피크타임 상한이 실제로 적용된다.
+	//정리 후 현재 평판 등급(+피크)의 동시 인원 상한 이상이면 리턴(상한체크)
+	// 고정값이 아니라 이 조회를 거쳐야 등급별 상한과 피크타임 상한이 실제로 적용된다.
+	// 주의: 여기서 걸리면 이번 회차 스폰은 밀리는 게 아니라 사라진다.
 	if (SpawnedCustomers.Num() >= GetCurrentMaxAlive())
 	{
 		return;
