@@ -91,16 +91,6 @@ public:
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float Impulsiveness = 0.5f;
 
-	// 브랜드 충성도 ----- (추후 필요없으면 제거 예정)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float BrandLoyalty = 0.55f;
-
-	// 할인 / 행사에 반응하는 정도 ---------
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PromotionSensitivity = 0.55f;
-
 	// 카테고리 성향 -------
 
 	// 카테고리별 기본 선호도
