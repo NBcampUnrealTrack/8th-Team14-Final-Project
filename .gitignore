@@ -38,3 +38,7 @@ Saved/
 .gemini/
 .vscode/
 .mcp.json
+
+# 개인 작업 문서 (팀 공유 아님)
+CLAUDE.md
+docs/
