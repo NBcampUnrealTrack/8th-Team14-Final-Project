@@ -10,9 +10,7 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 	// 매 프레임 계산이 필요한 로직이 아니라 손님이 진열대 앞에 섰을 때만 호출되면 되므로 Tick은 꺼두기
 	PrimaryComponentTick.bCanEverTick = false;
 
-	// 스포너가 InitializeRandomStream을 호출하기 전에도 동작은 하도록 기본 시드를 잡아둠
-	// bUseFixedSeed가 꺼져 있으면 엔진 전역 RNG에서 시드를 한 번만 얻어옴(이후 굴림은 전부 이 스트림 안에서만 진행)
-	RandomStream.Initialize(bUseFixedSeed ? FixedSeed : FMath::Rand());
+	RandomStream.Initialize(FMath::Rand());
 }
 
 const FCSProductDataRow* UCSPurchaseDecisionComponent::GetProductRow(const FCSPurchaseCandidate& Candidate) const

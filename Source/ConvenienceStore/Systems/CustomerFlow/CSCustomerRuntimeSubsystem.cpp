@@ -480,9 +480,9 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 		State->bCheckoutAbandoned = true;
 	}
 
-	//    진열대에 되돌려놓을지, 그 자리에 버릴지 결정
-	//    되돌려놓기로 하면 상품 목록을 그대로 두고, ReturnItems 상태가 처리한다.
-	//    [임시] 확률은 나중에 소비심리 성향값으로 교체 가능한 자리.
+	// 진열대에 되돌려놓을지, 그 자리에 버릴지 결정
+	// 되돌려놓기로 하면 상품 목록을 그대로 두고, ReturnItems 상태가 처리한다
+	// 확률은 GetReturnToShelfChance(Customer)에서 종족 Impulsiveness 기반으로 계산된다
 	const bool bWillReturnToShelf = (ShelfRandomStream.FRand() < GetReturnToShelfChance(Customer));
 
 	if (bWillReturnToShelf == false)

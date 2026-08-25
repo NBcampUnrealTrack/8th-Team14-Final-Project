@@ -10,18 +10,19 @@
 //                        + 실제 계산대에 ICSCustomerCounterInterface 구현 후 RegisterCounter()
 //   - 편의점/통계 파트 → OnCheckoutCompleted / OnItemTaken 델리게이트 구독
 //
-// TODO(한길님 요청 파트):
-//   1. 계산대 액터에 ICSCustomerCounterInterface 상속
+// TODO:
+//   [완료] 1. 계산대 액터에 ICSCustomerCounterInterface 상속
 //      (Features/Customers/Interface/CSCustomerCounterInterface.h)
 //      - 구현할 함수는 GetQueueSlotLocation(int32 Index) 하나뿐
 //      - Index번째 손님이 설 월드 좌표 반환. 줄의 시작점/방향/간격은 계산대가 자유롭게 결정
-//   2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
+//   [완료] 2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
 //      (이거 없으면 GetQueueSlotLocation이 ZeroVector 반환 → 손님이 원점으로 감)
-//   3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
+//   [완료] 3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
 //      (호출하면 줄 전진 + 손님 퇴장 + OnCheckoutCompleted 방송까지 자동)
 //   4. 진열대 슬롯 높이(상/중/하) 제공 방식 확정 필요
+//      → 제공 측(ACSShelfActor::GetItemSlotLevel)은 완성. 소비 측에서 처리 예정
 //
-// TODO(소비심리 파트 연동 시):
+// TODO:
 //   1. "어디 갈지"는 현재 PickRandomUnvisitedShelf(랜덤)로 임시 구현되어 있음 → 교체 예정
 //   [완료] 2. "뭘 살지"도 현재 태스크에서 확률로 처리 중 → TakeProduct()에 결정된 상품을 넘기는 방식으로 교체
 //   3. 진열 높이(상/중/하) 등 상세 진열 정보 제공은 요청 확정 후 추가 예정
@@ -170,8 +171,8 @@ public:
 	float MinPatienceSeconds = 15.0f;
 
 	// 이 손님이 계산대에서 참을 수 있는 시간.
-	// [임시] 지금은 기본값을 그대로 반환한다.
-	// ["백록담"]님 파트 연동 시 이 함수 내부만 교체하면 되고 호출하는 태스크는 수정 불필요
+	// Archetype->Impulsiveness를 MaxPatienceSeconds~MinPatienceSeconds로 매핑해서 반환한다
+	// Archetype이 없으면 DefaultPatienceSeconds로 폴백
 	float GetPatienceSeconds(const ACSCustomerCharacter* Customer) const;
 
 	// 계산 포기 처리. 대기열 이탈 → 상품 반환 → 방송 순서로 진행한다.
@@ -204,7 +205,7 @@ public:
 	float DropJitterRadius = 3.0f;
 
 	// 이 손님이 계산을 포기했을 때 진열대에 되돌려놓으러 갈 확률 (0~1)
-	// [임시] ["백록담"]님 파트 연동 시 이 함수 내부만 교체
+	// Archetype->Impulsiveness를 MaxReturnToShelfChance~MinReturnToShelfChance로 매핑해서 반환한다
 	float GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const;
 
 	// 손님이 매장을 완전히 떠날 때 호출
