@@ -4,6 +4,7 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Cart/CSCartActor.h"
+#include "Features/Inventory/CSQuickbarInventoryComponent.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -129,6 +130,11 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 	// 기본값은 편집기에서 보이는 기준점이며, 실제 손잡이 높이는 플레이어 BP에서 조절합니다.
 	CartPushAnchor->SetRelativeLocation(FVector(120.0f, 0.0f, -72.0f));
 
+	QuickbarStorageAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("QuickbarStorageAnchor"));
+	QuickbarStorageAnchor->SetupAttachment(GetRootComponent());
+
+	QuickbarInventory = CreateDefaultSubobject<UCSQuickbarInventoryComponent>(TEXT("QuickbarInventory"));
+
 	BuildPlacementPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(
 		TEXT("BuildPlacementPreviewMesh"));
 	BuildPlacementPreviewMesh->SetupAttachment(GetRootComponent());
@@ -151,6 +157,15 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 void ACSPlayerCharacter::BeginPlay()
 {
     Super::BeginPlay();
+
+	if (IsValid(QuickbarInventory))
+	{
+		QuickbarInventory->OnQuickbarChanged.AddUniqueDynamic(
+			this, &ACSPlayerCharacter::HandleQuickbarChanged);
+		QuickbarInventory->OnQuickbarSelectionChanged.AddUniqueDynamic(
+			this, &ACSPlayerCharacter::HandleQuickbarSelectionChanged);
+		QuickbarInventory->InitializeQuickbar();
+	}
 
     // 로컬 플레이어에게만 Input Mapping Context를 적용합니다.
     if (APlayerController* PlayerController =
@@ -289,6 +304,22 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 			this,
 			&ACSPlayerCharacter::ToggleCartPush);
 	}
+
+	const auto BindQuickbarAction = [this, EnhancedInputComponent](
+		const UInputAction* InputAction,
+		void (ACSPlayerCharacter::* Handler)())
+	{
+		if (InputAction != nullptr)
+		{
+			EnhancedInputComponent->BindAction(InputAction, ETriggerEvent::Started, this, Handler);
+		}
+	};
+	BindQuickbarAction(SelectQuickbarSlot1Action, &ACSPlayerCharacter::SelectQuickbarSlot1);
+	BindQuickbarAction(SelectQuickbarSlot2Action, &ACSPlayerCharacter::SelectQuickbarSlot2);
+	BindQuickbarAction(SelectQuickbarSlot3Action, &ACSPlayerCharacter::SelectQuickbarSlot3);
+	BindQuickbarAction(SelectQuickbarSlot4Action, &ACSPlayerCharacter::SelectQuickbarSlot4);
+	BindQuickbarAction(CycleQuickbarNextAction, &ACSPlayerCharacter::SelectNextQuickbarSlot);
+	BindQuickbarAction(CycleQuickbarPreviousAction, &ACSPlayerCharacter::SelectPreviousQuickbarSlot);
 
 }
 
@@ -723,6 +754,33 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
+	if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(PickupActor);
+		!IsBuildMode() &&
+		IsValid(ToolActor) &&
+		IsValid(QuickbarInventory) &&
+		IsValid(QuickbarStorageAnchor))
+	{
+		// 상품·상자처럼 물리적으로 든 대상이 있으면 도구를 퀵바에 넣지 않습니다.
+		if (IsValid(HeldActor) && Cast<ACSUsableToolActor>(HeldActor) == nullptr)
+		{
+			return false;
+		}
+
+		const int32 AddedSlotIndex = QuickbarInventory->TryAddTool(ToolActor);
+		if (AddedSlotIndex == INDEX_NONE)
+		{
+			return false;
+		}
+
+		// 기존에 손에 든 도구가 있다면 먼저 같은 퀵바에 안전하게 보관합니다.
+		StoreEquippedQuickbarTool();
+		ToolActor->StoreInQuickbar(QuickbarStorageAnchor);
+		// 새로 주운 도구를 즉시 사용할 수 있게 해당 슬롯을 선택합니다.
+		QuickbarInventory->SelectSlot(AddedSlotIndex);
+		EquipSelectedQuickbarTool();
+		return true;
+	}
+
 	if (IsBuildMode() ||
 		!IsValid(PickupActor) ||
 		PickupActor->Implements<UCSBuildableFacility>() ||
@@ -2233,6 +2291,11 @@ void ACSPlayerCharacter::DropHeldItem()
 	}
 
 	HeldActor = nullptr;
+	if (IsValid(ToolToDrop) && IsValid(QuickbarInventory))
+	{
+		// Q로 장착 도구를 떨어뜨리면 퀵바에서도 함께 제거합니다.
+		QuickbarInventory->RemoveTool(ToolToDrop);
+	}
 	DestroyPlacementPreview();
 
 	ActorToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
@@ -2963,4 +3026,171 @@ void ACSPlayerCharacter::ToggleCartPush()
 	{
 		PushedCart = Cart;
 	}
+}
+
+void ACSPlayerCharacter::SelectQuickbarSlot1()
+{
+	TrySelectQuickbarSlot(0);
+}
+
+void ACSPlayerCharacter::SelectQuickbarSlot2()
+{
+	TrySelectQuickbarSlot(1);
+}
+
+void ACSPlayerCharacter::SelectQuickbarSlot3()
+{
+	TrySelectQuickbarSlot(2);
+}
+
+void ACSPlayerCharacter::SelectQuickbarSlot4()
+{
+	TrySelectQuickbarSlot(3);
+}
+
+void ACSPlayerCharacter::SelectNextQuickbarSlot()
+{
+	if (IsValid(QuickbarInventory) &&
+		!IsBuildMode() &&
+		!IsValid(PushedCart) &&
+		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
+	{
+		QuickbarInventory->CycleSelection(1);
+	}
+}
+
+void ACSPlayerCharacter::SelectPreviousQuickbarSlot()
+{
+	if (IsValid(QuickbarInventory) &&
+		!IsBuildMode() &&
+		!IsValid(PushedCart) &&
+		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
+	{
+		QuickbarInventory->CycleSelection(-1);
+	}
+}
+
+bool ACSPlayerCharacter::TrySelectQuickbarSlot(int32 SlotIndex)
+{
+	if (!IsValid(QuickbarInventory) || IsBuildMode() || IsValid(PushedCart))
+	{
+		return false;
+	}
+
+	if (IsValid(HeldActor) && Cast<ACSUsableToolActor>(HeldActor) == nullptr)
+	{
+		if (ACSStorePlayerController* StorePlayerController =
+			Cast<ACSStorePlayerController>(GetController()))
+		{
+			StorePlayerController->SetInteractionPrompt(
+				NSLOCTEXT("Quickbar", "PutDownHeldItem", "손에 든 물건을 먼저 내려놓으세요."),
+				FLinearColor(1.0f, 0.8f, 0.3f, 1.0f));
+		}
+		return false;
+	}
+
+	if (!QuickbarInventory->SelectSlot(SlotIndex))
+	{
+		return false;
+	}
+
+	// 이미 선택된 칸을 다시 눌러도 도구 장착 상태를 복구할 수 있게 합니다.
+	EquipSelectedQuickbarTool();
+	return true;
+}
+
+void ACSPlayerCharacter::EquipSelectedQuickbarTool()
+{
+	if (!IsValid(QuickbarInventory) || !IsValid(QuickbarStorageAnchor) ||
+		HeldItemAnchor == nullptr)
+	{
+		return;
+	}
+
+	ACSUsableToolActor* SelectedTool = QuickbarInventory->GetToolAt(
+		QuickbarInventory->GetSelectedSlotIndex());
+	if (HeldActor == SelectedTool)
+	{
+		return;
+	}
+
+	if (IsValid(HeldActor))
+	{
+		StoreEquippedQuickbarTool();
+	}
+
+	if (!IsValid(SelectedTool))
+	{
+		return;
+	}
+
+	SelectedTool->PrepareForPickupPhysics();
+	SelectedTool->AttachToComponent(
+		HeldItemAnchor,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	SelectedTool->SetActorHiddenInGame(false);
+	SelectedTool->OnEquipped(this);
+	HeldActor = SelectedTool;
+}
+
+void ACSPlayerCharacter::StoreEquippedQuickbarTool()
+{
+	ACSUsableToolActor* EquippedTool = Cast<ACSUsableToolActor>(HeldActor);
+	if (!IsValid(EquippedTool) || !IsValid(QuickbarInventory) ||
+		!QuickbarInventory->ContainsTool(EquippedTool) || !IsValid(QuickbarStorageAnchor))
+	{
+		return;
+	}
+
+	HeldActor = nullptr;
+	EquippedTool->StoreInQuickbar(QuickbarStorageAnchor);
+}
+
+void ACSPlayerCharacter::UpdateQuickbarHUD()
+{
+	if (!IsValid(QuickbarInventory))
+	{
+		return;
+	}
+
+	TArray<FText> ToolNames;
+	TArray<UTexture2D*> ToolIcons;
+	const int32 SlotCount = QuickbarInventory->GetSlotCount();
+	ToolNames.Reserve(SlotCount);
+	ToolIcons.Reserve(SlotCount);
+	for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
+	{
+		if (const ACSUsableToolActor* Tool = QuickbarInventory->GetToolAt(SlotIndex))
+		{
+			ToolNames.Add(Tool->GetToolDisplayName());
+			ToolIcons.Add(Tool->GetToolIcon());
+		}
+		else
+		{
+			ToolNames.Add(FText::GetEmpty());
+			ToolIcons.Add(nullptr);
+		}
+	}
+
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(GetController()))
+	{
+		StorePlayerController->SetQuickbarHUDData(
+			SlotCount,
+			QuickbarInventory->GetSelectedSlotIndex(),
+			ToolNames,
+			ToolIcons);
+	}
+}
+
+void ACSPlayerCharacter::HandleQuickbarChanged()
+{
+	UpdateQuickbarHUD();
+}
+
+void ACSPlayerCharacter::HandleQuickbarSelectionChanged(int32 SelectedSlotIndex)
+{
+	(void)SelectedSlotIndex;
+	EquipSelectedQuickbarTool();
+	UpdateQuickbarHUD();
 }

@@ -12,6 +12,7 @@ class UUserWidget;
 class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
+class UTexture2D;
 enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
@@ -61,6 +62,13 @@ public:
 	// 캐릭터의 건축 모드 상태를 상시 HUD에 전달합니다.
 	void SetBuildModeHUDState(bool bIsBuildMode, bool bPlayTransition);
 
+	// 플레이어 퀵바의 아이콘과 현재 선택 슬롯을 HUD에 전달합니다.
+	void SetQuickbarHUDData(
+		int32 SlotCount,
+		int32 SelectedSlotIndex,
+		const TArray<FText>& ToolNames,
+		const TArray<UTexture2D*>& ToolIcons);
+
 	// UI 입력 잠금이 걸리거나 풀릴 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "UI|Input")
 	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;
@@ -102,6 +110,12 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
+
+	// HUD 생성 순서와 무관하게 퀵바 초기 상태를 전달하기 위한 캐시입니다.
+	int32 CachedQuickbarSlotCount = 0;
+	int32 CachedQuickbarSelectedSlotIndex = 0;
+	TArray<FText> CachedQuickbarToolNames;
+	TArray<TObjectPtr<UTexture2D>> CachedQuickbarToolIcons;
 
 	// 정산 모달을 닫을 때 기존 HUD 표시 상태를 정확히 복구합니다.
 	ESlateVisibility StoreHUDVisibilityBeforeDailySummary =

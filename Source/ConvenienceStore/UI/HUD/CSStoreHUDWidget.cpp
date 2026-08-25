@@ -1,5 +1,7 @@
 #include "UI/HUD/CSStoreHUDWidget.h"
 
+#include "UI/HUD/CSQuickbarWidget.h"
+
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/ProgressBar.h"
@@ -222,6 +224,22 @@ void UCSStoreHUDWidget::SetBuildModeActive(
 	if (bPlayTransition)
 	{
 		OnBuildModeTransitionRequested();
+	}
+}
+
+void UCSStoreHUDWidget::SetQuickbarData(
+	int32 SlotCount,
+	int32 SelectedSlotIndex,
+	const TArray<FText>& ToolNames,
+	const TArray<UTexture2D*>& ToolIcons)
+{
+	if (IsValid(QuickbarWidget))
+	{
+		QuickbarWidget->SetQuickbarData(
+			SlotCount,
+			SelectedSlotIndex,
+			ToolNames,
+			ToolIcons);
 	}
 }
 
