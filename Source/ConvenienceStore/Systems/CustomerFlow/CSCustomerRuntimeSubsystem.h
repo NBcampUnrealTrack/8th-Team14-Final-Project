@@ -10,18 +10,19 @@
 //                        + 실제 계산대에 ICSCustomerCounterInterface 구현 후 RegisterCounter()
 //   - 편의점/통계 파트 → OnCheckoutCompleted / OnItemTaken 델리게이트 구독
 //
-// TODO(한길님 요청 파트):
-//   1. 계산대 액터에 ICSCustomerCounterInterface 상속
+// TODO:
+//   [완료] 1. 계산대 액터에 ICSCustomerCounterInterface 상속
 //      (Features/Customers/Interface/CSCustomerCounterInterface.h)
 //      - 구현할 함수는 GetQueueSlotLocation(int32 Index) 하나뿐
 //      - Index번째 손님이 설 월드 좌표 반환. 줄의 시작점/방향/간격은 계산대가 자유롭게 결정
-//   2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
+//   [완료] 2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
 //      (이거 없으면 GetQueueSlotLocation이 ZeroVector 반환 → 손님이 원점으로 감)
-//   3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
+//   [완료] 3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
 //      (호출하면 줄 전진 + 손님 퇴장 + OnCheckoutCompleted 방송까지 자동)
 //   4. 진열대 슬롯 높이(상/중/하) 제공 방식 확정 필요
+//      → 제공 측(ACSShelfActor::GetItemSlotLevel)은 완성. 소비 측에서 처리 예정
 //
-// TODO(소비심리 파트 연동 시):
+// TODO:
 //   1. "어디 갈지"는 현재 PickRandomUnvisitedShelf(랜덤)로 임시 구현되어 있음 → 교체 예정
 //   [완료] 2. "뭘 살지"도 현재 태스크에서 확률로 처리 중 → TakeProduct()에 결정된 상품을 넘기는 방식으로 교체
 //   3. 진열 높이(상/중/하) 등 상세 진열 정보 제공은 요청 확정 후 추가 예정
@@ -53,6 +54,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnCustomerDespawned, ACSCustomer
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftStarted,ACSCustomerCharacter*, Customer, int32, AtRiskGold);
 // 빌런 도주 성공 방송, 매출/평판 집계는 이것을 구독하세요.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftEscaped,ACSCustomerCharacter*, Customer, int32, LostGold);
+// 빌런 제압 성공 방송. RecoveredGold는 되찾은 상품의 판매가 합계.
+// 평판 상승 / 통계 / 업적은 이것을 구독하세요.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnVillainSubdued,ACSCustomerCharacter*, Customer, int32, RecoveredGold);
 // 영업시간 종료로 강제 퇴장된 손님 방송, 통계 파트가 자발적 빈손 퇴장 / 계산 포기와 구분하기 위한 별도 채널
 DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerCharacter* /*Customer*/);
 
@@ -167,8 +171,8 @@ public:
 	float MinPatienceSeconds = 15.0f;
 
 	// 이 손님이 계산대에서 참을 수 있는 시간.
-	// [임시] 지금은 기본값을 그대로 반환한다.
-	// ["백록담"]님 파트 연동 시 이 함수 내부만 교체하면 되고 호출하는 태스크는 수정 불필요
+	// Archetype->Impulsiveness를 MaxPatienceSeconds~MinPatienceSeconds로 매핑해서 반환한다
+	// Archetype이 없으면 DefaultPatienceSeconds로 폴백
 	float GetPatienceSeconds(const ACSCustomerCharacter* Customer) const;
 
 	// 계산 포기 처리. 대기열 이탈 → 상품 반환 → 방송 순서로 진행한다.
@@ -201,7 +205,7 @@ public:
 	float DropJitterRadius = 3.0f;
 
 	// 이 손님이 계산을 포기했을 때 진열대에 되돌려놓으러 갈 확률 (0~1)
-	// [임시] ["백록담"]님 파트 연동 시 이 함수 내부만 교체
+	// Archetype->Impulsiveness를 MaxReturnToShelfChance~MinReturnToShelfChance로 매핑해서 반환한다
 	float GetReturnToShelfChance(const ACSCustomerCharacter* Customer) const;
 
 	// 손님이 매장을 완전히 떠날 때 호출
@@ -271,6 +275,23 @@ public:
 	// NotifyCustomerDespawned 안에서 불리므로 태스크가 직접 부를 일은 없습니다.
 	void ReportShopliftEscaped(ACSCustomerCharacter* Customer);
 
+	// 빌런 제압 -------
+
+	// 제압이 성립하는 손님인지 판정. 피격 시점에 한 번만 쓰는 판정
+	bool CanSubdueCustomer(const ACSCustomerCharacter* Customer) const;
+
+	// 지팡이 피격이 들어오는 함수. 제압이 성립했으면 true를 반환
+	bool HandleMagicHitOnCustomer(ACSCustomerCharacter* Customer,const FVector& ImpactDirectionconst,float KnockbackStrength);
+
+	// 제압된 손님 남아 있는 시간. 이 시간이 지나면 파괴
+	UPROPERTY(EditAnywhere, Category = "Store|Villain", meta = (ClampMin = "0.0"))
+	float SubduedDespawnDelay = 3.0f;
+
+	// 아직 절도를 저지르지 않은 빌런도 때려서 잡을 수 있게 할지.
+	// 기본값이 false인 이유: 실행 전 빌런은 겉보기에 일반 손님과 구분되지 않으므로, 허용하면 아무나 때리게 됨
+	UPROPERTY(EditAnywhere, Category = "Store|Villain")
+	bool bAllowSubdueBeforeShoplift = false;
+
 	// =====================================================================
 	// 이벤트
 	// =====================================================================
@@ -292,6 +313,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnShopliftEscaped OnShopliftEscaped; // 도주 성공. 손실/평판 집계용
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnVillainSubdued OnVillainSubdued; // 제압 성공. 회수액/평판 집계용
 
 private:
 	UPROPERTY()

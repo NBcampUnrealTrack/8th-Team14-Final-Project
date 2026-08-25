@@ -1,4 +1,4 @@
-// 손님 AI용 StateTree 조건 모음.
+	// 손님 AI용 StateTree 조건 모음.
 // Root의 자식 상태 선택(Selector)에 사용:
 //   Shopping  ← HasUnvisitedShelf + WantsMoreItems
 //   Checkout  ← HasItemsInCart
@@ -208,6 +208,42 @@ struct FCSCond_ShouldForceLeave : public FStateTreeConditionCommonBase
 	GENERATED_BODY()
 
 	using FInstanceDataType = FCSCond_ShouldForceLeaveInstanceData;
+
+	virtual const UStruct* GetInstanceDataType() const override
+	{
+		return FInstanceDataType::StaticStruct();
+	}
+
+	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
+};
+
+// =====================================================================
+// Customer: Is Subdued
+// 지팡이에 맞아 제압된 손님인지 판정.
+//
+// Root의 On Tick 전이 조건이자 Subdued 상태의 진입 조건으로 함께 씁니다.
+// 제압 성립 판정(빌런인가, 이미 쓰러졌나)은 피격 시점에 서브시스템이 이미 끝냈고,
+// 이 조건은 그 결과 플래그만 읽습니다.
+// =====================================================================
+USTRUCT()
+struct FCSCond_IsSubduedInstanceData
+{
+	GENERATED_BODY()
+
+	// 제압 여부는 개인 데이터이므로 서브시스템을 거치지 않고 바로 Actor에서 확인합니다.
+	UPROPERTY(EditAnywhere, Category = "Context")
+	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Parameter")
+	bool bInvert = false;
+};
+
+USTRUCT(meta = (DisplayName = "Customer: Is Subdued"))
+struct FCSCond_IsSubdued : public FStateTreeConditionCommonBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FCSCond_IsSubduedInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override
 	{
