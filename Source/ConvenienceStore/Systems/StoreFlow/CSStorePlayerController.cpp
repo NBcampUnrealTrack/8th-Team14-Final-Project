@@ -20,6 +20,20 @@ void ACSStorePlayerController::BeginPlay()
 			StoreHUDWidget->AddToPlayerScreen();
 			// 최초 생성 시에는 영업 모드 아이콘만 맞추고 전환 연출은 재생하지 않습니다.
 			StoreHUDWidget->SetBuildModeActive(false, false);
+			if (CachedQuickbarSlotCount > 0)
+			{
+				TArray<UTexture2D*> QuickbarIcons;
+				QuickbarIcons.Reserve(CachedQuickbarToolIcons.Num());
+				for (UTexture2D* ToolIcon : CachedQuickbarToolIcons)
+				{
+					QuickbarIcons.Add(ToolIcon);
+				}
+				StoreHUDWidget->SetQuickbarData(
+					CachedQuickbarSlotCount,
+					CachedQuickbarSelectedSlotIndex,
+					CachedQuickbarToolNames,
+					QuickbarIcons);
+			}
 		}
 	}
 
@@ -404,5 +418,31 @@ void ACSStorePlayerController::SetBuildModeHUDState(
 	if (IsValid(StoreHUDWidget))
 	{
 		StoreHUDWidget->SetBuildModeActive(bIsBuildMode, bPlayTransition);
+	}
+}
+
+void ACSStorePlayerController::SetQuickbarHUDData(
+	int32 SlotCount,
+	int32 SelectedSlotIndex,
+	const TArray<FText>& ToolNames,
+	const TArray<UTexture2D*>& ToolIcons)
+{
+	CachedQuickbarSlotCount = SlotCount;
+	CachedQuickbarSelectedSlotIndex = SelectedSlotIndex;
+	CachedQuickbarToolNames = ToolNames;
+	CachedQuickbarToolIcons.Reset();
+	CachedQuickbarToolIcons.Reserve(ToolIcons.Num());
+	for (UTexture2D* ToolIcon : ToolIcons)
+	{
+		CachedQuickbarToolIcons.Add(ToolIcon);
+	}
+
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetQuickbarData(
+			SlotCount,
+			SelectedSlotIndex,
+			ToolNames,
+			ToolIcons);
 	}
 }

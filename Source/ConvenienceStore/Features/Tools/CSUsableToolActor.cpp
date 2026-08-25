@@ -1,6 +1,7 @@
 #include "Features/Tools/CSUsableToolActor.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Features/Player/CSPlayerCharacter.h"
 
 ACSUsableToolActor::ACSUsableToolActor()
@@ -43,6 +44,21 @@ void ACSUsableToolActor::OnUnequipped()
 {
 	bIsEquipped = false;
 	SetActorEnableCollision(true);
+}
+
+void ACSUsableToolActor::StoreInQuickbar(USceneComponent* StorageAnchor)
+{
+	if (!IsValid(StorageAnchor))
+	{
+		return;
+	}
+
+	// 퀵바 보관 도구는 월드에 보이거나 조준되지 않아야 합니다.
+	PrepareForPickupPhysics();
+	bIsEquipped = false;
+	SetActorEnableCollision(false);
+	AttachToComponent(StorageAnchor, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	SetActorHiddenInGame(true);
 }
 
 void ACSUsableToolActor::PrepareForPickupPhysics()
