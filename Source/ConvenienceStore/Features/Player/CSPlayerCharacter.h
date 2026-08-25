@@ -18,6 +18,7 @@ class ACSMagicWandActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
 class ACSUsableToolActor;
+class UCSQuickbarInventoryComponent;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
 
@@ -84,6 +85,14 @@ protected:
 	// 수레 손잡이가 따라갈 플레이어 앞쪽의 기준점입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> CartPushAnchor;
+
+	// 보관 중인 도구를 월드에서 숨겨 둘 기준점입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> QuickbarStorageAnchor;
+
+	// 장착형 도구만 보관하는 확장 가능한 퀵바 인벤토리입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
+	TObjectPtr<UCSQuickbarInventoryComponent> QuickbarInventory;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BuildPlacementPreviewMesh;
@@ -215,6 +224,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleCartPushAction;
 
+	// 숫자키로 퀵바 슬롯을 직접 선택하는 입력입니다. 처음에는 1, 2만 연결합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot1Action;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot2Action;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot3Action;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot4Action;
+
+	// 마우스 휠로 다음·이전 퀵바 슬롯을 순환 선택합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> CycleQuickbarNextAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> CycleQuickbarPreviousAction;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleBuildModeAction;
 
@@ -251,6 +276,21 @@ private:
 	void TryInteract();
 	void DropHeldItem();
 	void ToggleCartPush();
+	void SelectQuickbarSlot1();
+	void SelectQuickbarSlot2();
+	void SelectQuickbarSlot3();
+	void SelectQuickbarSlot4();
+	void SelectNextQuickbarSlot();
+	void SelectPreviousQuickbarSlot();
+	bool TrySelectQuickbarSlot(int32 SlotIndex);
+	void EquipSelectedQuickbarTool();
+	void StoreEquippedQuickbarTool();
+	void UpdateQuickbarHUD();
+
+	UFUNCTION()
+	void HandleQuickbarChanged();
+	UFUNCTION()
+	void HandleQuickbarSelectionChanged(int32 SelectedSlotIndex);
 	void ToggleBuildMode();
 	void StartRotateBuildLeft();
 	void StopRotateBuildLeft();
