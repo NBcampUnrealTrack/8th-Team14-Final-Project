@@ -7,6 +7,7 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Data/CSCustomerArchetypeDataAsset.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 // =====================================================================
@@ -178,10 +179,13 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 			// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
 			FCSPurchaseCandidate Selected;
+			const bool bPicked = Decision->DecidePurchase(Candidates, Selected);
 
-			if (Decision->DecidePurchase(Candidates, Selected))
+			UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s"),
+				Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("종족없음"),
+				bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"));
+			if (bPicked)
 			{
-				// 결정된 상품을 실제로 집음 (재고 차감 + 장바구니 기록은 TakeProduct 내부 처리)
 				Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
 			}
 		}
