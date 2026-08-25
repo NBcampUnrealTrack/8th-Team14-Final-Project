@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Math/RandomStream.h"
+#include "Data/CSProductTypes.h"   // ECSReputationGrade
 #include "CSCustomerSpawner.generated.h"
 
 class ACSCustomerCharacter;
@@ -37,15 +38,11 @@ protected:
 	UFUNCTION()
 	void HandleStorePhaseChanged(ECStorePhase NewPhase);
 
-	// 레벨이 오르면 생성 간격과 동시 인원 상한이 함께 바뀜
-	UFUNCTION()
-	void HandleStoreLevelChanged(int32 NewLevel);
-
 	// 스폰할 손님 클래스 (BP_CSCustomer 지정)
     UPROPERTY(EditAnywhere, Category = "Spawn")
     TSubclassOf<ACSCustomerCharacter> CustomerClass;
 
-	// 상점 레벨별 생성 간격과 동시 인원, 피크타임 배율을 담은 설정
+	// 평판 등급별 생성 간격과 동시 인원, 피크타임 배율을 담은 설정
 	// 비워 두면 오류 로그를 남기고 아래 SpawnInterval / MaxAliveCustomers로만 동작함
 	UPROPERTY(EditAnywhere, Category = "Spawn")
 	TObjectPtr<UCSCustomerTrafficDataAsset> TrafficDataAsset;
@@ -108,10 +105,20 @@ private:
 	// 피크 시작 이벤트와 종료 이벤트 사이에서만 참
 	bool bIsPeakActive = false;
 
-	// 게임 상태가 없을 때도 안전하도록 상점 레벨은 이 함수로만 읽음
-	int32 GetStoreLevel() const;
+	// 그날 영업에 적용 중인 평판 등급
+	// 개점 때 한 번 저장하고 그날 마감까지 바뀌지 않는다.
+	// 영업 도중 평판이 달라져도 이 값은 그대로이므로 스폰률이 일정
+	ECSReputationGrade AppliedReputationGrade = ECSReputationGrade::Normal;
 
-	// 현재 레벨과 피크 상태에 해당하는 생성 간격과 동시 인원 상한
+	// 게임 상태에서 현재 평판 등급을 읽어 AppliedReputationGrade에 반영
+	// 호출처는 BeginPlay와 개점 전환 둘뿐이다.
+	void RefreshAppliedReputationGrade();
+
+	// 생성 간격과 동시 인원 상한을 계산할 때 쓰는 평판 등급.
+	// 게임 상태를 실시간으로 조회하지 않고 개점에 찍어 둔 평판으로 돌려준다.
+	ECSReputationGrade GetReputationGrade() const;
+
+	// 현재 평판 등급과 피크 상태에 해당하는 생성 간격과 동시 인원 상한
 	float GetCurrentSpawnInterval() const;
 	int32 GetCurrentMaxAlive() const;
 
