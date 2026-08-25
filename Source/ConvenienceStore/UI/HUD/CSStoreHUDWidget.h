@@ -8,6 +8,7 @@
 
 class ACSStoreGameState;
 class UCSInteractionPanelWidget;
+class UCSQuickbarWidget;
 class UButton;
 class UImage;
 class UProgressBar;
@@ -45,6 +46,13 @@ public:
 
 	// 실제 플레이어 모드를 즉시 반영하고 입력으로 바뀐 경우에만 전환 연출을 요청합니다.
 	void SetBuildModeActive(bool bIsBuildMode, bool bPlayTransition);
+
+	// 플레이어 퀵바의 슬롯 수와 도구 아이콘 정보를 전달합니다.
+	void SetQuickbarData(
+		int32 SlotCount,
+		int32 SelectedSlotIndex,
+		const TArray<FText>& ToolNames,
+		const TArray<UTexture2D*>& ToolIcons);
 
 protected:
 	virtual void NativeConstruct() override;
@@ -128,6 +136,10 @@ protected:
 	// 메인 HUD 안에 배치된 전용 상호작용 패널입니다.
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UCSInteractionPanelWidget> InteractionPanel;
+
+	// WBP_CSStoreHUD에 배치하는 화면 중앙 하단 퀵바 위젯입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UCSQuickbarWidget> QuickbarWidget;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UImage> BuildModeIconImage;
