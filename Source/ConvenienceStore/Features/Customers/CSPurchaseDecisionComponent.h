@@ -92,14 +92,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackBudgetOverrunPenalty = 2.0f;
 
-	// 고정 시드 사용 여부. 스포너가 InitializeRandomStream으로 파생 시드를 주입하면 이 값은 덮어써짐
-	// (에디터에서 컴포넌트 단독 테스트할 때만 의미 있음)
-	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Random")
-	bool bUseFixedSeed = false;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Random", meta = (EditCondition = "bUseFixedSeed"))
-	int32 FixedSeed = 0;
-
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
 

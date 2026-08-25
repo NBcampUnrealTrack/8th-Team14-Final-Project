@@ -8,19 +8,6 @@
 
 class UCSCustomerVisualDataAsset;
 
-// 손님의 연령대 (기획상 연령대 하나가 종족 하나에 1:1 대응)
-// (10대 이하 = 고블린, 20대 = 초보 모험가, 30대 이상은 종족 미정)
-UENUM(BlueprintType)
-enum class ECSAgeBracket : uint8
-{
-	Teen		UMETA(DisplayName = "10대 이하"),
-	Twenties	UMETA(DisplayName = "20대"),
-	Thirties	UMETA(DisplayName = "30대"),
-	Forties		UMETA(DisplayName = "40대"),
-	Fifties		UMETA(DisplayName = "50대"),
-	Senior		UMETA(DisplayName = "60대 이상")
-};
-
 // 종족(연령대)별 소비 성향을 담는 성격 카드
 UCLASS(BlueprintType)
 class CONVENIENCESTORE_API UCSCustomerArchetypeDataAsset : public UDataAsset
@@ -28,11 +15,7 @@ class CONVENIENCESTORE_API UCSCustomerArchetypeDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
-	// 정체성 ------
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Identity")
-	ECSAgeBracket AgeBracket = ECSAgeBracket::Thirties;
-
-	// 종족 이름 (30대 이상은 종족이 미정이므로 연령대로 적음)
+	// 종족 이름
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Identity")
 	FText DisplayName;
 
@@ -90,16 +73,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float Impulsiveness = 0.5f;
-
-	// 브랜드 충성도 ----- (추후 필요없으면 제거 예정)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float BrandLoyalty = 0.55f;
-
-	// 할인 / 행사에 반응하는 정도 ---------
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Behavior",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float PromotionSensitivity = 0.55f;
 
 	// 카테고리 성향 -------
 
