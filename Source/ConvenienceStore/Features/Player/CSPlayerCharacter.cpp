@@ -772,6 +772,12 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 			return false;
 		}
 
+		if (ACSMagicWandActor* MagicWand = Cast<ACSMagicWandActor>(ToolActor))
+		{
+			// Quickbar Anchor로 옮기기 전에 현재 WandAnchor를 원래 Home Dock으로 보존합니다.
+			MagicWand->RememberHomeDockFromCurrentAttachment();
+		}
+
 		// 기존에 손에 든 도구가 있다면 먼저 같은 퀵바에 안전하게 보관합니다.
 		StoreEquippedQuickbarTool();
 		ToolActor->StoreInQuickbar(QuickbarStorageAnchor);
@@ -2127,6 +2133,11 @@ void ACSPlayerCharacter::DropHeldItem()
 		IsAimingAtMagicWandHomeDock(MagicWand) &&
 		RestoreMagicWandToHomeDock(MagicWand))
 	{
+		if (IsValid(QuickbarInventory))
+		{
+			// 거치 성공은 유지하면서 Quickbar에서 제거해 숫자키로 다시 장착되지 않게 합니다.
+			QuickbarInventory->RemoveTool(MagicWand);
+		}
 		PlayPlayerGameplaySFX(this, ECSAudioEvent::WandPlace);
 		HeldActor = nullptr;
 		DestroyPlacementPreview();
