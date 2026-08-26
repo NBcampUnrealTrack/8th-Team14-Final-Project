@@ -75,7 +75,7 @@ struct FCSTutorialStepRow : public FTableRowBase
 	FText BannerText;
 
 	// 화면 하단 대화창 문구 PromptType이 Dialogue일 때만 사용
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial", meta = (MultiLine = "true"))
 	FText PromptText;
 
 	// 우측 상단 목표 텍스트
