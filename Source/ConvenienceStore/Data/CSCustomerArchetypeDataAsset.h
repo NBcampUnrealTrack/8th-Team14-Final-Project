@@ -87,6 +87,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Category")
 	TSet<ECSProductCategory> BlockedCategories;
 
+	// 같은 카테고리를 이미 담은 상태에서 또 같은 카테고리를 볼 때 점수를 깎는 배수 (한계효용 체감)
+	// 반복 횟수만큼 pow(RepeatCategoryPenalty, 반복횟수)로 곱해서 감쇠시킴
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Category",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float RepeatCategoryPenalty = 0.7f;
+
 	// 탐색 ---------
 
 	// 매장에 머무는 시간(초)
@@ -104,6 +110,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Browsing",
 		meta = (ClampMin = "1.0", ClampMax = "8.0"))
 	float TargetBasketSize = 2.7f;
+
+	// 담을수록 하나 더 담을 확률이 지수적으로 줄어드는 감쇠 계수
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Browsing",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CountDecayLambda = 0.15f;
 
 	// 선택 ------------
 

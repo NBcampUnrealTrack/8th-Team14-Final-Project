@@ -31,6 +31,17 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// MoveToShelf 이동 실패로 재진입한 경우 처리 (ST_Customer: MoveToShelf의 Failed 전이가 Shopping을 다시 겨냥함)
+	// 직전에 골랐던 진열대(Data.TargetShelf)가 아직 VisitedShelves에 없다는 건
+	// Browse까지 가보지 못했다(= MarkVisited를 부를 기회가 없었다 = MoveToShelf가 실패했다)는 신호
+	// 이동 성공/실패와 무관하게 시도한 진열대는 여기서 방문 처리
+	// 이게 없으면 내비메시가 막힌 진열대가 계속 안 가본 곳으로 남아 재선택되고
+	// 손님 하나가 같은 진열대에 수백 번 재시도하며 MaxAlive 슬롯을 점유해 신규 스폰을 막음
+	if (Data.TargetShelf != nullptr && State->HasVisited(Data.TargetShelf) == false)
+	{
+		State->MarkVisited(Data.TargetShelf);
+	}
+
 	AActor* PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves);
 	if (PickedShelf == nullptr)
 	{
@@ -130,8 +141,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
-	// 재진입할 때마다 타이머 리셋이 필요하므로 여기서 0으로 초기화
+	// 재진입할 때마다 타이머/세션 상태 리셋이 필요하므로 여기서 초기화
+	// (인스턴스 데이터는 재진입 사이에 값이 남아있으므로 명시적으로 0으로 되돌려야 함)
 	Data.ElapsedTime = 0.0f;
+	Data.RoundCount = 0;
+	Data.bBudgetCharged = false;
 
 	if (Data.Actor == nullptr || Data.TargetShelf == nullptr)
 	{
@@ -146,13 +160,6 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 	Data.ElapsedTime += DeltaTime;
 
-	// BrowseTime에 도달할 때까지 Running 유지
-	if (Data.ElapsedTime < Data.BrowseTime)
-	{
-		return EStateTreeRunStatus::Running;
-	}
-
-	// 구경 끝 → 방문 처리 + 구매 판단
 	ACSCustomerCharacter* Customer = Data.Actor;
 	AActor* ShelfActor = Data.TargetShelf;
 	UCSCustomerStateComponent* State = Customer->GetCustomerState();
@@ -162,42 +169,116 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	{
 		return EStateTreeRunStatus::Failed;
 	}
-	// 구매를 하든 안하든 방문 처리는 해야 같은 진열대를 무한히 맴돌지 않으므로 항상 기록
-	State->MarkVisited(ShelfActor);
 
-	if (Subsystem->HasShelfStock(ShelfActor))
+	// 첫 라운드(세션 진입)에 재고가 없으면 세션 자체를 시작하지 않고 GlanceTime만큼만 짧게 머물다 지나감
+	// RoundCount == 0으로 제한하는 이유: 세션 도중(라운드 1 이상)에 다른 손님이 재고를 다 사가서 없어진 경우는
+	// 여기로 다시 빠지지 않고, 아래 BuildPurchaseCandidates가 빈 배열을 만들어 DecidePurchase가 자연히
+	// false(미구매)를 반환하며 세션이 끝나도록 둔다
+	if (Data.RoundCount == 0 && !Subsystem->HasShelfStock(ShelfActor))
 	{
-		// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 구매 판단 자체를 건너뛰고 지나감
-		UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
-		if (Decision != nullptr)
+		if (Data.ElapsedTime < Data.GlanceTime)
 		{
-			// 진열대 위 상품들을 판단용 후보 목록으로 변환
-			const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
-
-			// 이 진열대에서 살펴본 상품 개수만큼 감소 (0 밑으로는 안 내려감)
-			State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - Candidates.Num(), 0);
-
-			// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
-			FCSPurchaseCandidate Selected;
-			const bool bPicked = Decision->DecidePurchase(Candidates, Selected);
-
-			UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s"),
-				Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("종족없음"),
-				bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"));
-			if (bPicked)
-			{
-				Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
-			}
+			return EStateTreeRunStatus::Running;
 		}
-	}
-	else
-	{
-		// 진열대가 비어있어도 와서 확인하는 데는 시간이 들었다고 보고 최소 1만큼 차감
+
+		State->MarkVisited(ShelfActor);
+		// 진열대가 비어있어도 와서 확인하는 데는 시간이 들었다고 보고 최소 1만큼 차감 (기존 else 분기 그대로 유지)
 		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
+		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// 사든 말든 현재 진열대 확인 완료 → 다음 행동 결정
-	return EStateTreeRunStatus::Succeeded;
+	// 라운드 0(첫 방문)은 BrowseTime, 그 이후 라운드는 SessionInterval만큼 대기 후 판단
+	const float RequiredWait = (Data.RoundCount == 0) ? Data.BrowseTime : Data.SessionInterval;
+	if (Data.ElapsedTime < RequiredWait)
+	{
+		return EStateTreeRunStatus::Running;
+	}
+	Data.ElapsedTime = 0.0f;
+
+	// 사든 안 사든 방문한 건 사실이므로 첫 라운드에서 한 번만 기록
+	// (재방문은 하지 않는다는 원칙 - HasUnvisitedShelf가 이 기록으로 게이트 역할을 함)
+	if (Data.RoundCount == 0)
+	{
+		State->MarkVisited(ShelfActor);
+	}
+
+	// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 세션 자체를 진행할 수 없으므로 여기서 종료
+	UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+	if (Decision == nullptr)
+	{
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 진열대 위 상품들을 판단용 후보 목록으로 변환
+	// 캐싱하지 않고 매 라운드 재조회 - 그 사이 다른 손님이 먼저 집어간 상품도 자연스럽게 반영됨
+	const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+
+	// 실제로 비교 대상에 오르는 개수는 상위 TopCandidateCount개로 잘리므로(ScoreAndSelectTopCandidates)
+	// 봤다고 칠 개수도 진열대 상품 총개수가 아니라 그 상한을 넘지 않도록 함
+	if (!Data.bBudgetCharged)
+	{
+		const int32 EvaluatedCount = FMath::Min(Candidates.Num(), Decision->GetEffectiveTopCandidateCount());
+		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - EvaluatedCount, 0);
+		Data.bBudgetCharged = true;
+	}
+
+	// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
+	FCSPurchaseCandidate Selected;
+	const bool bPicked = Decision->DecidePurchase(Candidates, Selected);
+
+	UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s | %s"),
+		*Customer->GetName(),
+		Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("종족없음"),
+		bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"));
+
+	if (!bPicked)
+	{
+		// 살 게 없다고 판단 -> 세션 종료 (다음 진열대로)
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
+	Data.RoundCount++;
+
+	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
+	if (Data.RoundCount >= Data.MaxSessionRounds)
+	{
+		// [세션종료 확인용] 어느 종료조건이 실제로 자주 걸리는지 확인용
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=라운드상한 | 담은개수=%d/%d | RoundCount=%d"),
+			*Customer->GetName(), State->SelectProducts.Num(), State->PlannedBasketTarget, Data.RoundCount);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 목표 개수(PlannedBasketTarget)를 채웠으면 세션 종료
+	const int32 ItemsInBasket = State->SelectProducts.Num();
+	if (ItemsInBasket >= State->PlannedBasketTarget)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=목표달성 | 담은개수=%d/%d"),
+			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 소프트/하드 예산 중 하나라도 바닥나면 더 둘러봐도 살 수 없으므로 종료
+	if (State->GetRemainingSoftBudget() <= 0 || State->GetRemainingHardWallet() <= 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=예산바닥 | 담은개수=%d/%d | 남은소프트=%d | 남은하드=%d"),
+			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget,
+			State->GetRemainingSoftBudget(), State->GetRemainingHardWallet());
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
+	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
+	if (!Decision->RollContinueShopping(ItemsInBasket))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=확률탈락 | 담은개수=%d/%d | 확률=%.2f"),
+			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget,
+			Decision->ContinueShoppingProbability(ItemsInBasket));
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 계속 쇼핑 -> 다음 라운드까지 SessionInterval만큼 대기 (ElapsedTime은 위에서 이미 0으로 리셋됨)
+	return EStateTreeRunStatus::Running;
 }
 
 // =====================================================================
@@ -726,7 +807,6 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::Tick(FStateTreeExecutionContext&
 	// 가게 앞에 도착했으니 한 번 판정
 	if (Subsystem->ShouldEnterStore(Data.Actor) == false)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[입장판정] %s 그냥 지나감"), *Data.Actor->GetName());
 		return EStateTreeRunStatus::Failed;
 	}
 
@@ -734,8 +814,6 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::Tick(FStateTreeExecutionContext&
 	//  - 통계에서 행인과 구분되고
 	//  - 매장 안 손님이 다시 가게 앞으로 나가지 않는다.
 	State->MarkEnteredStore();
-
-	UE_LOG(LogTemp, Log, TEXT("[입장판정] %s 입장"), *Data.Actor->GetName());
 
 	return EStateTreeRunStatus::Succeeded;
 }

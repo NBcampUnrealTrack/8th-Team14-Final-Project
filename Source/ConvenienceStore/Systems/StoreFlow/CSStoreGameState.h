@@ -407,10 +407,6 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Funds",
-		meta = (ClampMin = "0", UIMin = "0"))
-	int32 StartingFunds = 1000;
-
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Funds")
 	int32 CurrentFunds = 0;
 

@@ -8,9 +8,6 @@
 void ACSStoreGameState::BeginPlay()
 {
 	Super::BeginPlay();
-
-	CurrentFunds = FMath::Max(0, StartingFunds);
-	OnFundsChanged.Broadcast(CurrentFunds);
 }
 
 void ACSStoreGameState::SetStorePhase(const FCSStorePhaseData& PhaseData)
@@ -302,6 +299,8 @@ bool ACSStoreGameState::InitializeStoreEconomy(
 	}
 
 	StoreEconomyDataAsset = InStoreEconomyDataAsset;
+	CurrentFunds = StoreEconomyDataAsset->InitialFunds;
+	OnFundsChanged.Broadcast(CurrentFunds);
 	return true;
 }
 
