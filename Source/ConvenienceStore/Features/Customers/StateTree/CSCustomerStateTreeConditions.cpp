@@ -105,16 +105,20 @@ bool FCSCond_WantsMoreItems::TestCondition(FStateTreeExecutionContext& Context) 
 		{
 			const int32 ItemsInBasket = State->SelectProducts.Num();
 
+			// 목표 개수(PlannedBasketTarget)를 채웠으면 더 안 담음 - 진열대를 더 돌아도 소용없으므로 최우선으로 검사
+			if (ItemsInBasket >= State->PlannedBasketTarget)
+			{
+				bResult = false;
+			}
 			// 탐색 예산까지 다 썼으면 매장에 안 가본 진열대가 남아있어도 그만 구경하게 함
-			if (ItemsInBasket == 0)
+			else if (ItemsInBasket == 0)
 			{
 				bResult = (State->RemainingEvaluationBudget > 0);
 			}
 			else
 			{
-				// 확률 계산 + 굴림을 컴포넌트 안에서 한 번에 처리
-				// 전역 FMath::FRand() 대신 그 손님의 RandomStream을 써서 재현 가능해짐
-				bResult = Decision->RollContinueShopping(ItemsInBasket);
+				// 목표를 아직 못 채웠으면 안 가본 진열대가 있는 한 계속 진행
+				bResult = true;
 			}
 		}
 	}

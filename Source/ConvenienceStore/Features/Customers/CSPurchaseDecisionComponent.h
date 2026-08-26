@@ -39,6 +39,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	bool RollContinueShopping(int32 ItemsInBasket) const;
 
+	// 스폰 시점에 이번 방문에서 목표로 삼을 장바구니 개수를 미리 뽑아둠
+	int32 RollPlannedBasketTarget(FRandomStream& Stream) const;
+
 	// 스포너가 스폰 직후 파생 시드를 주입할 때 사용
 	// 이미 굴림이 시작된 뒤에 다시 부르면 그 시점부터 시퀀스가 바뀌므로 스폰 직후 1회만 호출 전제
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
@@ -62,6 +65,12 @@ public:
 	// 가게로 들어갈지 안갈지를 정할려고 확률을 굴리는 함수입니다.
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
 	bool RollChance(float Chance) const;
+
+	// Archetype이 있으면 그 값을, 없으면 폴백값을 쓰는 헬퍼
+	// 원래 private이었으나 FCSTask_BrowseShelf::Tick에서 이번 방문에 실제로 몇 개를 비교 대상에 올렸는지
+	// (= 평가 예산 차감량)를 계산하려면 컴포넌트 밖에서 이 값을 읽어야 해서 public으로 옮김
+	UFUNCTION(BlueprintCallable, Category = "Purchase")
+	int32 GetEffectiveTopCandidateCount() const;
 
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
@@ -91,6 +100,14 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackBudgetOverrunPenalty = 2.0f;
+
+	// CountDecay(담을수록 하나 더 담을 확률이 지수적으로 줄어드는 계수) 폴백값
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackCountDecayLambda = 0.15f;
+
+	// 같은 카테고리 반복 시 점수 감쇠 배수 폴백값
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackRepeatCategoryPenalty = 0.7f;
 
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
@@ -126,12 +143,13 @@ private:
 	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
 	const FCSProductDataRow* GetProductRow(const FCSPurchaseCandidate& Candidate) const;
 
-	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼 3종
+	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼들
 	// Archetype이 연결되어 있으면 그 안의 값을 쓰고
 	// 없으면 기본값(Fallback)을 대신 쓴다는 판단 해주는 함수들
-	int32 GetEffectiveTopCandidateCount() const;
 	float GetEffectiveSelectionTemperature() const;
 	float GetEffectiveMinPurchaseUtility() const;
+	float GetEffectiveCountDecayLambda() const;
+	float GetEffectiveRepeatCategoryPenalty() const;
 
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const;
