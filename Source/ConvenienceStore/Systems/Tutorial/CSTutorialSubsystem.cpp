@@ -326,50 +326,50 @@ void UCSTutorialSubsystem::TrySpawnTutorialShelfDelivery()
 	}
 
 	ACSStoreGameMode* GameMode = World->GetAuthGameMode<ACSStoreGameMode>();
-	const TSubclassOf<AActor> ShelfClass = IsValid(GameMode) ? GameMode->GetTutorialShelfFacilityClass() : nullptr;
-	if (ShelfClass == nullptr)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[Tutorial] TutorialShelfFacilityClass가 지정되지 않아 배송 선반을 스폰하지 못했습니다."));
-		return;
-	}
+	const TSubclassOf<AActor> DefaultShelfClass =
+		IsValid(GameMode) ? GameMode->GetTutorialShelfFacilityClass() : nullptr;
 
-	// 레벨에서 ACSTutorialShelfSpawnPoint 타입 액터를 찾아 그 위치에 스폰
-	ACSTutorialShelfSpawnPoint* SpawnPoint = nullptr;
+	// 레벨에 배치된 스폰 지점마다 선반을 하나씩 스폰 (배송 상자와 동일한 패턴)
 	for (TActorIterator<ACSTutorialShelfSpawnPoint> It(World); It; ++It)
 	{
-		if (IsValid(*It))
+		ACSTutorialShelfSpawnPoint* SpawnPoint = *It;
+		if (!IsValid(SpawnPoint))
 		{
-			SpawnPoint = *It;
-			break;
+			continue;
 		}
-	}
 
-	if (SpawnPoint == nullptr)
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[Tutorial] ACSTutorialShelfSpawnPoint를 레벨에서 찾지 못했습니다. BP_TutorialShelfSpawnPoint를 배치해주세요."));
-		return;
-	}
+		// 스폰 지점에 클래스가 지정돼 있으면 그걸 우선 사용, 없으면 GameMode 기본값
+		const TSubclassOf<AActor> ShelfClass =
+			SpawnPoint->ShelfClassOverride != nullptr ? SpawnPoint->ShelfClassOverride : DefaultShelfClass;
 
-	AActor* SpawnedShelf = World->SpawnActor<AActor>(ShelfClass, SpawnPoint->GetActorTransform());
-	TutorialSpawnedShelf = SpawnedShelf;
+		if (ShelfClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Tutorial] 스폰 지점(%s)에 쓸 선반 클래스가 없습니다 (ShelfClassOverride도, GameMode 기본값도 없음)."),
+				*SpawnPoint->GetName());
+			continue;
+		}
 
-	// 발주 포탈 시스템과 무관하게 튜토리얼이 직접 미설치 상태로 초기화
-	// (기존 건축 시스템의 TryPickUpBuildableFacility로 바로 주울 수 있는 상태가 됨)
-	if (IsValid(SpawnedShelf) && SpawnedShelf->GetClass()->ImplementsInterface(UCSBuildableFacility::StaticClass()))
-	{
-		ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(SpawnedShelf);
-	}
-	else if (IsValid(SpawnedShelf))
-	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[Tutorial] TutorialShelfFacilityClass(%s)가 ICSBuildableFacility를 구현하지 않습니다."),
-			*ShelfClass->GetName());
-	}
+		AActor* SpawnedShelf = World->SpawnActor<AActor>(ShelfClass, SpawnPoint->GetActorTransform());
 
-	if (IsValid(SpawnedShelf))
-	{
+		if (!IsValid(SpawnedShelf))
+		{
+			continue;
+		}
+
+		TutorialSpawnedShelves.Add(SpawnedShelf);
+
+		if (SpawnedShelf->GetClass()->ImplementsInterface(UCSBuildableFacility::StaticClass()))
+		{
+			ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(SpawnedShelf);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Tutorial] TutorialShelfFacilityClass(%s)가 ICSBuildableFacility를 구현하지 않습니다."),
+				*ShelfClass->GetName());
+		}
+
 		UCSTutorialMarkerComponent* HighlightComponent =
 			NewObject<UCSTutorialMarkerComponent>(SpawnedShelf);
 		if (IsValid(HighlightComponent))
@@ -524,18 +524,19 @@ void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
 
 void UCSTutorialSubsystem::DebugHideTutorialShelfHighlight()
 {
-	if (!IsValid(TutorialSpawnedShelf))
+	for (const TObjectPtr<AActor>& Shelf : TutorialSpawnedShelves)
 	{
-		return;
+		if (IsValid(Shelf))
+		{
+			if (UCSTutorialMarkerComponent* HighlightComponent =
+				Shelf->FindComponentByClass<UCSTutorialMarkerComponent>())
+			{
+				HighlightComponent->HideMarker();
+			}
+		}
 	}
 
-	if (UCSTutorialMarkerComponent* HighlightComponent =
-		TutorialSpawnedShelf->FindComponentByClass<UCSTutorialMarkerComponent>())
-	{
-		HighlightComponent->HideMarker();
-	}
-
-	TutorialSpawnedShelf = nullptr;
+	TutorialSpawnedShelves.Reset();
 }
 
 void UCSTutorialSubsystem::CreateTutorialWidgets(ACSStoreGameMode* GameMode)
@@ -903,17 +904,28 @@ void UCSTutorialSubsystem::HandleBuildableFacilityPlaced(AActor* FacilityActor)
 		return;
 	}
 
+	// 지금 배치된 게 튜토리얼이 스폰해둔 선반들 중 하나가 아니면 무시
+	// (건축모드 중 다른 시설을 배치했을 가능성을 배제)
+	if (!TutorialSpawnedShelves.Contains(FacilityActor))
+	{
+		return;
+	}
+
 	// 정식 배치가 확정된 시점이므로 튜토리얼이 스폰 시점에 켜뒀던 강조 표시를 여기서 끔
-	// (선반 자체에 동적으로 붙인 UCSTutorialMarkerComponent가 대상)
 	if (UCSTutorialMarkerComponent* HighlightComponent =
 		FacilityActor->FindComponentByClass<UCSTutorialMarkerComponent>())
 	{
 		HighlightComponent->HideMarker();
 	}
-	TutorialSpawnedShelf = nullptr;
+	TutorialSpawnedShelves.Remove(FacilityActor);
 
-	// 5단계는 FinalizeBuildPlacement 이후 방송된 실제 시설 배치 성공 이벤트로 완료
-	NotifyStepCompleted(ECSTutorialStepId::PlaceFacility);
+	if (PlacedFacilityCount < MAX_int32)
+	{
+		++PlacedFacilityCount;
+	}
+
+	// 5단계는 배치할 선반이 몇 개든 이 카운터가 ObjectiveGoal에 도달할 때 완료
+	NotifyObjectiveProgress(ECSTutorialStepId::PlaceFacility, PlacedFacilityCount);
 }
 
 void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
