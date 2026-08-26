@@ -26,7 +26,7 @@ protected:
 	// 몇 명이 계산을 마칠 때마다 요약 로그를 찍을지
 	// 매번 찍으면 개별 로그와 섞여 알아보기 어려워서 일정 간격으로만 찍음
 	UPROPERTY(EditAnywhere, Category = "Verification", meta = (ClampMin = "1"))
-	int32 LogIntervalCount = 5;
+	int32 LogIntervalCount = 10;
 
 private:
 	// CSCustomerRuntimeSubsystem::OnCheckoutCompleted를 구독하는 핸들러
