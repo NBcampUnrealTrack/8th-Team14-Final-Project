@@ -243,7 +243,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
 	if (Data.RoundCount >= Data.MaxSessionRounds)
 	{
-		// [세션종료 확인용] 임시 로그 4종 - 어느 종료조건이 실제로 자주 걸리는지 확인용, 검증 끝나면 삭제
+		// [세션종료 확인용] 어느 종료조건이 실제로 자주 걸리는지 확인용
 		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=라운드상한 | 담은개수=%d/%d | RoundCount=%d"),
 			*Customer->GetName(), State->SelectProducts.Num(), State->PlannedBasketTarget, Data.RoundCount);
 		return EStateTreeRunStatus::Succeeded;
