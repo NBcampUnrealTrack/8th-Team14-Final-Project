@@ -575,6 +575,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		const int32 CustomerSeed = MasterStream.RandHelper(MAX_int32);
 		Decision->InitializeRandomStream(CustomerSeed);
 
+		// 목표 장바구니 개수를 스폰 시점에 미리 뽑아둠
+		if (State != nullptr)
+		{
+			const int32 PlannedBasketSeed = MasterStream.RandHelper(MAX_int32);
+			FRandomStream PlannedBasketStream(PlannedBasketSeed);
+			State->PlannedBasketTarget = Decision->RollPlannedBasketTarget(PlannedBasketStream);
+		}
+
 		// [빌런 판정 로직] (추후에 맵에 대해서 빌런 확률 더 증가한다 이런게 추가되면 값을 받아와서 계산하는 로직을 추가)
 		// 빌런 판정용 파생 시드 하나 더 발급
 		const int32 VillainSeed = MasterStream.RandHelper(MAX_int32);

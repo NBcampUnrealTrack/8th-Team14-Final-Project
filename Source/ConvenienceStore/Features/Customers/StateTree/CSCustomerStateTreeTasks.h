@@ -120,7 +120,11 @@ struct FCSTask_MoveToLocation : public FStateTreeTaskCommonBase
 
 // =====================================================================
 // BrowseShelf : 진열대 앞에서 구경 → 구매 판단 → 담기or패스
-// 진열대 앞에서 BrowseTime만큼 머물다, 방문 기록을 남기고, 확률적으로 상품을 집습니다
+//
+// 진열대 방문 1회 = "세션" 세션 안에서 여러 라운드에 걸쳐 반복 판단하도록 재작성됨
+// (기존에는 방문 1회 = 판단 1회라서 최대 구매 개수가 진열대 개수에 종속되는 문제가 있었음)
+// 재고가 없으면 GlanceTime만큼만 짧게 머물고 지나감. 재고가 있으면 BrowseTime 대기 후 첫 라운드 판단,
+// 이후 계속 담을지 확률로 정해질 때마다 SessionInterval만큼 대기하고 라운드를 반복함
 // =====================================================================
 
 USTRUCT()
@@ -135,13 +139,33 @@ struct FCSTask_BrowseShelfInstanceData
 	UPROPERTY(EditAnywhere, Category = "Input")
 	TObjectPtr<AActor> TargetShelf = nullptr;
 
-	// 구경하는 시간(초)
+	// 첫 라운드에 진열대를 구경하는 시간(초)
 	UPROPERTY(EditAnywhere, Category = "Parameter")
 	float BrowseTime = 1.5f;
 
-	// 내부용 경과 시간
+	// 재고가 없는 진열대를 확인만 하고 지나가는 시간(초) - BrowseTime을 다 기다릴 필요가 없어 별도로 분리
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float GlanceTime = 0.4f;
+
+	// 세션 두 번째 라운드부터 하나 더 담을지 판단하기 전까지 대기하는 시간(초)
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float SessionInterval = 0.8f;
+
+	// 한 세션에서 허용하는 최대 라운드 수. 무한 루프 방지용 순수 방어 코드
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1"))
+	int32 MaxSessionRounds = 8;
+
+	// 내부용 경과 시간 (라운드가 바뀔 때마다 0으로 리셋됨)
 	UPROPERTY()
 	float ElapsedTime = 0.0f;
+
+	// 이번 세션에서 진행한 라운드 수. 0부터 시작하며 EnterState에서 리셋됨
+	UPROPERTY()
+	int32 RoundCount = 0;
+
+	// 이번 세션에서 평가 예산을 이미 차감했는지 - 세션 전체를 통틀어 딱 한 번만 깎아야 함
+	UPROPERTY()
+	bool bBudgetCharged = false;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Browse Shelf"))

@@ -156,6 +156,13 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	int32 RemainingEvaluationBudget = 8;
 
+	// 스폰 시점에 이번 방문에서 목표로 삼은 장바구니 개수
+	// CSPurchaseDecisionComponent::RollPlannedBasketTarget()으로 계산된 개인 상태값이라
+	// Archetype/Fallback 이중화 대상이 아니고, 이 필드 자체가 결과값이라 여기 그대로 저장함
+	// 진열대 개수와 무관하게 손님이 몇 개를 살지 정하기 위한 값 (장바구니가 진열대 개수에 종속되던 문제 해소)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	int32 PlannedBasketTarget = 1;
+
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
 
