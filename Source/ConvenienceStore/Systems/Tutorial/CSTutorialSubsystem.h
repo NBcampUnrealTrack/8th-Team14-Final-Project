@@ -196,7 +196,9 @@ private:
 	// TrySpawnTutorialShelfDelivery가 스폰한 선반을 기억해둠
 	// cs.TNext로 PlaceFacility를 건너뛸 때 실제 배치 이벤트 없이도 아웃라인을 끄기 위해 필요
 	UPROPERTY()
-	TObjectPtr<AActor> TutorialSpawnedShelf;
+	TArray<TObjectPtr<AActor>> TutorialSpawnedShelves;
+
+	int32 PlacedFacilityCount = 0;
 
 	FTimerHandle AutoAdvanceTimerHandle;
 
