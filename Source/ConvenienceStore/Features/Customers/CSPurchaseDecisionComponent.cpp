@@ -34,6 +34,16 @@ float UCSPurchaseDecisionComponent::GetEffectiveMinPurchaseUtility() const
 	return Archetype ? Archetype->MinPurchaseUtility : FallbackMinPurchaseUtility;
 }
 
+float UCSPurchaseDecisionComponent::GetEffectiveCountDecayLambda() const
+{
+	return Archetype ? Archetype->CountDecayLambda : FallbackCountDecayLambda;
+}
+
+float UCSPurchaseDecisionComponent::GetEffectiveRepeatCategoryPenalty() const
+{
+	return Archetype ? Archetype->RepeatCategoryPenalty : FallbackRepeatCategoryPenalty;
+}
+
 
 float UCSPurchaseDecisionComponent::ComputePriceScore(float ActualPrice, float ReferencePrice, float DeadZoneRatio, float Steepness) const
 {
@@ -122,6 +132,29 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		return -1.0f;
 	}
 
+	// 한계효용 체감: 이미 장바구니에 같은 카테고리 상품이 담겨 있으면
+	// 반복 횟수만큼 카테고리 점수를 지수적으로 깎음 (예: 음료를 3개째 보면 선호도가 확 낮아짐)
+	// -1.0 특수신호가 아니라 0~1 점수를 줄이는 방식이라 위의 구매 불가 판정과는 별개
+	float AdjustedCategoryScore = CategoryScore;
+	if (const UCSCustomerStateComponent* State = GetCustomerState())
+	{
+		int32 RepeatCount = 0;
+		for (const FCSSelectProduct& Selected : State->SelectProducts)
+		{
+			const FCSProductDataRow* SelectedRow = Selected.ProductRow.GetRow<FCSProductDataRow>(
+				TEXT("UCSPurchaseDecisionComponent::ScoreCandidate(RepeatCategoryPenalty)"));
+			if (SelectedRow != nullptr && SelectedRow->Category == ProductRow->Category)
+			{
+				RepeatCount++;
+			}
+		}
+
+		if (RepeatCount > 0)
+		{
+			AdjustedCategoryScore *= FMath::Pow(GetEffectiveRepeatCategoryPenalty(), static_cast<float>(RepeatCount));
+		}
+	}
+
 	// 예산 점수 계산
 	float BudgetScore = 1.0f; // 손님 상태를 못 찾으면 예산 판단 없이 통과시킴 (안전 폴백)
 	if (UCSCustomerStateComponent* State = GetCustomerState())
@@ -141,7 +174,7 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 가중합을 가중치 합계로 나눠 정규화
 	// 이렇게 해두면 나중에 예산 점수 항(W_Budget 등)이 추가되어도
 	// 항상 0~1 범위를 벗어나지 않게 자동으로 맞춰짐
-	const float Weighted = (W_Price * PriceScore) + (W_Category * CategoryScore) + (W_Budget * BudgetScore);
+	const float Weighted = (W_Price * PriceScore) + (W_Category * AdjustedCategoryScore) + (W_Budget * BudgetScore);
 	const float WeightSum = W_Price + W_Category + W_Budget;
 	const float Normalized = (WeightSum > 0.f) ? (Weighted / WeightSum) : 0.f;
 
@@ -336,6 +369,10 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 	const float SafeTarget = FMath::Max(TargetBasketSize, 1.01f);
 	const float BaseProbability = 1.0f - (1.0f / SafeTarget);
 
+	// CountDecay: 담을수록 하나 더 담을 확률이 지수적으로 줄어드는 항
+	const float CountDecayLambda = GetEffectiveCountDecayLambda();
+	const float CountDecay = FMath::Exp(-CountDecayLambda * static_cast<float>(SafeItemCount - 1));
+
 	// 예산 여유도
 	float BudgetFactor = 1.0f;
 	if (UCSCustomerStateComponent* State = GetCustomerState())
@@ -349,15 +386,28 @@ float UCSPurchaseDecisionComponent::ContinueShoppingProbability(int32 ItemsInBas
 		BudgetFactor = FMath::SmoothStep(0.0f, 0.3f, RemainingBudgetRatio);
 	}
 
-	// 최종 확률 = 기본확률 × 예산여유도
+	// 최종 확률 = 기본확률 × CountDecay × 예산여유도
 	// 0.95 상한: 아무리 의욕이 넘쳐도 100% 확정은 아니게 함
-	return FMath::Clamp(BaseProbability * BudgetFactor, 0.0f, 0.95f);
+	return FMath::Clamp(BaseProbability * CountDecay * BudgetFactor, 0.0f, 0.95f);
 }
 
 bool UCSPurchaseDecisionComponent::RollContinueShopping(int32 ItemsInBasket) const
 {
 	const float ContinueProbability = ContinueShoppingProbability(ItemsInBasket);
 	return RandomStream.FRand() < ContinueProbability;
+}
+
+// 스폰 시점에 이번 방문의 목표 장바구니 개수를 미리 뽑아둠
+// ContinueShoppingProbability(세션 내부 계속-구매 판단과 동일한 함수)를 재사용하므로
+// 두 계산이 항상 같은 확률 곡선 위에서 움직임이 보장됨
+int32 UCSPurchaseDecisionComponent::RollPlannedBasketTarget(FRandomStream& Stream) const
+{
+	int32 Count = 1;
+	while (Stream.FRand() < ContinueShoppingProbability(Count))
+	{
+		Count++;
+	}
+	return Count;
 }
 
 void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
