@@ -37,6 +37,9 @@ void ACSStorePlayerController::BeginPlay()
 		}
 	}
 
+	// Temporary Title Screen: 이 한 줄을 제거하면 기존 시작 흐름으로 즉시 복귀합니다.
+	ShowTemporaryTitleScreen();
+
 	StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>();
 	if (StoreGameState != nullptr)
 	{
@@ -52,8 +55,58 @@ void ACSStorePlayerController::BeginPlay()
 	}
 }
 
+// === Temporary Title Screen: 정식 타이틀 도입 시 아래 세 함수 전체 제거 ===
+void ACSStorePlayerController::ShowTemporaryTitleScreen()
+{
+	if (!bUseTemporaryTitleScreen || !IsLocalPlayerController() ||
+		TemporaryTitleWidgetClass.IsNull() || IsValid(ActiveTemporaryTitleWidget))
+	{
+		return;
+	}
+
+	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.LoadSynchronous();
+	if (LoadedTitleWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	ActiveTemporaryTitleWidget = CreateWidget<UUserWidget>(this, LoadedTitleWidgetClass);
+	if (!IsValid(ActiveTemporaryTitleWidget))
+	{
+		return;
+	}
+
+	ActiveTemporaryTitleWidget->AddToViewport(1001);
+	SetStoreHUDHidden(ActiveTemporaryTitleWidget, true);
+	SetGameplayUIInputLock(ActiveTemporaryTitleWidget, true);
+	SetPause(true);
+}
+
+void ACSStorePlayerController::StartGameFromTemporaryTitle()
+{
+	CloseTemporaryTitleScreen();
+}
+
+void ACSStorePlayerController::CloseTemporaryTitleScreen()
+{
+	if (!IsValid(ActiveTemporaryTitleWidget))
+	{
+		return;
+	}
+
+	UUserWidget* TitleWidgetToClose = ActiveTemporaryTitleWidget;
+	SetPause(false);
+	SetGameplayUIInputLock(TitleWidgetToClose, false);
+	SetStoreHUDHidden(TitleWidgetToClose, false);
+	TitleWidgetToClose->RemoveFromParent();
+	ActiveTemporaryTitleWidget = nullptr;
+}
+// === End Temporary Title Screen ===
+
 void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CloseTemporaryTitleScreen();
+
 	if (StoreGameState != nullptr)
 	{
 		StoreGameState->OnEndOfDayTaskChanged.RemoveDynamic(
@@ -172,12 +225,7 @@ void ACSStorePlayerController::HandleDailySummaryRequested()
 	if (!IsValid(ActiveDailySummaryWidget)) return;
 	ActiveDailySummaryWidget->OnDailySummaryConfirmed.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryConfirmed);
 	ActiveDailySummaryWidget->AddToViewport();
-	if (IsValid(StoreHUDWidget))
-	{
-		StoreHUDVisibilityBeforeDailySummary = StoreHUDWidget->GetVisibility();
-		bHasStoredHUDVisibilityForDailySummary = true;
-		StoreHUDWidget->SetVisibility(ESlateVisibility::Collapsed);
-	}
+	SetStoreHUDHidden(ActiveDailySummaryWidget, true);
 	SetGameplayUIInputLock(ActiveDailySummaryWidget, true);
 }
 
@@ -186,14 +234,10 @@ void ACSStorePlayerController::HandleDailySummaryConfirmed()
 	if (IsValid(ActiveDailySummaryWidget))
 	{
 		SetGameplayUIInputLock(ActiveDailySummaryWidget, false);
+		SetStoreHUDHidden(ActiveDailySummaryWidget, false);
 		ActiveDailySummaryWidget->RemoveFromParent();
 		ActiveDailySummaryWidget = nullptr;
 	}
-	if (IsValid(StoreHUDWidget) && bHasStoredHUDVisibilityForDailySummary)
-	{
-		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeDailySummary);
-	}
-	bHasStoredHUDVisibilityForDailySummary = false;
 	if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode())) Mode->CompleteDailySummary();
 }
 
@@ -306,6 +350,44 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 	if (!bShouldLock)
 	{
 		TryShowPendingClosingAnnouncement();
+	}
+}
+
+void ACSStorePlayerController::SetStoreHUDHidden(
+	UObject* Requester,
+	const bool bShouldHide)
+{
+	if (!IsValid(Requester))
+	{
+		return;
+	}
+
+	if (bShouldHide)
+	{
+		if (StoreHUDHideRequesters.IsEmpty())
+		{
+			if (IsValid(StoreHUDWidget))
+			{
+				StoreHUDVisibilityBeforeHide = StoreHUDWidget->GetVisibility();
+				bHasStoredHUDVisibilityBeforeHide = true;
+			}
+		}
+
+		StoreHUDHideRequesters.AddUnique(Requester);
+		if (IsValid(StoreHUDWidget))
+		{
+			StoreHUDWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		return;
+	}
+
+	StoreHUDHideRequesters.Remove(Requester);
+	if (StoreHUDHideRequesters.IsEmpty() &&
+		IsValid(StoreHUDWidget) &&
+		bHasStoredHUDVisibilityBeforeHide)
+	{
+		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeHide);
+		bHasStoredHUDVisibilityBeforeHide = false;
 	}
 }
 
