@@ -33,7 +33,8 @@ int32 UCSStoreEconomyDataAsset::GetRentGoldForBusinessDay(int32 BusinessDay) con
 
 bool UCSStoreEconomyDataAsset::IsConfigurationValid() const
 {
-	if (FirstRentBusinessDay < 1 ||
+	if (InitialFunds < 0 ||
+		FirstRentBusinessDay < 1 ||
 		RentPaymentIntervalDays < 1 ||
 		RentTiers.IsEmpty())
 	{
