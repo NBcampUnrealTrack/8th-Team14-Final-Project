@@ -60,4 +60,8 @@ struct CONVENIENCESTORE_API FCSOrderResult
 
 	UPROPERTY(BlueprintReadOnly, Category = "Order")
 	int32 TotalItemQuantity = 0;
+
+	// 정산에서 일반 발주와 퀵 발주 지출을 분리하기 위한 결과값입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Order")
+	bool bImmediateDelivery = false;
 };

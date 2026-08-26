@@ -190,6 +190,22 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
 	int32 DailyExpenseGold = 0;
 
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyProductOrderExpenseGold = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyFacilityOrderExpenseGold = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyQuickProductOrderExpenseGold = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyQuickFacilityOrderExpenseGold = 0;
+
+	// 도주에 성공한 빌런이 훔친 상품의 판매가 합계입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyShopliftLossGold = 0;
+
 	// 상품 분석에서 오늘 폐기된 상품별 수량을 표시하기 위한 집계입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TMap<FName, int32> DailyDisposedProductQuantities;
@@ -362,11 +378,19 @@ public:
 	// 배송 상자와 튜토리얼 쓰레기는 제외하고 낱개 상품의 폐기 손실만 기록합니다.
 	bool RecordDisposedProduct(const ACSProductPickupActor* Product);
 
+	// 결제는 이미 TrySpendFunds에서 총지출에 포함되었으므로 발주 종류별 금액만 분류합니다.
+	bool RecordOrderExpense(int32 Amount, bool bFacilityOrder, bool bImmediateDelivery);
+
+	bool RecordShopliftLoss(int32 LostGold);
+
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyTotalLossGold() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyTotalExpenseGold() const;
+
+	UFUNCTION(BlueprintPure, Category = "Store|Sales")
+	int32 GetDailySeparateLossGold() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyNetProfitGold() const;

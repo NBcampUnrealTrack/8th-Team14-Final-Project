@@ -725,6 +725,54 @@ bool ACSStoreGameState::RecordDisposedProduct(const ACSProductPickupActor* Produ
 	return true;
 }
 
+bool ACSStoreGameState::RecordOrderExpense(
+	int32 Amount,
+	bool bFacilityOrder,
+	bool bImmediateDelivery)
+{
+	if (Amount < 0)
+	{
+		return false;
+	}
+
+	int32* CategoryTotal = nullptr;
+	if (bFacilityOrder)
+	{
+		CategoryTotal = bImmediateDelivery
+			? &DailyQuickFacilityOrderExpenseGold
+			: &DailyFacilityOrderExpenseGold;
+	}
+	else
+	{
+		CategoryTotal = bImmediateDelivery
+			? &DailyQuickProductOrderExpenseGold
+			: &DailyProductOrderExpenseGold;
+	}
+
+	if (Amount > MAX_int32 - *CategoryTotal)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[StoreGameState] 발주 종류별 일일 지출이 int32 범위를 초과해 기록하지 않습니다."));
+		return false;
+	}
+
+	*CategoryTotal += Amount;
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
+
+bool ACSStoreGameState::RecordShopliftLoss(int32 LostGold)
+{
+	if (LostGold < 0 || LostGold > MAX_int32 - DailyShopliftLossGold)
+	{
+		return false;
+	}
+
+	DailyShopliftLossGold += LostGold;
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
+
 int32 ACSStoreGameState::GetDailyTotalLossGold() const
 {
 	// 기존 Blueprint 호환 이름은 유지하되 현재 기획의 실제 총지출을 반환합니다.
@@ -734,6 +782,13 @@ int32 ACSStoreGameState::GetDailyTotalLossGold() const
 int32 ACSStoreGameState::GetDailyTotalExpenseGold() const
 {
 	return DailyExpenseGold;
+}
+
+int32 ACSStoreGameState::GetDailySeparateLossGold() const
+{
+	return static_cast<int32>(FMath::Min<int64>(
+		static_cast<int64>(DailyWasteLossGold) + DailyShopliftLossGold,
+		MAX_int32));
 }
 
 int32 ACSStoreGameState::GetDailyNetProfitGold() const
@@ -779,6 +834,11 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailyWasteLossGold = 0;
 	DailyRentGold = 0;
 	DailyExpenseGold = 0;
+	DailyProductOrderExpenseGold = 0;
+	DailyFacilityOrderExpenseGold = 0;
+	DailyQuickProductOrderExpenseGold = 0;
+	DailyQuickFacilityOrderExpenseGold = 0;
+	DailyShopliftLossGold = 0;
 	DailyDisposedProductQuantities.Reset();
 	DailyDisposedProductNames.Reset();
 	DailyCheckoutTransactions.Reset();

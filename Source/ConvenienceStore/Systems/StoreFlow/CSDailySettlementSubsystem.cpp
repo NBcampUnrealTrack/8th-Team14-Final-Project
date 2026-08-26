@@ -3,6 +3,8 @@
 #include "EngineUtils.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 void UCSDailySettlementSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -38,6 +40,21 @@ void UCSDailySettlementSubsystem::Deinitialize()
 	}
 	BoundTrashCans.Reset();
 
+	if (IsValid(OrderSubsystem))
+	{
+		OrderSubsystem->OnOrderPlaced.RemoveDynamic(
+			this, &UCSDailySettlementSubsystem::HandleProductOrderPlaced);
+		OrderSubsystem->OnFacilityOrderPlaced.RemoveDynamic(
+			this, &UCSDailySettlementSubsystem::HandleFacilityOrderPlaced);
+	}
+	if (IsValid(CustomerRuntimeSubsystem))
+	{
+		CustomerRuntimeSubsystem->OnShopliftEscaped.RemoveDynamic(
+			this, &UCSDailySettlementSubsystem::HandleShopliftEscaped);
+	}
+	OrderSubsystem = nullptr;
+	CustomerRuntimeSubsystem = nullptr;
+
 	Super::Deinitialize();
 }
 
@@ -49,6 +66,23 @@ void UCSDailySettlementSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	for (TActorIterator<ACSTrashCanActor> It(&InWorld); It; ++It)
 	{
 		BindTrashCan(*It);
+	}
+
+	// 팀 시스템의 완료 이벤트만 구독해 발주와 절도 로직을 직접 수정하지 않습니다.
+	OrderSubsystem = InWorld.GetSubsystem<UCSOrderSubsystem>();
+	if (IsValid(OrderSubsystem))
+	{
+		OrderSubsystem->OnOrderPlaced.AddUniqueDynamic(
+			this, &UCSDailySettlementSubsystem::HandleProductOrderPlaced);
+		OrderSubsystem->OnFacilityOrderPlaced.AddUniqueDynamic(
+			this, &UCSDailySettlementSubsystem::HandleFacilityOrderPlaced);
+	}
+
+	CustomerRuntimeSubsystem = InWorld.GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (IsValid(CustomerRuntimeSubsystem))
+	{
+		CustomerRuntimeSubsystem->OnShopliftEscaped.AddUniqueDynamic(
+			this, &UCSDailySettlementSubsystem::HandleShopliftEscaped);
 	}
 }
 
@@ -84,5 +118,46 @@ void UCSDailySettlementSubsystem::HandleItemDisposed(
 	if (IsValid(Product) && IsValid(StoreGameState))
 	{
 		StoreGameState->RecordDisposedProduct(Product);
+	}
+}
+
+void UCSDailySettlementSubsystem::HandleProductOrderPlaced(
+	const FCSOrderResult& Result)
+{
+	ACSStoreGameState* StoreGameState =
+		GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	if (Result.bSuccess && IsValid(StoreGameState))
+	{
+		StoreGameState->RecordOrderExpense(
+			Result.TotalCost,
+			false,
+			Result.bImmediateDelivery);
+	}
+}
+
+void UCSDailySettlementSubsystem::HandleFacilityOrderPlaced(
+	const FCSFacilityOrderResult& Result)
+{
+	ACSStoreGameState* StoreGameState =
+		GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	if (Result.bSuccess && IsValid(StoreGameState))
+	{
+		StoreGameState->RecordOrderExpense(
+			Result.TotalCost,
+			true,
+			Result.bImmediateDelivery);
+	}
+}
+
+void UCSDailySettlementSubsystem::HandleShopliftEscaped(
+	ACSCustomerCharacter* Customer,
+	int32 LostGold)
+{
+	(void)Customer;
+	ACSStoreGameState* StoreGameState =
+		GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	if (IsValid(StoreGameState))
+	{
+		StoreGameState->RecordShopliftLoss(LostGold);
 	}
 }
