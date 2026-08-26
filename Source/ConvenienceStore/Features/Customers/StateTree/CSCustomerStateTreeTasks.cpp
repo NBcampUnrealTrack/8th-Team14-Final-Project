@@ -174,8 +174,12 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			// 진열대 위 상품들을 판단용 후보 목록으로 변환
 			const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
 
-			// 이 진열대에서 살펴본 상품 개수만큼 감소 (0 밑으로는 안 내려감)
-			State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - Candidates.Num(), 0);
+			// 실제로 비교 대상에 오르는 개수는 상위 TopCandidateCount개로 잘리므로(ScoreAndSelectTopCandidates)
+			// 봤다고 칠 개수도 진열대 상품 총개수가 아니라 그 상한을 넘지 않도록 함
+			const int32 EvaluatedCount = FMath::Min(Candidates.Num(), Decision->GetEffectiveTopCandidateCount());
+
+			// 이 진열대에서 실제로 비교한 상품 개수만큼 감소 (0 밑으로는 안 내려감)
+			State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - EvaluatedCount, 0);
 
 			// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
 			FCSPurchaseCandidate Selected;

@@ -63,6 +63,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
 	bool RollChance(float Chance) const;
 
+	// Archetype이 있으면 그 값을, 없으면 폴백값을 쓰는 헬퍼
+	// 원래 private이었으나 FCSTask_BrowseShelf::Tick에서 이번 방문에 실제로 몇 개를 비교 대상에 올렸는지
+	// (= 평가 예산 차감량)를 계산하려면 컴포넌트 밖에서 이 값을 읽어야 해서 public으로 옮김
+	UFUNCTION(BlueprintCallable, Category = "Purchase")
+	int32 GetEffectiveTopCandidateCount() const;
+
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
@@ -129,7 +135,6 @@ private:
 	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼 3종
 	// Archetype이 연결되어 있으면 그 안의 값을 쓰고
 	// 없으면 기본값(Fallback)을 대신 쓴다는 판단 해주는 함수들
-	int32 GetEffectiveTopCandidateCount() const;
 	float GetEffectiveSelectionTemperature() const;
 	float GetEffectiveMinPurchaseUtility() const;
 
