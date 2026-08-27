@@ -83,11 +83,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackMinPurchaseUtility = 0.35f;
 
+	// 10~15% 데드존 확대안의 중간값
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
-	float FallbackAcceptanceLatitude = 0.04f;
+	float FallbackAcceptanceLatitude = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackPriceElasticity = 2.62f;
+
+	// 가격 하드컷 임계값 폴백값 — Archetype 없을 때만 사용
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	float FallbackPriceRejectionThreshold = 0.1f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	int32 FallbackBudgetMedianGold = 380;
@@ -112,17 +117,22 @@ protected:
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
 
-	// 가격 점수가 전체 점수에서 차지하는 가중치
+	// 가격 점수가 전체 점수에서 차지하는 가중치 (하드컷 도입으로 극단 바가지는
+	// 별도 차단되므로 중간 가격대에서 카테고리 신호가 더 잘 드러나도록 낮춤)
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
-	float W_Price = 3.0f;
+	float W_Price = 2.0f;
 
 	// 카테고리 점수가 전체 점수에서 차지하는 가중치
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
-	float W_Category = 1.0f;
+	float W_Category = 1.5f;
 
 	// 예산 점수가 전체 점수에서 차지하는 가중치
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_Budget = 1.0f;
+
+	// 데드존 바깥 기울기 배수
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float PriceSteepnessMultiplier = 1.4f;
 
 
 	// 후보 하나에 점수를 매기는 함수
@@ -150,6 +160,7 @@ private:
 	float GetEffectiveMinPurchaseUtility() const;
 	float GetEffectiveCountDecayLambda() const;
 	float GetEffectiveRepeatCategoryPenalty() const;
+	float GetEffectivePriceRejectionThreshold() const;
 
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const;

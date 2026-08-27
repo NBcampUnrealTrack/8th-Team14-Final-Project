@@ -44,6 +44,12 @@ float UCSPurchaseDecisionComponent::GetEffectiveRepeatCategoryPenalty() const
 	return Archetype ? Archetype->RepeatCategoryPenalty : FallbackRepeatCategoryPenalty;
 }
 
+// 가격 하드컷 임계값
+float UCSPurchaseDecisionComponent::GetEffectivePriceRejectionThreshold() const
+{
+	return Archetype ? Archetype->PriceRejectionThreshold : FallbackPriceRejectionThreshold;
+}
+
 
 float UCSPurchaseDecisionComponent::ComputePriceScore(float ActualPrice, float ReferencePrice, float DeadZoneRatio, float Steepness) const
 {
@@ -110,7 +116,8 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 데드존/가파름 값을 Archetype에서 가져옴
 	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
 	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
-	const float Steepness = 3.0f * Elasticity;
+	// 1-3 지시서: 데드존 바깥 기울기 강화를 위한 배수 곱 (기존 3.0 * Elasticity)
+	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
 
 	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
 	const UCSStorePricingSubsystem* PricingSubsystem =
@@ -122,6 +129,12 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
 			: ProductRow->RecommendedSalePrice);
 	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
+
+	// 가격 하드컷
+	if (PriceScore < GetEffectivePriceRejectionThreshold())
+	{
+		return -1.0f;
+	}
 
 	const float CategoryScore = ComputeCategoryScore(*ProductRow);
 
