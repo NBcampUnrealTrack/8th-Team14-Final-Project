@@ -221,10 +221,22 @@ TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidate
 	// 기존 GetProductsOnShelf()를 그대로 재사용해서 진열된 상품 액터들을 가져옴
 	TArray<AActor*> Products = GetProductsOnShelf(ShelfActor);
 
+	// 같은 SKU(ProductId)가 물리적으로 여러 개 진열돼 있어도 후보는 하나만 생성
+	// (안 그러면 진열 개수가 많은 상품이 TopCandidateCount 컷을 통째로 독점함)
+	// 반복 구매 시 점수를 깎는 건 이미 있는 RepeatCategoryPenalty가 담당하므로 여기선 중복 제거만 함
+	TSet<FName> SeenProductIds;
+
 	for (AActor* ProductActor : Products)
 	{
 		ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
 		if (Product == nullptr) continue;  // 상품이 아닌 액터 방어
+
+		const FName ProductId = Product->GetProductId();
+		if (SeenProductIds.Contains(ProductId))
+		{
+			continue;  // 같은 SKU는 먼저 발견된 액터 하나만 대표로 남김
+		}
+		SeenProductIds.Add(ProductId);
 
 		// TakeProduct()가 쓰는 것과 동일한 GetProductRow()로 상품 마스터 데이터 참조를 가져옴
 		FCSPurchaseCandidate Candidate;
