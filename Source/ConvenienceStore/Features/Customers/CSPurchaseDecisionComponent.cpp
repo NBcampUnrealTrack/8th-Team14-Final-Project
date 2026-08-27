@@ -142,7 +142,7 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 
 		// 가격이 정수 단위(1g)로만 조정되는데 예전엔 Severity = 1.0f - PriceScore라
 		// 하드컷 문턱(PriceScore<임계값)을 넘는 순간 Severity가 항상 0.9대로 튀어
-		// 손님이 비싸다는 느낌을 뛰어넘고 바로 터무니없는 가격이라고 여김 (1g 차이로 절벽처럼 느껴짐)\
+		// 손님이 비싸다는 느낌을 뛰어넘고 바로 터무니없는 가격이라고 여김 (1g 차이로 절벽처럼 느껴짐)
 		// 이제 Severity를 문턱 구간 [0, PriceRejectionThreshold] 안에서 0(문턱 바로 아래, 아슬아슬)~1(가격 0, 터무니없음)로
 		// 다시 정규화해서 문턱을 살짝 넘겼을 땐 비싸다고 여기다가 더 심하게 넘겨야 터무니 없는 가격이라고 여기게 함
 		const float SafeThreshold = FMath::Max(PriceRejectionThreshold, KINDA_SMALL_NUMBER);
