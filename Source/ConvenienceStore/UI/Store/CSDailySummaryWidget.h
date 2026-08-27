@@ -7,6 +7,7 @@
 class UButton;
 class UImage;
 class UTextBlock;
+class UWidget;
 class ACSStoreGameState;
 class UCSProductAnalysisWidget;
 
@@ -45,6 +46,37 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> ProductAnalysisButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCSProductAnalysisWidget> ProductAnalysisPanel;
 
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailyTotalExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailySeparateLossText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> TotalExpenseHoverButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> SeparateLossHoverButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseBreakdownPopup;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SeparateLossBreakdownPopup;
+
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ProductOrderExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ProductOrderExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> FacilityOrderExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> FacilityOrderExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> QuickProductOrderExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> QuickProductOrderExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> QuickFacilityOrderExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> QuickFacilityOrderExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> RentExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RentExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseDivider;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseTotalRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ExpenseTotalText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> NoExpenseText;
+
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> WasteLossRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> WasteLossAmountText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ShopliftLossRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ShopliftLossAmountText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SeparateLossDivider;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SeparateLossTotalRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SeparateLossTotalText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> NoSeparateLossText;
+
 	// 0을 포함한 상승 상태의 색상은 WBP Class Defaults에서 시안에 맞게 조절합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Style")
 	FLinearColor NonNegativeColor = FLinearColor(0.35f, 0.85f, 1.0f, 1.0f);
@@ -57,6 +89,10 @@ protected:
 
 	UFUNCTION() void HandleConfirmClicked();
 	UFUNCTION() void HandleProductAnalysisClicked();
+	UFUNCTION() void HandleTotalExpenseHovered();
+	UFUNCTION() void HandleTotalExpenseUnhovered();
+	UFUNCTION() void HandleSeparateLossHovered();
+	UFUNCTION() void HandleSeparateLossUnhovered();
 	UFUNCTION() void HandleDailySummaryDataChanged();
 	UFUNCTION() void HandleReputationChanged(int32 NewReputationScore);
 	void ApplyDeltaPresentation(

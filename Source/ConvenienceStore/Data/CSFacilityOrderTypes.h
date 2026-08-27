@@ -57,4 +57,8 @@ struct CONVENIENCESTORE_API FCSFacilityOrderResult
 
 	UPROPERTY(BlueprintReadOnly, Category = "Order|Facility")
 	int32 TotalFacilityCount = 0;
+
+	// 정산에서 일반 발주와 퀵 발주 지출을 분리하기 위한 결과값입니다.
+	UPROPERTY(BlueprintReadOnly, Category = "Order|Facility")
+	bool bImmediateDelivery = false;
 };

@@ -31,9 +31,17 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	// 임시 타이틀의 시작 버튼에서 호출합니다. 정식 타이틀 도입 시 이 구역 전체를 제거할 수 있습니다.
+	UFUNCTION(BlueprintCallable, Category = "UI|Temporary Title")
+	void StartGameFromTemporaryTitle();
+
 	// 발주·계산처럼 게임 조작을 막아야 하는 UI가 열리고 닫힐 때 입력 잠금을 갱신합니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Input")
 	void SetGameplayUIInputLock(UUserWidget* RequestingWidget, bool bShouldLock);
+
+	// 계산·정산처럼 상시 HUD를 가려야 하는 UI의 요청을 등록하거나 해제합니다.
+	// 요청이 모두 해제된 뒤에만 HUD를 이전 표시 상태로 복원합니다.
+	void SetStoreHUDHidden(UObject* Requester, bool bShouldHide);
 
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
@@ -94,6 +102,22 @@ protected:
 	bool HasGameplayUIInputLock() const;
 	UUserWidget* GetFocusedGameplayUIWidget() const;
 
+	// === Temporary Title Screen: 정식 타이틀 도입 시 이 구역과 BeginPlay 호출 한 줄 제거 ===
+	void ShowTemporaryTitleScreen();
+	void CloseTemporaryTitleScreen();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Temporary Title")
+	bool bUseTemporaryTitleScreen = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Temporary Title")
+	TSoftClassPtr<UUserWidget> TemporaryTitleWidgetClass =
+		TSoftClassPtr<UUserWidget>(FSoftObjectPath(
+			TEXT("/Game/ConvenienceStore/UI/Title/WBP_Title.WBP_Title_C")));
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> ActiveTemporaryTitleWidget;
+	// === End Temporary Title Screen ===
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
@@ -117,10 +141,14 @@ protected:
 	TArray<FText> CachedQuickbarToolNames;
 	TArray<TObjectPtr<UTexture2D>> CachedQuickbarToolIcons;
 
-	// 정산 모달을 닫을 때 기존 HUD 표시 상태를 정확히 복구합니다.
-	ESlateVisibility StoreHUDVisibilityBeforeDailySummary =
+	// 첫 숨김 요청 전 HUD 표시 상태를 마지막 요청 해제 시 정확히 복구합니다.
+	ESlateVisibility StoreHUDVisibilityBeforeHide =
 		ESlateVisibility::HitTestInvisible;
-	bool bHasStoredHUDVisibilityForDailySummary = false;
+	bool bHasStoredHUDVisibilityBeforeHide = false;
+
+	// 계산·정산이 전환 과정에서 겹쳐도 HUD가 먼저 나타나지 않도록 요청자를 누적합니다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UObject>> StoreHUDHideRequesters;
 
 	// 현재 게임 조작을 막아야 하는 발주·계산 UI 목록입니다.
 	UPROPERTY(Transient)

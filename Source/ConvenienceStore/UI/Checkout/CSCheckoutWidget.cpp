@@ -245,8 +245,8 @@ void UCSCheckoutWidget::UpdateCheckoutDisplay()
 	if (IsValid(CheckoutStatusText))
 	{
 		CheckoutStatusText->SetText(CanCompleteCheckout()
-			? NSLOCTEXT("Checkout", "ReadyToPay", "결제를 완료해 주세요.")
-			: NSLOCTEXT("Checkout", "Scanning", "상품을 스캔해 주세요."));
+			? NSLOCTEXT("Checkout", "ReadyToPay", "결제를 완료해 주세요")
+			: NSLOCTEXT("Checkout", "Scanning", "상품을 확인해 주세요"));
 	}
 
 	if (IsValid(ScanNextItemButton))
