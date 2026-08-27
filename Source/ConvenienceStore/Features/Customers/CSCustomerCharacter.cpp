@@ -56,7 +56,6 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	DropOriginRight->SetRelativeLocation(FVector(0.0f, 35.0f, -83.0f));
 	DropOriginRight->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
 	DropOriginRight->SetHiddenInGame(true);
-
 }
 
 void ACSCustomerCharacter::BeginPlay()
@@ -142,14 +141,27 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 {
 	// 공격 판정을 받았을 때 Subsystem에서 빌런인지 확인
 	UWorld* World = GetWorld();
-    if (IsValid(World))
+    UCSCustomerRuntimeSubsystem* Subsystem = IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+    if (Subsystem != nullptr)
     {
-        UCSCustomerRuntimeSubsystem* Subsystem = World->GetSubsystem<UCSCustomerRuntimeSubsystem>();
-        if (Subsystem != nullptr)
-        {
-            Subsystem->HandleMagicHitOnCustomer(this, ImpactDirection, KnockbackStrength);
-        }
+        Subsystem->HandleMagicHitOnCustomer(this, ImpactDirection, KnockbackStrength);
     }
+
+	// ==== 트리거 지점: 지금은 마법봉 히트, 나중에 다른 트리거로 바뀔 수 있음 ====
+	// Subsystem->ShowInnerThought()/Decision->BuildInnerThoughtText는 트리거가 뭐든 그대로 재사용됨
+	// 트리거를 옮길 때는 이 블록만 옮기면 되고, 저 두 함수는 안 건드림
+	// 위젯 자체(화면 하단 대화창)는 손님별로 안 만들고 Subsystem이 인스턴스 하나를 캐싱해서 재사용함
+	if (Subsystem != nullptr)
+	{
+		UCSCustomerStateComponent* State = GetCustomerState();
+		if (State != nullptr && IsValid(PurchaseDecision) &&
+			State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+			(World->GetTimeSeconds() - State->LastRejectionTime) <= PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
+		{
+			Subsystem->ShowInnerThought(InnerThoughtWidgetClass, PurchaseDecision->BuildInnerThoughtText(State->LastRejectionInfo), 4.0f);
+		}
+	}
+	// ==== 트리거 지점 끝 ====
 
 	// 투사체가 배 쪽에서 들어오면 등 방향으로 밀리도록 공격 진행 방향을 사용합니다.
 	FVector LaunchVelocity = ImpactDirection.GetSafeNormal() * FMath::Max(0.0f, KnockbackStrength);

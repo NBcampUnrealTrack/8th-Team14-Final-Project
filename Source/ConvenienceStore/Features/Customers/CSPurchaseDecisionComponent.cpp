@@ -104,19 +104,20 @@ float UCSPurchaseDecisionComponent::ComputeCategoryScore(const FCSProductDataRow
 
 // 후보 상품 하나에 대해 가격 점수와 카테고리 점수를 각각 구한 뒤
 // 가중 평균으로 합쳐 최종 0~1 점수를 만드는 함수
-float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& Candidate) const
+// 구매 불가(-1.0f) 반환 지점마다 OutRejectionInfo에 사유를 채운다
+float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& Candidate, FCSPurchaseRejectionInfo& OutRejectionInfo) const
 {
 	const FCSProductDataRow* ProductRow = GetProductRow(Candidate);
 	if (!ProductRow)
 	{
-		// 상품 데이터를 못 찾으면 이 후보는 아예 고려하지 않음
+		// 상품 데이터를 못 찾으면 이 후보는 아예 고려하지 않음 (데이터 무결성 문제라 거절 연출 대상이 아님)
 		return -1.0f;
 	}
 
 	// 데드존/가파름 값을 Archetype에서 가져옴
 	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
 	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
-	// 1-3 지시서: 데드존 바깥 기울기 강화를 위한 배수 곱 (기존 3.0 * Elasticity)
+	// 데드존 바깥 기울기 강화를 위한 배수 곱 (기존 3.0 * Elasticity)
 	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
 
 	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
@@ -131,8 +132,21 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
 
 	// 가격 하드컷
-	if (PriceScore < GetEffectivePriceRejectionThreshold())
+	const float PriceRejectionThreshold = GetEffectivePriceRejectionThreshold();
+	if (PriceScore < PriceRejectionThreshold)
 	{
+		OutRejectionInfo.Reason = ECSPurchaseRejectReason::PriceRejected;
+		OutRejectionInfo.ProductId = Candidate.ProductRowHandle.RowName;
+		OutRejectionInfo.ActualPrice = ActualPrice;
+		OutRejectionInfo.ReferencePrice = ReferencePrice;
+
+		// 가격이 정수 단위(1g)로만 조정되는데 예전엔 Severity = 1.0f - PriceScore라
+		// 하드컷 문턱(PriceScore<임계값)을 넘는 순간 Severity가 항상 0.9대로 튀어
+		// 손님이 비싸다는 느낌을 뛰어넘고 바로 터무니없는 가격이라고 여김 (1g 차이로 절벽처럼 느껴짐)\
+		// 이제 Severity를 문턱 구간 [0, PriceRejectionThreshold] 안에서 0(문턱 바로 아래, 아슬아슬)~1(가격 0, 터무니없음)로
+		// 다시 정규화해서 문턱을 살짝 넘겼을 땐 비싸다고 여기다가 더 심하게 넘겨야 터무니 없는 가격이라고 여기게 함
+		const float SafeThreshold = FMath::Max(PriceRejectionThreshold, KINDA_SMALL_NUMBER);
+		OutRejectionInfo.Severity = FMath::Clamp((PriceRejectionThreshold - PriceScore) / SafeThreshold, 0.0f, 1.0f);
 		return -1.0f;
 	}
 
@@ -142,6 +156,12 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 이 상품은 애초에 구매 후보가 될 수 없으므로 구매 불가 신호 전파
 	if (CategoryScore < 0.f)
 	{
+		OutRejectionInfo.Reason = ECSPurchaseRejectReason::CategoryBlocked;
+		OutRejectionInfo.ProductId = Candidate.ProductRowHandle.RowName;
+		OutRejectionInfo.BlockedCategory = ProductRow->Category;
+		// CategoryBlocked는 대표 사유 비교에 안 쓰이는 고정값 - 완전히 관심 없는 것과
+		// 아슬아슬하게 놓친 것을 같은 척도로 비교하지 않기 위함
+		OutRejectionInfo.Severity = 1.0f;
 		return -1.0f;
 	}
 
@@ -180,6 +200,12 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 구매 불가 신호 전파
 		if (BudgetScore < 0.f)
 		{
+			OutRejectionInfo.Reason = ECSPurchaseRejectReason::HardWalletExceeded;
+			OutRejectionInfo.ProductId = Candidate.ProductRowHandle.RowName;
+			OutRejectionInfo.ActualPrice = ActualPrice;
+			OutRejectionInfo.ReferencePrice = ReferencePrice;
+			const float SafeRemainingHardWallet = FMath::Max(static_cast<float>(State->GetRemainingHardWallet()), 1.0f);
+			OutRejectionInfo.Severity = FMath::Clamp((ActualPrice - State->GetRemainingHardWallet()) / SafeRemainingHardWallet, 0.0f, 1.0f);
 			return -1.0f;
 		}
 	}
@@ -197,18 +223,43 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 // 전달받은 후보 전체에 점수를 매긴 뒤 점수가 높은 순으로 정렬하고
 // 상위 몇개(Archetype의 TopCandidateCount)만 남겨서 반환
 // 여기서 잘려나간 후보들은 이후 softmax 선택 대상에서 아예 제외됨
-TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const
+// 살아남은 후보가 하나도 없으면 OutBestRejectionInfo에 대표 거절 사유를 채운다
+TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo) const
 {
 	// 후보 하나하나에 점수를 매기되, 구매 불가 신호(-1.0)를 받은 후보는
 	// 애초에 배열에 넣지 않음 → softmax 대상에서 아예 제외되어 선택 확률이 정확히 0%가 됨
 	TArray<FCSPurchaseCandidate> Viable;
 	Viable.Reserve(Candidates.Num());
 
+	// 대표 거절 사유 집계용. 카테고리 차단이 하나라도 있으면 그게 최우선(bFoundBlocked로 확정 후 더 안 봄)
+	// 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) PriceRejected/HardWalletExceeded를 대표로 삼음
+	bool bFoundBlocked = false;
+	bool bFoundAnyRejection = false;
+
 	for (FCSPurchaseCandidate& Candidate : Candidates)
 	{
-		const float Score = ScoreCandidate(Candidate);
+		FCSPurchaseRejectionInfo CandidateRejection;
+		const float Score = ScoreCandidate(Candidate, CandidateRejection);
 		if (Score < 0.f)
 		{
+			// 이미 카테고리 차단 사유로 확정됐거나, 상품 데이터를 못 찾아 사유가 안 채워진(Reason=None)
+			// 데이터 무결성 문제 후보는 대표 사유 집계에서 제외 - Severity 기본값(0.0f)이
+			// 항상 최솟값이라 아무 사유도 없는 후보가 대표로 뽑히는 걸 막기 위함
+			if (bFoundBlocked || CandidateRejection.Reason == ECSPurchaseRejectReason::None)
+			{
+				continue;
+			}
+
+			if (CandidateRejection.Reason == ECSPurchaseRejectReason::CategoryBlocked)
+			{
+				OutBestRejectionInfo = CandidateRejection;
+				bFoundBlocked = true;
+			}
+			else if (!bFoundAnyRejection || CandidateRejection.Severity < OutBestRejectionInfo.Severity)
+			{
+				OutBestRejectionInfo = CandidateRejection;
+			}
+			bFoundAnyRejection = true;
 			continue;
 		}
 		Candidate.Score = Score;
@@ -272,23 +323,91 @@ int32 UCSPurchaseDecisionComponent::SoftmaxSelectIndex(const TArray<FCSPurchaseC
 }
 
 
+// 1등 후보는 있지만 총점이 MinPurchaseUtility에 못 미쳐 거절되는 케이스 전용
+// ScoreCandidate는 이 경우 정상 점수(0~1)를 반환해 OutRejectionInfo를 안 채우므로 여기서 별도로 채운다
+//
+// 총점 미달의 원인이 항상 가격은 아님
+// 진짜 원인 판정 기준: 반복구매 감쇠를 걷어내도(RepeatCount=0 가정) 여전히 기준선을 못 넘었을까?
+// 못 넘었으면(=애초부터 안 살 상품이었음) 진짜 가격/선호 문제라 PriceRejected로 표시
+// 넘었으면(=반복구매가 이번에만 결정타) 플레이어에게 알릴 이유가 없는 조용한 미구매라고 판단해 Reason=None으로 남겨둔다(연출 안 함)
+FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float Score) const
+{
+	FCSPurchaseRejectionInfo Info;
+
+	const FCSProductDataRow* ProductRow = GetProductRow(Candidate);
+	if (ProductRow == nullptr)
+	{
+		return Info; // 데이터 무결성 문제 - 표시 대상 아님(Reason=None 기본값 그대로)
+	}
+
+	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
+	const UCSStorePricingSubsystem* PricingSubsystem =
+		GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
+			: nullptr;
+	const float ActualPrice = static_cast<float>(
+		IsValid(PricingSubsystem)
+			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
+			: ProductRow->RecommendedSalePrice);
+
+	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
+	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
+	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
+	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
+
+	// 반복구매 감쇠를 걷어낸(RepeatCount=0 가정) 원래 카테고리 점수로 가상 총점을 다시 계산
+	// CategoryScore/BudgetScore가 여기서 -1일 수 없음 - 그랬다면 ScoreCandidate가 그 단계에서
+	// 이미 -1.0f를 반환해 이 함수(정상 0~1 점수 케이스 전용)까지 오지도 못했을 것이기 때문
+	const float RawCategoryScore = ComputeCategoryScore(*ProductRow);
+
+	float BudgetScore = 1.0f;
+	if (UCSCustomerStateComponent* State = GetCustomerState())
+	{
+		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
+		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
+	}
+
+	const float WeightSum = W_Price + W_Category + W_Budget;
+	const float ScoreWithoutRepeatPenalty = (WeightSum > 0.f)
+		? FMath::Clamp((W_Price * PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum, 0.f, 1.f)
+		: 0.f;
+
+	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
+	{
+		// 반복구매 감쇠를 빼고 봐도 기준선을 못 넘음 - 애초부터 가격/선호가 문제였던 진짜 거절
+		Info.Reason = ECSPurchaseRejectReason::PriceRejected;
+		Info.ProductId = Candidate.ProductRowHandle.RowName;
+		Info.ActualPrice = ActualPrice;
+		Info.ReferencePrice = ReferencePrice;
+
+		const float SafeMinPurchaseUtility = FMath::Max(GetEffectiveMinPurchaseUtility(), KINDA_SMALL_NUMBER);
+		Info.Severity = FMath::Clamp((GetEffectiveMinPurchaseUtility() - Score) / SafeMinPurchaseUtility, 0.0f, 1.0f);
+	}
+	// else: 반복구매 감쇠가 이번 거절의 진짜 원인 - Reason=None(기본값)으로 두고 조용히 미구매
+
+	return Info;
+}
+
 // 후보가 없거나(빈 목록) 1등 점수조차 최소 구매 임계치에 못 미치면
 // 구매하지 않고 false를 반환(=손님이 살 게 없어서 빈손으로 지나감)
 // 그 외에는 상위 후보들 중 하나를 확률적으로 골라 OutSelected에 채우고 true를 반환
-bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected) const
+// false를 반환하는 모든 경로에서 OutRejectionInfo에 대표 거절 사유를 채운다
+bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected, FCSPurchaseRejectionInfo& OutRejectionInfo) const
 {
 
-	// 후보가 아예 없으면 미구매
+	// 후보가 아예 없으면 미구매 - 진열대 자체가 빈 상태
 	if (Candidates.IsEmpty())
 	{
+		OutRejectionInfo.Reason = ECSPurchaseRejectReason::ShelfEmpty;
 		return false;
 	}
 
-	// 점수 매기고 상위 후보만 추림
-	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates);
+	// 점수 매기고 상위 후보만 추림 (구매 불가 후보들의 대표 거절 사유는 OutRejectionInfo에 누적됨)
+	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates, OutRejectionInfo);
 
 	// 진열대에 구매 불가 상품(차단 카테고리/예산 초과)만 있으면 Viable이 비어있을 수 있음
 	// 이 방어가 없으면 다음 줄에서 TopCandidates[0] 접근 시 배열 범위 초과로 크래시함
+	// OutRejectionInfo는 위 ScoreAndSelectTopCandidates 호출에서 이미 채워져 있음
 	if (TopCandidates.IsEmpty())
 	{
 		return false;
@@ -297,6 +416,7 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	// 1등 점수가 최소 구매 임계치보다 낮으면 손님이 살 게 없다고 판단하고 지나감
 	if (TopCandidates[0].Score < GetEffectiveMinPurchaseUtility())
 	{
+		OutRejectionInfo = BuildScoreShortfallRejectionInfo(TopCandidates[0], TopCandidates[0].Score);
 		return false;
 	}
 
@@ -431,4 +551,66 @@ void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
 bool UCSPurchaseDecisionComponent::RollChance(float Chance) const
 {
 	return RandomStream.FRand() < FMath::Clamp(Chance, 0.0f, 1.0f);
+}
+
+// =====================================================================
+// 거절 연출 (인지 채널)
+// =====================================================================
+
+// Info.Reason을 DT 행 이름(FName)으로 수동 매핑해 RejectionDisplayDataTable에서 행을 찾고
+// Tiers를 Severity 내림차순으로 순회해 Severity >= Threshold인 첫 구간을 반환한다
+FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(const FCSPurchaseRejectionInfo& Info) const
+{
+	if (!IsValid(RejectionDisplayDataTable))
+	{
+		return FCSPurchaseRejectionTier();
+	}
+
+	FName RowName;
+	switch (Info.Reason)
+	{
+	case ECSPurchaseRejectReason::PriceRejected:
+		RowName = TEXT("PriceRejected");
+		break;
+	case ECSPurchaseRejectReason::CategoryBlocked:
+		RowName = TEXT("CategoryBlocked");
+		break;
+	case ECSPurchaseRejectReason::HardWalletExceeded:
+		RowName = TEXT("HardWalletExceeded");
+		break;
+	case ECSPurchaseRejectReason::ShelfEmpty:
+		RowName = TEXT("ShelfEmpty");
+		break;
+	default:
+		return FCSPurchaseRejectionTier();
+	}
+
+	const FCSPurchaseRejectionDisplayRow* Row =
+		RejectionDisplayDataTable->FindRow<FCSPurchaseRejectionDisplayRow>(RowName, TEXT("UCSPurchaseDecisionComponent::GetRejectionDisplayTier"));
+	if (Row == nullptr || Row->Tiers.IsEmpty())
+	{
+		return FCSPurchaseRejectionTier();
+	}
+
+	for (const FCSPurchaseRejectionTier& Tier : Row->Tiers)
+	{
+		if (Info.Severity >= Tier.SeverityThreshold)
+		{
+			return Tier;
+		}
+	}
+
+	// 어느 구간에도 안 걸렸으면(Severity가 모든 Threshold보다 낮으면) 마지막 구간을 그대로 씀
+	return Row->Tiers.Last();
+}
+
+// 위 Tier의 InnerThoughtTemplate에 {ActualPrice}/{ReferencePrice} 자리표시자를 실제 값으로 채운다
+FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const
+{
+	const FCSPurchaseRejectionTier Tier = GetRejectionDisplayTier(Info);
+
+	FFormatNamedArguments Args;
+	Args.Add(TEXT("ActualPrice"), FText::AsNumber(FMath::RoundToInt(Info.ActualPrice)));
+	Args.Add(TEXT("ReferencePrice"), FText::AsNumber(FMath::RoundToInt(Info.ReferencePrice)));
+	return FText::Format(Tier.InnerThoughtTemplate, Args);
 }

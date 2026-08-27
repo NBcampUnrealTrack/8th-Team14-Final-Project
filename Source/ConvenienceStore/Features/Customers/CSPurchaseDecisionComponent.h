@@ -22,8 +22,9 @@ public:
 
 	// 후보 목록 중 하나를 확률적으로 골라 OutSelected에 채움
 	// 반환값이 true면 구매 결정 false면 살 만한 게 없어서 미구매
+	// false일 때 OutRejectionInfo에 대표 거절 사유가 채워짐 - 거절 연출이 이 값을 읽음
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
-	bool DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected) const;
+	bool DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected, FCSPurchaseRejectionInfo& OutRejectionInfo) const;
 
 	// 이 손님이 어떤 종족 성향을 갖는지
 	// 스폰 시점에 채워지는 것을 전제로
@@ -71,6 +72,28 @@ public:
 	// (= 평가 예산 차감량)를 계산하려면 컴포넌트 밖에서 이 값을 읽어야 해서 public으로 옮김
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	int32 GetEffectiveTopCandidateCount() const;
+
+	// =====================================================================
+	// 거절 연출 (인지 채널)
+	// =====================================================================
+
+	// 거절 즉시표시(디버그 텍스트) 대기시간. 마법봉 시간 게이트도 이 값을 그대로 참조하므로
+	// 두 곳에 따로 상수를 두지 말고 항상 이 getter를 거칠 것(Reason 하나로 두 곳이 항상 같은 값을 보게 함)
+	// ShelfEmpty만 별도로 짧은 값을 씀 - 재고가 없어서 지나가는 것뿐인데 5초씩 붙잡아두면 너무 길다
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Rejection")
+	float GetInstantDisplayDuration(ECSPurchaseRejectReason Reason) const
+	{
+		return Reason == ECSPurchaseRejectReason::ShelfEmpty ? EmptyShelfDisplayDuration : InstantDisplayDuration;
+	}
+
+	// Info.Reason에 대응하는 DT 행을 찾아 Severity에 맞는 Tier를 반환
+	// 행이 없거나 Tiers가 비어있으면 빈 Tier(전부 기본값)를 반환
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Rejection")
+	FCSPurchaseRejectionTier GetRejectionDisplayTier(const FCSPurchaseRejectionInfo& Info) const;
+
+	// 위 Tier의 InnerThoughtTemplate에 실제 가격을 채워 완성된 문장을 반환
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Rejection")
+	FText BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const;
 
 protected:
 	// 폴백 전용 (Archetype이 있으면 이 값들은 무시)
@@ -134,10 +157,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float PriceSteepnessMultiplier = 1.4f;
 
+	// 거절 즉시표시(디버그 텍스트)를 몇 초간 유지할지. 마법봉 시간 게이트도 같은 값을 참조함
+	// 손님마다 달라질 이유가 없는 값이라 Archetype/Fallback 이중화 대상이 아님
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
+	float InstantDisplayDuration = 5.0f;
+
+	// ShelfEmpty 전용 즉시표시 대기시간. 재고가 없어서 그냥 지나가는 것뿐인데
+	// 다른 거절 사유와 똑같이 5초씩 붙잡아두면 너무 길다
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
+	float EmptyShelfDisplayDuration = 1.5f;
+
+	// 거절 사유별 문구/강도 구간을 담은 DataTable. 행 구조는 FCSPurchaseRejectionDisplayRow
+	// 재컴파일 없이 디자이너가 문장을 조정할 수 있도록 값 전부를 여기로 뺌
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
+	TObjectPtr<UDataTable> RejectionDisplayDataTable;
 
 	// 후보 하나에 점수를 매기는 함수
 	// 반환값 규약: 정상 후보는 0.0~1.0, 구매 불가(하드 차단/지갑 초과/데이터 없음)는 음수(-1.0)를 반환
-	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate) const;
+	// 구매 불가 시 OutRejectionInfo에 사유를 채운다 성공 시에는 건드리지 않는다(Reason=None으로 남음)
+	virtual float ScoreCandidate(const FCSPurchaseCandidate& Candidate, FCSPurchaseRejectionInfo& OutRejectionInfo) const;
 
 	// 점수 계산 함수 (이 상품 가격이 적당한가)
 	float ComputePriceScore(float ActualPrice, float ReferencePrice, float DeadZoneRatio, float Steepness) const;
@@ -163,10 +201,19 @@ private:
 	float GetEffectivePriceRejectionThreshold() const;
 
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
-	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates) const;
+	// 살아남은 후보가 하나도 없으면(전부 -1.0) OutBestRejectionInfo에 대표 거절 사유를 채움
+	// CategoryBlocked가 하나라도 있으면 그게 대표, 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) 것
+	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo) const;
 
 	// 상위 후보들 중 softmax 확률로 하나의 인덱스 뽑기
 	int32 SoftmaxSelectIndex(const TArray<FCSPurchaseCandidate>& TopCandidates) const;
+
+	// 1등 후보는 있지만 총점이 MinPurchaseUtility에 못 미쳐 거절되는 케이스 전용 헬퍼
+	// ScoreCandidate는 이 경우 -1.0을 반환하지 않아(정상 0~1 점수) OutRejectionInfo가 안 채워지므로 여기서 별도로 채움
+	// 총점 미달의 진짜 원인이 가격/선호 자체인지, 반복구매로 인한 카테고리 감쇠(RepeatCategoryPenalty)인지
+	// 반복구매 감쇠를 걷어내도 기준선을 못 넘었을까?로 재계산해서 구분함
+	// 안 그러면 이미 장바구니에 담은 물품을 똑같은 상품인데 갑자기 너무 비싸다고 함 같은 사유 오분류가 생김
+	FCSPurchaseRejectionInfo BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float Score) const;
 
 	// 이 컴포넌트가 붙어있는 액터에서 CSCustomerStateComponent를 찾아옴
 	UCSCustomerStateComponent* GetCustomerState() const;

@@ -39,6 +39,7 @@
 class ACSCustomerCharacter;
 class ACSShelfActor;
 class ACSProductPickupActor;
+class UCSInnerThoughtWidget;
 struct FCSSelectProduct;
 
 // 계산 완료 시 방송. 손님의 SelectProducts(상품 행 정보 목록)로 매출을 집계하면 됨
@@ -59,6 +60,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnShopliftEscaped,ACSCustomerCha
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnVillainSubdued,ACSCustomerCharacter*, Customer, int32, RecoveredGold);
 // 영업시간 종료로 강제 퇴장된 손님 방송, 통계 파트가 자발적 빈손 퇴장 / 계산 포기와 구분하기 위한 별도 채널
 DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerCharacter* /*Customer*/);
+// 손님이 구매를 거절했을 때 방송. 거절 연출(디버그 텍스트/속마음 위젯)과
+// 애니메이션 파트의 향후 구독을 위한 채널. Info는 사유/강도 등 거절 상세 정보
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnPurchaseRejected, ACSCustomerCharacter*, Customer, FCSPurchaseRejectionInfo, Info);
 
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
@@ -118,6 +122,18 @@ public:
 	// FCSPurchaseCandidate(도감 참조 + 액터) 형태로 번역하는 역할
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	TArray<FCSPurchaseCandidate> BuildPurchaseCandidates(const AActor* ShelfActor) const;
+
+	// 손님이 구매를 거절했을 때 호출. OnPurchaseRejected를 직접 Broadcast하지 않고
+	// 이 래퍼를 거치게 해 캡슐화
+	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
+	void NotifyPurchaseRejected(ACSCustomerCharacter* Customer, const FCSPurchaseRejectionInfo& Info);
+
+	// =====================================================================
+	// 속마음 위젯
+	// =====================================================================
+
+	// 화면 하단 대화창 스타일 속마음 위젯을 Duration초간 표시
+	void ShowInnerThought(TSubclassOf<UCSInnerThoughtWidget> WidgetClass, const FText& InText, float Duration);
 
 	// =====================================================================
 	// 계산대 / 대기열
@@ -317,6 +333,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnVillainSubdued OnVillainSubdued; // 제압 성공. 회수액/평판 집계용
 
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnPurchaseRejected OnPurchaseRejected; // 구매 거절 순간 방송 거절 연출/애니메이션 파트 구독용
+
 private:
 	UPROPERTY()
 	TArray<TObjectPtr<AActor>> Shelves; // 레벨에 있는 모든 진열대 목록
@@ -327,6 +346,16 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<ACSCustomerCharacter>> Queue; //계산 대기줄. 배열 순서가 줄 순서
 	//Queue를 사용하지 않는 이유 배열의 인덱스가 곧 줄 순번이라서 인덱스를 추적가능하게 해야해서
+
+	// ShowInnerThought()가 재사용하는 캐싱된 화면 하단 대화창 위젯 인스턴스
+	UPROPERTY()
+	TObjectPtr<UCSInnerThoughtWidget> CachedInnerThoughtWidget;
+
+	// 위 위젯을 Duration 뒤 숨기기 위한 타이머
+	FTimerHandle InnerThoughtHideTimerHandle;
+
+	// 타이머 콜백 - 위젯을 숨김(뷰포트에서 제거하지 않고 Collapsed 처리만 - 다음 호출 때 재사용하기 위함)
+	void HideInnerThought();
 
 protected:
 
