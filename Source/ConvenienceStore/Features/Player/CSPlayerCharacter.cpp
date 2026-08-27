@@ -193,6 +193,7 @@ void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		PushedCart->StopPushing(this);
 		PushedCart = nullptr;
 	}
+	ResetDropActionHoldState();
 	ResetBuildRotationInput();
 	RestoreHeldBuildableActorStates();
 	ClearBuildPlacementPreview();
@@ -240,8 +241,12 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
     EnhancedInputComponent->BindAction(
         InteractAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::TryInteract);
 
-    EnhancedInputComponent->BindAction(
-        DropAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::DropHeldItem);
+	EnhancedInputComponent->BindAction(
+		DropAction, ETriggerEvent::Started, this, &ACSPlayerCharacter::HandleDropActionStarted);
+	EnhancedInputComponent->BindAction(
+		DropAction, ETriggerEvent::Completed, this, &ACSPlayerCharacter::HandleDropActionReleased);
+	EnhancedInputComponent->BindAction(
+		DropAction, ETriggerEvent::Canceled, this, &ACSPlayerCharacter::HandleDropActionCanceled);
 
 	if (ToggleBuildModeAction != nullptr)
 	{
@@ -2344,6 +2349,143 @@ void ACSPlayerCharacter::DropHeldItem()
 		TrashToDrop->ShowMeshAfterDrop();
 	}
 
+}
+
+void ACSPlayerCharacter::HandleDropActionStarted()
+{
+	ResetDropActionHoldState();
+
+	// 건축모드는 기존 Q Started 조작감을 유지하고 홀드 투척 판정을 시작하지 않습니다.
+	if (IsBuildMode())
+	{
+		DropHeldItem();
+		return;
+	}
+
+	if (IsValid(PushedCart) || !IsValid(HeldActor) || GetWorld() == nullptr)
+	{
+		return;
+	}
+
+	bIsDropActionHeld = true;
+	DropActionStartedTimeSeconds = GetWorld()->GetTimeSeconds();
+	DropActionHeldActor = HeldActor;
+}
+
+void ACSPlayerCharacter::HandleDropActionReleased()
+{
+	if (!bIsDropActionHeld)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	AActor* HeldActorAtPress = DropActionHeldActor.Get();
+	const float HeldDuration = IsValid(World)
+		? FMath::Max(0.0f, World->GetTimeSeconds() - DropActionStartedTimeSeconds)
+		: 0.0f;
+	const bool bIsSameHeldActor =
+		IsValid(HeldActorAtPress) && HeldActor == HeldActorAtPress;
+	ResetDropActionHoldState();
+
+	if (!bIsSameHeldActor || IsValid(PushedCart))
+	{
+		return;
+	}
+
+	if (HeldDuration >= ThrowHoldThreshold)
+	{
+		ThrowHeldItem();
+	}
+	else
+	{
+		DropHeldItem();
+	}
+}
+
+void ACSPlayerCharacter::HandleDropActionCanceled()
+{
+	ResetDropActionHoldState();
+}
+
+void ACSPlayerCharacter::ResetDropActionHoldState()
+{
+	bIsDropActionHeld = false;
+	DropActionStartedTimeSeconds = 0.0f;
+	DropActionHeldActor = nullptr;
+}
+
+void ACSPlayerCharacter::ThrowHeldItem()
+{
+	if (IsBuildMode())
+	{
+		DropHeldItem();
+		return;
+	}
+
+	if (IsValid(PushedCart) || !IsValid(HeldActor) || !IsValid(FirstPersonCamera))
+	{
+		return;
+	}
+
+	AActor* ActorToThrow = HeldActor;
+	ACSProductPickupActor* ProductToThrow = Cast<ACSProductPickupActor>(ActorToThrow);
+	ACSDeliveryCrateActor* CrateToThrow = Cast<ACSDeliveryCrateActor>(ActorToThrow);
+	ACSTrashActor* TrashToThrow = Cast<ACSTrashActor>(ActorToThrow);
+	ACSUsableToolActor* ToolToThrow = Cast<ACSUsableToolActor>(ActorToThrow);
+	if (!IsValid(ProductToThrow) && !IsValid(CrateToThrow) &&
+		!IsValid(TrashToThrow) && !IsValid(ToolToThrow))
+	{
+		DropHeldItem();
+		return;
+	}
+
+	ActorToThrow->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	ActorToThrow->SetActorEnableCollision(true);
+
+	if (IsValid(ProductToThrow))
+	{
+		ProductToThrow->EnableWorldDropPhysics();
+		ProductToThrow->SetHeldByPlayerForFreshness(false);
+	}
+	else if (IsValid(CrateToThrow))
+	{
+		CrateToThrow->EnableWorldDropPhysics();
+		CrateToThrow->SetHeldByPlayerForFreshness(false);
+	}
+	else if (IsValid(TrashToThrow))
+	{
+		TrashToThrow->EnableWorldDropPhysics();
+		TrashToThrow->ShowMeshAfterDrop();
+	}
+	else if (IsValid(ToolToThrow))
+	{
+		ToolToThrow->OnUnequipped();
+		ToolToThrow->EnableWorldDropPhysics();
+		if (IsValid(QuickbarInventory))
+		{
+			QuickbarInventory->RemoveTool(ToolToThrow);
+		}
+	}
+
+	const FVector ThrowDirection =
+		(FirstPersonCamera->GetForwardVector() + FVector::UpVector * ThrowUpwardBias)
+		.GetSafeNormal();
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	ActorToThrow->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (IsValid(PrimitiveComponent) && PrimitiveComponent->IsSimulatingPhysics())
+		{
+			PrimitiveComponent->AddImpulse(
+				ThrowDirection * ThrowStrength,
+				NAME_None,
+				true);
+		}
+	}
+
+	HeldActor = nullptr;
+	DestroyPlacementPreview();
 }
 
 bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)
