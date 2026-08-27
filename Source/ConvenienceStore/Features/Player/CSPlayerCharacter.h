@@ -265,6 +265,18 @@ protected:
 	meta = (ClampMin = "50.0"))
 	float DropTraceDepth = 1200.0f;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction|Throw",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float ThrowHoldThreshold = 0.5f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction|Throw",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float ThrowStrength = 1000.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction|Throw",
+		meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float ThrowUpwardBias = 0.15f;
+
 
 private:
 	void Move(const FInputActionValue& Value);
@@ -274,7 +286,12 @@ private:
 	void StartCrouch();
 	void StopCrouch();
 	void TryInteract();
+	void HandleDropActionStarted();
+	void HandleDropActionReleased();
+	void HandleDropActionCanceled();
+	void ResetDropActionHoldState();
 	void DropHeldItem();
+	void ThrowHeldItem();
 	void ToggleCartPush();
 	void SelectQuickbarSlot1();
 	void SelectQuickbarSlot2();
@@ -379,6 +396,11 @@ private:
 
 	TArray<TWeakObjectPtr<UBoxComponent>> CachedBuildPlacementAreas;
 	bool bBuildPlacementAreaCacheInitialized = false;
+	bool bIsDropActionHeld = false;
+	float DropActionStartedTimeSeconds = 0.0f;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> DropActionHeldActor;
 
 
 public:
