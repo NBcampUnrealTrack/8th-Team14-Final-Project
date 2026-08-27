@@ -2,6 +2,7 @@
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Components/Widget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/Store/CSProductAnalysisWidget.h"
 
@@ -20,6 +21,22 @@ void UCSDailySummaryWidget::NativeConstruct()
 		ProductAnalysisButton->OnClicked.AddUniqueDynamic(
 			this, &UCSDailySummaryWidget::HandleProductAnalysisClicked);
 	}
+	if (IsValid(TotalExpenseHoverButton))
+	{
+		TotalExpenseHoverButton->OnHovered.AddUniqueDynamic(
+			this, &UCSDailySummaryWidget::HandleTotalExpenseHovered);
+		TotalExpenseHoverButton->OnUnhovered.AddUniqueDynamic(
+			this, &UCSDailySummaryWidget::HandleTotalExpenseUnhovered);
+	}
+	if (IsValid(SeparateLossHoverButton))
+	{
+		SeparateLossHoverButton->OnHovered.AddUniqueDynamic(
+			this, &UCSDailySummaryWidget::HandleSeparateLossHovered);
+		SeparateLossHoverButton->OnUnhovered.AddUniqueDynamic(
+			this, &UCSDailySummaryWidget::HandleSeparateLossUnhovered);
+	}
+	if (IsValid(ExpenseBreakdownPopup)) ExpenseBreakdownPopup->SetVisibility(ESlateVisibility::Collapsed);
+	if (IsValid(SeparateLossBreakdownPopup)) SeparateLossBreakdownPopup->SetVisibility(ESlateVisibility::Collapsed);
 
 	StoreGameState = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
 	if (IsValid(StoreGameState))
@@ -43,6 +60,20 @@ void UCSDailySummaryWidget::NativeDestruct()
 	{
 		ProductAnalysisButton->OnClicked.RemoveDynamic(
 			this, &UCSDailySummaryWidget::HandleProductAnalysisClicked);
+	}
+	if (IsValid(TotalExpenseHoverButton))
+	{
+		TotalExpenseHoverButton->OnHovered.RemoveDynamic(
+			this, &UCSDailySummaryWidget::HandleTotalExpenseHovered);
+		TotalExpenseHoverButton->OnUnhovered.RemoveDynamic(
+			this, &UCSDailySummaryWidget::HandleTotalExpenseUnhovered);
+	}
+	if (IsValid(SeparateLossHoverButton))
+	{
+		SeparateLossHoverButton->OnHovered.RemoveDynamic(
+			this, &UCSDailySummaryWidget::HandleSeparateLossHovered);
+		SeparateLossHoverButton->OnUnhovered.RemoveDynamic(
+			this, &UCSDailySummaryWidget::HandleSeparateLossUnhovered);
 	}
 	if (IsValid(StoreGameState))
 	{
@@ -71,6 +102,7 @@ void UCSDailySummaryWidget::RefreshSummary()
 		NSLOCTEXT("StoreSummary", "RentDDay", "D - {0}"),
 		FText::AsNumber(State->GetDaysUntilNextRentPayment()));
 	const FText TotalLossText = FText::AsNumber(State->GetDailyTotalExpenseGold());
+	const FText SeparateLossText = FText::AsNumber(State->GetDailySeparateLossGold());
 	const FText NetProfitText = FText::AsNumber(State->GetDailyNetProfitGold());
 
 	if (IsValid(BusinessDayResultText))
@@ -84,6 +116,8 @@ void UCSDailySummaryWidget::RefreshSummary()
 	if (IsValid(BreakdownTotalLossText)) BreakdownTotalLossText->SetText(TotalLossText);
 	if (IsValid(BreakdownNetProfitText)) BreakdownNetProfitText->SetText(NetProfitText);
 	if (IsValid(DailySalesText)) DailySalesText->SetText(SalesText);
+	if (IsValid(DailyTotalExpenseText)) DailyTotalExpenseText->SetText(TotalLossText);
+	if (IsValid(DailySeparateLossText)) DailySeparateLossText->SetText(SeparateLossText);
 	if (IsValid(DailyWasteLossText)) DailyWasteLossText->SetText(WasteLossText);
 	if (IsValid(DailyRentText)) DailyRentText->SetText(RentText);
 	if (IsValid(RentAmountText)) RentAmountText->SetText(NextRentText);
@@ -98,6 +132,41 @@ void UCSDailySummaryWidget::RefreshSummary()
 	{
 		ReputationScoreText->SetText(FText::AsNumber(State->GetReputationScore()));
 	}
+
+	const bool bHasProductOrderExpense = State->DailyProductOrderExpenseGold > 0;
+	const bool bHasFacilityOrderExpense = State->DailyFacilityOrderExpenseGold > 0;
+	const bool bHasQuickProductExpense = State->DailyQuickProductOrderExpenseGold > 0;
+	const bool bHasQuickFacilityExpense = State->DailyQuickFacilityOrderExpenseGold > 0;
+	const bool bHasRentExpense = State->DailyRentGold > 0;
+	const bool bHasAnyExpense = bHasProductOrderExpense || bHasFacilityOrderExpense ||
+		bHasQuickProductExpense || bHasQuickFacilityExpense || bHasRentExpense;
+
+	if (IsValid(ProductOrderExpenseRow)) ProductOrderExpenseRow->SetVisibility(bHasProductOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(FacilityOrderExpenseRow)) FacilityOrderExpenseRow->SetVisibility(bHasFacilityOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(QuickProductOrderExpenseRow)) QuickProductOrderExpenseRow->SetVisibility(bHasQuickProductExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(QuickFacilityOrderExpenseRow)) QuickFacilityOrderExpenseRow->SetVisibility(bHasQuickFacilityExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(RentExpenseRow)) RentExpenseRow->SetVisibility(bHasRentExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(ProductOrderExpenseText)) ProductOrderExpenseText->SetText(FText::AsNumber(State->DailyProductOrderExpenseGold));
+	if (IsValid(FacilityOrderExpenseText)) FacilityOrderExpenseText->SetText(FText::AsNumber(State->DailyFacilityOrderExpenseGold));
+	if (IsValid(QuickProductOrderExpenseText)) QuickProductOrderExpenseText->SetText(FText::AsNumber(State->DailyQuickProductOrderExpenseGold));
+	if (IsValid(QuickFacilityOrderExpenseText)) QuickFacilityOrderExpenseText->SetText(FText::AsNumber(State->DailyQuickFacilityOrderExpenseGold));
+	if (IsValid(RentExpenseText)) RentExpenseText->SetText(RentText);
+	if (IsValid(ExpenseDivider)) ExpenseDivider->SetVisibility(bHasAnyExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(ExpenseTotalRow)) ExpenseTotalRow->SetVisibility(bHasAnyExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(ExpenseTotalText)) ExpenseTotalText->SetText(TotalLossText);
+	if (IsValid(NoExpenseText)) NoExpenseText->SetVisibility(bHasAnyExpense ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+
+	const bool bHasWasteLoss = State->DailyWasteLossGold > 0;
+	const bool bHasShopliftLoss = State->DailyShopliftLossGold > 0;
+	const bool bHasAnySeparateLoss = bHasWasteLoss || bHasShopliftLoss;
+	if (IsValid(WasteLossRow)) WasteLossRow->SetVisibility(bHasWasteLoss ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(ShopliftLossRow)) ShopliftLossRow->SetVisibility(bHasShopliftLoss ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(WasteLossAmountText)) WasteLossAmountText->SetText(WasteLossText);
+	if (IsValid(ShopliftLossAmountText)) ShopliftLossAmountText->SetText(FText::AsNumber(State->DailyShopliftLossGold));
+	if (IsValid(SeparateLossDivider)) SeparateLossDivider->SetVisibility(bHasAnySeparateLoss ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(SeparateLossTotalRow)) SeparateLossTotalRow->SetVisibility(bHasAnySeparateLoss ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(SeparateLossTotalText)) SeparateLossTotalText->SetText(SeparateLossText);
+	if (IsValid(NoSeparateLossText)) NoSeparateLossText->SetVisibility(bHasAnySeparateLoss ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 
 	ApplyDeltaPresentation(
 		State->GetDailyNetProfitDeltaGold(),
@@ -156,5 +225,37 @@ void UCSDailySummaryWidget::HandleProductAnalysisClicked()
 	if (IsValid(ProductAnalysisPanel))
 	{
 		ProductAnalysisPanel->OpenAnalysis();
+	}
+}
+
+void UCSDailySummaryWidget::HandleTotalExpenseHovered()
+{
+	if (IsValid(ExpenseBreakdownPopup))
+	{
+		ExpenseBreakdownPopup->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UCSDailySummaryWidget::HandleTotalExpenseUnhovered()
+{
+	if (IsValid(ExpenseBreakdownPopup))
+	{
+		ExpenseBreakdownPopup->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
+
+void UCSDailySummaryWidget::HandleSeparateLossHovered()
+{
+	if (IsValid(SeparateLossBreakdownPopup))
+	{
+		SeparateLossBreakdownPopup->SetVisibility(ESlateVisibility::HitTestInvisible);
+	}
+}
+
+void UCSDailySummaryWidget::HandleSeparateLossUnhovered()
+{
+	if (IsValid(SeparateLossBreakdownPopup))
+	{
+		SeparateLossBreakdownPopup->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }

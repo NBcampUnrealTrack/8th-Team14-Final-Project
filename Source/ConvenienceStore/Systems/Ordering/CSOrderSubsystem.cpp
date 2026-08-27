@@ -124,6 +124,8 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrderWithDelivery(
 	ECSOrderDeliveryType DeliveryType) const
 {
 	FCSOrderResult Result;
+	// 기존 발주 계산은 유지하고 정산 분류에 필요한 배송 방식만 결과에 보존합니다.
+	Result.bImmediateDelivery = DeliveryType == ECSOrderDeliveryType::Immediate;
 
 	const UWorld* World = GetWorld();
 	const ACSStoreGameState* StoreGameState =
@@ -353,6 +355,8 @@ FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrderWithDelivery(
 	ECSOrderDeliveryType DeliveryType) const
 {
 	FCSFacilityOrderResult Result;
+	// 기존 시설 발주 계산은 유지하고 정산 분류에 필요한 배송 방식만 결과에 보존합니다.
+	Result.bImmediateDelivery = DeliveryType == ECSOrderDeliveryType::Immediate;
 
 	const UWorld* World = GetWorld();
 	const ACSStoreGameState* StoreGameState =

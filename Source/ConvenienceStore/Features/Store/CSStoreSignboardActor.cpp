@@ -97,7 +97,12 @@ void ACSStoreSignboardActor::Interact_Implementation(AActor* Interactor)
 		return;
 	}
 
-	ActiveConfirmWidget->SetConfirmationType(!StoreGameState->bIsStoreOpen);
+	const ECSStoreBusinessConfirmType ConfirmationType = StoreGameState->bIsStoreOpen
+		? ECSStoreBusinessConfirmType::PauseEntry
+		: (StoreGameState->bHasStoreOpenedToday
+			? ECSStoreBusinessConfirmType::ResumeEntry
+			: ECSStoreBusinessConfirmType::InitialOpen);
+	ActiveConfirmWidget->SetConfirmationType(ConfirmationType);
 	ActiveConfirmWidget->OnBusinessConfirmed.AddDynamic(
 		this, &ACSStoreSignboardActor::HandleBusinessConfirmed);
 	ActiveConfirmWidget->OnBusinessCancelled.AddDynamic(
@@ -128,8 +133,13 @@ FText ACSStoreSignboardActor::GetInteractionText_Implementation() const
 		return NSLOCTEXT("Store", "StoreNotOpenTime", "영업 시간 전입니다");
 	}
 
-	return StoreGameState->bIsStoreOpen
-		? NSLOCTEXT("Store", "CloseStore", "영업 종료")
+	if (StoreGameState->bIsStoreOpen)
+	{
+		return NSLOCTEXT("Store", "PauseCustomerEntry", "고객 입장 마감");
+	}
+
+	return StoreGameState->bHasStoreOpenedToday
+		? NSLOCTEXT("Store", "ResumeCustomerEntry", "고객 입장 재개")
 		: NSLOCTEXT("Store", "OpenStore", "영업 시작");
 }
 

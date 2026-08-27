@@ -410,6 +410,7 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 	if (ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(PlayerController))
 	{
+		StorePlayerController->SetStoreHUDHidden(this, true);
 		StorePlayerController->SetGameplayUIInputLock(ActiveCheckoutWidget, true);
 	}
 	else
@@ -623,6 +624,10 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 
 void ACSCheckoutCounterActor::CloseCheckoutWidget(const bool bRestorePawnImmediately)
 {
+	APlayerController* PlayerController = IsValid(ActiveCheckoutWidget)
+		? ActiveCheckoutWidget->GetOwningPlayer()
+		: CheckoutPlayerController.Get();
+
 	// 위젯이 이미 사라진 예외 상황에서도 계산대 카메라에 시점이 남지 않도록 먼저 복원합니다.
 	RestoreCheckoutCamera(bRestorePawnImmediately);
 
@@ -636,13 +641,17 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget(const bool bRestorePawnImmedia
 	ActiveCheckoutCustomer = nullptr;
 	bCheckoutPaymentCompleted = false;
 	bIsCheckoutTransitioning = false;
+	if (ACSStorePlayerController* StorePlayerController =
+		Cast<ACSStorePlayerController>(PlayerController))
+	{
+		StorePlayerController->SetStoreHUDHidden(this, false);
+	}
 
 	if (!IsValid(ActiveCheckoutWidget))
 	{
 		return;
 	}
 
-	APlayerController* PlayerController = ActiveCheckoutWidget->GetOwningPlayer();
 	if (ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(PlayerController))
 	{
