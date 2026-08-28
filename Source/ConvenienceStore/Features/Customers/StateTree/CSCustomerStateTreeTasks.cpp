@@ -229,6 +229,7 @@ static void CS_HandlePurchaseRejection(
 	const FCSPurchaseRejectionInfo& RejectionInfo,
 	UWorld* World)
 {
+	const float DisplayDuration = Decision.GetInstantDisplayDuration(RejectionInfo.Reason);
 	State.LastRejectionInfo = RejectionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
 
@@ -236,12 +237,89 @@ static void CS_HandlePurchaseRejection(
 		World,
 		Customer.GetActorLocation() + FVector(0.0f, 0.0f, Customer.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
 		Decision.GetRejectionDisplayTier(RejectionInfo).DebugText.ToString(),
-		nullptr, FColor::White, Decision.GetInstantDisplayDuration(RejectionInfo.Reason), true);
+		nullptr, FColor::White, DisplayDuration, true);
 
 	Subsystem.NotifyPurchaseRejected(&Customer, RejectionInfo);
 
 	Data.bAwaitingRejectionExit = true;
 	Data.ElapsedTime = 0.0f;
+}
+
+// 구매는 결정됐지만 가격에 대한 반응이 있을 때
+// 즉시 담지 않고 멈춰서 디버그 텍스트 먼저 보여준 뒤 대기가 끝나면 그때 담음
+static void CS_HandlePriceReactionThenBuy(
+	FCSTask_BrowseShelfInstanceData& Data,
+	ACSCustomerCharacter& Customer,
+	UCSCustomerStateComponent& State,
+	UCSPurchaseDecisionComponent& Decision,
+	const FCSPurchaseRejectionInfo& ReactionInfo,
+	AActor* ProductActor,
+	UWorld* World)
+{
+	const float DisplayDuration = Decision.GetInstantDisplayDuration(ReactionInfo.Reason);
+	State.LastRejectionInfo = ReactionInfo;
+	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+
+	DrawDebugString(
+		World,
+		Customer.GetActorLocation() + FVector(0.0f, 0.0f, Customer.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
+		Decision.GetRejectionDisplayTier(ReactionInfo).DebugText.ToString(),
+		nullptr, FColor::White, DisplayDuration, true);
+
+	Data.bAwaitingRejectionExit = true;
+	Data.bPendingTakeProductAfterReaction = true;
+	Data.PendingProductActor = ProductActor;
+	Data.ElapsedTime = 0.0f;
+}
+
+// 상품을 담은 직후(즉시 담았든, 가격 반응 대기 후에 담았든) 공통으로 수행하는 세션 지속 여부 판단
+// 라운드상한 -> 목표달성 -> 예산바닥 -> 확률탈락 순으로 검사, 전부 통과하면 다음 라운드로 Running 반환
+// 두 진입 경로(즉시 구매 / 대기 후 구매)가 이 판단을 중복 작성하지 않도록 뽑아냄
+static EStateTreeRunStatus CS_EvaluateSessionContinuation(
+	FCSTask_BrowseShelfInstanceData& Data,
+	ACSCustomerCharacter& Customer,
+	UCSCustomerStateComponent& State,
+	UCSPurchaseDecisionComponent& Decision)
+{
+	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
+	if (Data.RoundCount >= Data.MaxSessionRounds)
+	{
+		// [세션종료 확인용] 어느 종료조건이 실제로 자주 걸리는지 확인용
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=라운드상한 | 담은개수=%d/%d | RoundCount=%d"),
+			*Customer.GetName(), State.SelectProducts.Num(), State.PlannedBasketTarget, Data.RoundCount);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 목표 개수(PlannedBasketTarget)를 채웠으면 세션 종료
+	const int32 ItemsInBasket = State.SelectProducts.Num();
+	if (ItemsInBasket >= State.PlannedBasketTarget)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=목표달성 | 담은개수=%d/%d"),
+			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget);
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 소프트/하드 예산 중 하나라도 바닥나면 더 둘러봐도 살 수 없으므로 종료
+	if (State.GetRemainingSoftBudget() <= 0 || State.GetRemainingHardWallet() <= 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=예산바닥 | 담은개수=%d/%d | 남은소프트=%d | 남은하드=%d"),
+			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget,
+			State.GetRemainingSoftBudget(), State.GetRemainingHardWallet());
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
+	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
+	if (!Decision.RollContinueShopping(ItemsInBasket))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=확률탈락 | 담은개수=%d/%d | 확률=%.2f"),
+			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget,
+			Decision.ContinueShoppingProbability(ItemsInBasket));
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 계속 쇼핑 -> 다음 라운드까지 SessionInterval만큼 대기 (ElapsedTime은 호출부에서 이미 0으로 리셋됨)
+	return EStateTreeRunStatus::Running;
 }
 
 EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Context,
@@ -268,7 +346,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// 거절 즉시표시가 떠 있는 동안은 다른 판단을 전부 건너뛰고 대기만 함
+	// 거절 즉시표시(또는 가격 반응 표시)가 떠 있는 동안은 다른 판단을 전부 건너뛰고 대기만 함
 	// (손님이 다음 진열대로 넘어가지 않고 그 자리에 머무르게 하는 역할)
 	// 대기시간은 방금 저장된 사유(State->LastRejectionInfo.Reason)에 따라 달라짐 - ShelfEmpty만 짧음
 	if (Data.bAwaitingRejectionExit)
@@ -280,6 +358,26 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 		Data.bAwaitingRejectionExit = false;
 		Data.ElapsedTime = 0.0f;
+
+		// 대기가 실제 거절이 아니라 가격 반응은 있었지만 결국 사는 케이스였다면
+		// 이제서야 상품을 담고 세션을 이어간다 (CS_HandlePriceReactionThenBuy가 걸어둔 플래그)
+		if (Data.bPendingTakeProductAfterReaction)
+		{
+			Data.bPendingTakeProductAfterReaction = false;
+			AActor* PendingProduct = Data.PendingProductActor;
+			Data.PendingProductActor = nullptr;
+
+			// 최대 몇 초씩 대기하는 동안 다른 손님이 같은 상품을 먼저 집어갔을 수 있음
+			// 이 방어가 없으면 이미 사라진 액터를 TakeProduct에 넘겨 크래시로 이어짐
+			if (IsValid(PendingProduct))
+			{
+				Subsystem->TakeProduct(ShelfActor, PendingProduct, Customer);
+				Data.RoundCount++;
+			}
+			return CS_EvaluateSessionContinuation(Data, *Customer, *State, *Decision);
+		}
+
+		// 그 외에는 기존 그대로 - 실제 거절이었으므로 아무것도 안 담고 세션 종료
 		return EStateTreeRunStatus::Succeeded;
 	}
 
@@ -357,48 +455,19 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Running;
 	}
 
+	// 가격 반응(Reason=PriceRejected, 무반응이면 None)이 있으면 즉시 담지 않고 먼저 멈춰서
+	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
+	// (위 bAwaitingRejectionExit 분기의 bPendingTakeProductAfterReaction 처리가 이어받음)
+	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None)
+	{
+		CS_HandlePriceReactionThenBuy(Data, *Customer, *State, *Decision, RejectionInfo, Selected.ProductActor, Context.GetWorld());
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 무반응이면 예전처럼 즉시 담고 바로 다음 판단
 	Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
 	Data.RoundCount++;
-
-	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
-	if (Data.RoundCount >= Data.MaxSessionRounds)
-	{
-		// [세션종료 확인용] 어느 종료조건이 실제로 자주 걸리는지 확인용
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=라운드상한 | 담은개수=%d/%d | RoundCount=%d"),
-			*Customer->GetName(), State->SelectProducts.Num(), State->PlannedBasketTarget, Data.RoundCount);
-		return EStateTreeRunStatus::Succeeded;
-	}
-
-	// 목표 개수(PlannedBasketTarget)를 채웠으면 세션 종료
-	const int32 ItemsInBasket = State->SelectProducts.Num();
-	if (ItemsInBasket >= State->PlannedBasketTarget)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=목표달성 | 담은개수=%d/%d"),
-			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget);
-		return EStateTreeRunStatus::Succeeded;
-	}
-
-	// 소프트/하드 예산 중 하나라도 바닥나면 더 둘러봐도 살 수 없으므로 종료
-	if (State->GetRemainingSoftBudget() <= 0 || State->GetRemainingHardWallet() <= 0)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=예산바닥 | 담은개수=%d/%d | 남은소프트=%d | 남은하드=%d"),
-			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget,
-			State->GetRemainingSoftBudget(), State->GetRemainingHardWallet());
-		return EStateTreeRunStatus::Succeeded;
-	}
-
-	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
-	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
-	if (!Decision->RollContinueShopping(ItemsInBasket))
-	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=확률탈락 | 담은개수=%d/%d | 확률=%.2f"),
-			*Customer->GetName(), ItemsInBasket, State->PlannedBasketTarget,
-			Decision->ContinueShoppingProbability(ItemsInBasket));
-		return EStateTreeRunStatus::Succeeded;
-	}
-
-	// 계속 쇼핑 -> 다음 라운드까지 SessionInterval만큼 대기 (ElapsedTime은 위에서 이미 0으로 리셋됨)
-	return EStateTreeRunStatus::Running;
+	return CS_EvaluateSessionContinuation(Data, *Customer, *State, *Decision);
 }
 
 // =====================================================================

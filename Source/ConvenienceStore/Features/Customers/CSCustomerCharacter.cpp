@@ -154,6 +154,8 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	if (Subsystem != nullptr)
 	{
 		UCSCustomerStateComponent* State = GetCustomerState();
+		// 실제 거절이든(안 삼) 가격 반응은 있었지만 결국 사는 케이스든 손님이 똑같이 멈춰서 있는
+		// 동안이라 대기시간 계산도 동일하게 GetInstantDisplayDuration 하나만 보면 됨
 		if (State != nullptr && IsValid(PurchaseDecision) &&
 			State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
 			(World->GetTimeSeconds() - State->LastRejectionTime) <= PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))

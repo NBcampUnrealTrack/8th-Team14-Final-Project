@@ -191,13 +191,13 @@ public:
 	void MarkVisited(AActor* ShelfActor);
 	bool HasVisited(const AActor* ShelfActor) const;
 
-	// 거절 연출
+	// 거절 연출 / 가격 반응 공용
 
-	// 가장 최근 거절 사유. 즉시표시(디버그 텍스트)와 마법봉 속마음 트리거가 둘 다 이 값을 읽음
+	// 가장 최근 거절/가격반응 사유. 즉시표시(디버그 텍스트)와 마법봉 속마음 트리거가 둘 다 이 값을 읽음
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	FCSPurchaseRejectionInfo LastRejectionInfo;
 
-	// 위 거절이 발생한 월드 시각. 마법봉 트리거가 InstantDisplayDuration 이내인지 판정하는 기준
+	// 위 정보가 기록된 월드 시각. 마법봉 트리거가 GetInstantDisplayDuration(Reason) 이내인지 판정하는 기준
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	float LastRejectionTime = 0.0f;
 
