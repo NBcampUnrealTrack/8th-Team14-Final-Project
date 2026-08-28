@@ -14,6 +14,7 @@ class ACSCustomerBasketActor;
 class ACSCustomerShoppingBagActor;
 class UCSPurchaseDecisionComponent;
 class UPrimitiveComponent;
+class UCSInnerThoughtWidget;
 struct FCSSelectProduct;
 
 UCLASS()
@@ -111,6 +112,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Villain",
 		meta = (ClampMin = "0"))
 	int32 VillainOutlineStencilValue = 4;
+
+	// 속마음 위젯
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|InnerThought")
+	TSubclassOf<UCSInnerThoughtWidget> InnerThoughtWidgetClass;
 
 private:
 	// 외곽선을 켜기 전 원래 상태를 기억해뒀다가 끌 때 복원

@@ -19,6 +19,9 @@
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Engine/Engine.h"
+#include "Features/Customers/CSInnerThoughtWidget.h"
+#include "Blueprint/UserWidget.h"
+#include "TimerManager.h"
 
 TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("cs.Seed"),
@@ -238,10 +241,22 @@ TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidate
 	// 기존 GetProductsOnShelf()를 그대로 재사용해서 진열된 상품 액터들을 가져옴
 	TArray<AActor*> Products = GetProductsOnShelf(ShelfActor);
 
+	// 같은 SKU(ProductId)가 물리적으로 여러 개 진열돼 있어도 후보는 하나만 생성
+	// (안 그러면 진열 개수가 많은 상품이 TopCandidateCount 컷을 통째로 독점함)
+	// 반복 구매 시 점수를 깎는 건 이미 있는 RepeatCategoryPenalty가 담당하므로 여기선 중복 제거만 함
+	TSet<FName> SeenProductIds;
+
 	for (AActor* ProductActor : Products)
 	{
 		ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
 		if (Product == nullptr) continue;  // 상품이 아닌 액터 방어
+
+		const FName ProductId = Product->GetProductId();
+		if (SeenProductIds.Contains(ProductId))
+		{
+			continue;  // 같은 SKU는 먼저 발견된 액터 하나만 대표로 남김
+		}
+		SeenProductIds.Add(ProductId);
 
 		// TakeProduct()가 쓰는 것과 동일한 GetProductRow()로 상품 마스터 데이터 참조를 가져옴
 		FCSPurchaseCandidate Candidate;
@@ -255,6 +270,67 @@ TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidate
 bool UCSCustomerRuntimeSubsystem::HasShelfStock(const AActor* ShelfActor) const
 {
 	return GetProductsOnShelf(ShelfActor).Num() > 0;
+}
+
+// 캡슐화를 위해 OnPurchaseRejected를 직접 Broadcast하지 않고 이 래퍼를 거치게 함
+void UCSCustomerRuntimeSubsystem::NotifyPurchaseRejected(ACSCustomerCharacter* Customer, const FCSPurchaseRejectionInfo& Info)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	OnPurchaseRejected.Broadcast(Customer, Info);
+}
+
+// 화면 하단 대화창 스타일 위젯 인스턴스 하나를 캐싱해서 재사용
+void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWidget> WidgetClass, const FText& InText, float Duration)
+{
+	if (!WidgetClass)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 캐싱된 인스턴스가 없거나(최초 호출), 클래스가 바뀌었으면 새로 만들어 뷰포트에 추가
+	if (!IsValid(CachedInnerThoughtWidget) || CachedInnerThoughtWidget->GetClass() != WidgetClass)
+	{
+		CachedInnerThoughtWidget = CreateWidget<UCSInnerThoughtWidget>(World, WidgetClass);
+		if (IsValid(CachedInnerThoughtWidget))
+		{
+			CachedInnerThoughtWidget->AddToViewport();
+		}
+	}
+
+	if (!IsValid(CachedInnerThoughtWidget))
+	{
+		return;
+	}
+
+	CachedInnerThoughtWidget->SetThoughtText(InText);
+	CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Visible);
+
+	World->GetTimerManager().SetTimer(
+		InnerThoughtHideTimerHandle,
+		this,
+		&UCSCustomerRuntimeSubsystem::HideInnerThought,
+		FMath::Max(Duration, 0.01f),
+		false);
+}
+
+void UCSCustomerRuntimeSubsystem::HideInnerThought()
+{
+	// 뷰포트에서 완전히 제거하지 않고 숨기기만 함 - 다음 ShowInnerThought() 호출 때
+	// 같은 인스턴스를 그대로 재사용하기 위함(CreateWidget/AddToViewport 재호출 비용 절약)
+	if (IsValid(CachedInnerThoughtWidget))
+	{
+		CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
 }
 
 FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* ProductActor, ACSCustomerCharacter* Customer)

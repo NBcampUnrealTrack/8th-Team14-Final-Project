@@ -66,6 +66,13 @@ public:
 		meta = (ClampMin = "0.0", ClampMax = "0.2"))
 	float AcceptanceLatitude = 0.04f;
 
+	// 가격 하드컷 임계값 — 이 값 밑으로 PriceScore가 떨어지면 카테고리/예산 무관 구매 불가
+	// 가중합 정규화 구조상 PriceScore 혼자만으로는 총점을 절대 거부선 밑까지 못 끌어내리는 문제를
+	// 별도 하드컷으로 보완. 카테고리 선호가 아무리 높아도 이 값을 우회하지 못함
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Price",
+		meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float PriceRejectionThreshold = 0.1f;
+
 	// 구매 성향 -----
 
 	// 충동성 -----

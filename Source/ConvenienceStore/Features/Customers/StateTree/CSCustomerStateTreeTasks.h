@@ -175,6 +175,11 @@ struct FCSTask_BrowseShelfInstanceData
 	// 이번 세션에서 평가 예산을 이미 차감했는지 - 세션 전체를 통틀어 딱 한 번만 깎아야 함
 	UPROPERTY()
 	bool bBudgetCharged = false;
+
+	// 거절 즉시표시(디버그 텍스트)가 떠 있는 동안 손님을 이 자리에 붙잡아두기 위한 플래그
+	// true인 동안은 Tick 맨 위 분기가 다른 로직을 전부 건너뛰고 InstantDisplayDuration 경과만 기다림
+	UPROPERTY()
+	bool bAwaitingRejectionExit = false;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Browse Shelf"))

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSVillainTypes.h"
+#include "Data/CSPurchaseDecisionTypes.h"
 #include "Engine/DataTable.h"
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
@@ -189,5 +190,15 @@ public:
 
 	void MarkVisited(AActor* ShelfActor);
 	bool HasVisited(const AActor* ShelfActor) const;
+
+	// 거절 연출
+
+	// 가장 최근 거절 사유. 즉시표시(디버그 텍스트)와 마법봉 속마음 트리거가 둘 다 이 값을 읽음
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
+	FCSPurchaseRejectionInfo LastRejectionInfo;
+
+	// 위 거절이 발생한 월드 시각. 마법봉 트리거가 InstantDisplayDuration 이내인지 판정하는 기준
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
+	float LastRejectionTime = 0.0f;
 
 };
