@@ -22,7 +22,9 @@ public:
 
 	// 후보 목록 중 하나를 확률적으로 골라 OutSelected에 채움
 	// 반환값이 true면 구매 결정 false면 살 만한 게 없어서 미구매
-	// false일 때 OutRejectionInfo에 대표 거절 사유가 채워짐 - 거절 연출이 이 값을 읽음
+	// OutRejectionInfo는 이제 성패와 무관하게 항상 채워짐(Reason=None이면 무반응) - 구매에 성공해도
+	// 가격이 어느 정도 부담스러웠으면(Severity>0) 가벼운 반응이 여기 담김
+	// false일 때는 기존 그대로 거절 사유(카테고리 차단/하드지갑 초과/재고없음/가격)가 담김
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	bool DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected, FCSPurchaseRejectionInfo& OutRejectionInfo) const;
 
@@ -80,6 +82,8 @@ public:
 	// 거절 즉시표시(디버그 텍스트) 대기시간. 마법봉 시간 게이트도 이 값을 그대로 참조하므로
 	// 두 곳에 따로 상수를 두지 말고 항상 이 getter를 거칠 것(Reason 하나로 두 곳이 항상 같은 값을 보게 함)
 	// ShelfEmpty만 별도로 짧은 값을 씀 - 재고가 없어서 지나가는 것뿐인데 5초씩 붙잡아두면 너무 길다
+	// 가격 반응도 실제 거절과 똑같이 손님을 멈춰 세운 뒤 담기/안 담기가
+	// 갈리는 구조라 이 값을 그대로 같이 씀
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Rejection")
 	float GetInstantDisplayDuration(ECSPurchaseRejectReason Reason) const
 	{
@@ -191,6 +195,30 @@ private:
 	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
 	const FCSProductDataRow* GetProductRow(const FCSPurchaseCandidate& Candidate) const;
 
+	// 후보 하나의 실제가/기준가/PriceScore를 한 번에 구하는 공용 계산 결과
+	// ScoreCandidate/BuildScoreShortfallRejectionInfo/BuildPriceReactionInfo 세 곳이
+	// 전부 같은 절차(기준가 조회 → 실제가 조회 → 데드존/기울기로 PriceScore 계산)를 반복해서
+	// 중복을 없애려고 뽑아냄
+	struct FCSPriceEvaluation
+	{
+		float ActualPrice = 0.f;
+		float ReferencePrice = 0.f;
+		float PriceScore = 0.5f; // 상품 데이터를 못 찾는 등 계산 불가 시 중립값
+	};
+	FCSPriceEvaluation EvaluatePrice(const FCSPurchaseCandidate& Candidate, const FCSProductDataRow& ProductRow) const;
+
+	// PriceScore(0=완전 불만족~0.5=중립~1=완전 만족) 하나만으로 "가격에 대한 반응 강도"를
+	// 0(무반응)~1(최고 강도)로 환산
+	// 구매 성패와 분리된 값 - 손님이 실제로 사든 안 사든 이 값만으로 표시 단계가 갈림
+	// 하드컷 문턱(PriceRejectionThreshold)을 [0.6, 1.0] 구간에, 그 위(데드존~하드컷 사이)를
+	// [0, 0.6) 구간에 배정해서 화날 정도로 가격이 오름(DT SeverityThreshold 0.6)이 뜨면 항상 실제로도
+	// 하드컷(=구매 불가)과 일치하도록 만듦
+	float ComputePriceReactionSeverity(float PriceScore) const;
+
+	// 구매에 성공한 후보를 대상으로 가격 반응 정보를 만든다
+	// Severity가 0이면(데드존 이내) Reason=None인 기본값을 그대로 반환해 무반응을 표현
+	FCSPurchaseRejectionInfo BuildPriceReactionInfo(const FCSPurchaseCandidate& Candidate) const;
+
 	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼들
 	// Archetype이 연결되어 있으면 그 안의 값을 쓰고
 	// 없으면 기본값(Fallback)을 대신 쓴다는 판단 해주는 함수들
@@ -213,7 +241,7 @@ private:
 	// 총점 미달의 진짜 원인이 가격/선호 자체인지, 반복구매로 인한 카테고리 감쇠(RepeatCategoryPenalty)인지
 	// 반복구매 감쇠를 걷어내도 기준선을 못 넘었을까?로 재계산해서 구분함
 	// 안 그러면 이미 장바구니에 담은 물품을 똑같은 상품인데 갑자기 너무 비싸다고 함 같은 사유 오분류가 생김
-	FCSPurchaseRejectionInfo BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float Score) const;
+	FCSPurchaseRejectionInfo BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate) const;
 
 	// 이 컴포넌트가 붙어있는 액터에서 CSCustomerStateComponent를 찾아옴
 	UCSCustomerStateComponent* GetCustomerState() const;
