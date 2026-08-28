@@ -1,0 +1,152 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Data/CSDeliveryOrderTypes.h"
+#include "Subsystems/WorldSubsystem.h"
+#include "CSDeliveryOrderSubsystem.generated.h"
+
+class ACSDeliveryCartActor;
+class ACSDeliveryDestinationActor;
+class ACSDeliveryOrderTerminalActor;
+class UDataTable;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FCSOnDeliveryOrderChanged,
+	const FCSDeliveryOrderRuntime&,
+	Order);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnDeliveryOrdersChanged);
+
+// 영업 시간 중 배달 주문을 만들고, 재고 예약·기한·완료 처리를 일관되게 관리합니다.
+UCLASS()
+class CONVENIENCESTORE_API UCSDeliveryOrderSubsystem : public UTickableWorldSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
+	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	FCSDeliveryOrderRuntime GetCurrentOrder() const;
+
+	// 현재 수락 대기 또는 진행 중인 주문 전체를 반환합니다.
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	TArray<FCSDeliveryOrderRuntime> GetDeliveryOrders() const { return DeliveryOrders; }
+
+	// 오늘 생성된 전체 주문 수와 현재 수락된 주문 수를 UI 요약에 사용합니다.
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	int32 GetTodayGeneratedOrderCount() const { return GeneratedOrderCountToday; }
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	int32 GetAcceptedOrderCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	bool GetDeliveryOrderById(int32 OrderId, FCSDeliveryOrderRuntime& OutOrder) const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	bool HasActiveOrder() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	bool CanAcceptCurrentOrder(FText& OutReason) const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	bool CanAcceptOrder(int32 OrderId, FText& OutReason) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool AcceptCurrentOrder(FText& OutMessage);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool AcceptOrder(int32 OrderId, FText& OutMessage);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool DeclineCurrentOrder(FText& OutMessage);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool DeclineOrder(int32 OrderId, FText& OutMessage);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool CancelCurrentOrder(FText& OutMessage);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
+	bool CancelOrder(int32 OrderId, FText& OutMessage);
+
+	// 배달 목적지에서 수레 적재함을 검사한 뒤 주문 상품만 소비합니다.
+	bool TryCompleteCurrentOrder(
+		ACSDeliveryDestinationActor* Destination,
+		ACSDeliveryCartActor* DeliveryCart,
+		FText& OutMessage);
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order|Stock")
+	int32 GetReservedQuantity(FName ProductId) const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order|Stock")
+	int32 GetAvailableQuantityForOrder(const FDataTableRowHandle& ProductRow) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order|Debug")
+	bool GenerateOrderNow(FText& OutMessage);
+
+	UPROPERTY(BlueprintAssignable, Category = "Delivery Order")
+	FCSOnDeliveryOrderChanged OnDeliveryOrderChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Delivery Order")
+	FCSOnDeliveryOrdersChanged OnDeliveryOrdersChanged;
+
+private:
+	bool TryGenerateRandomOrder(FText& OutMessage);
+	bool IsStoreOperating() const;
+	void RefreshBusinessDayState();
+	void ScheduleNextOrder(float CurrentGameMinutes);
+	int32 GetDailyOrderLimit() const;
+	int32 GetMaximumLineCount() const;
+	int32 FindOrderIndex(int32 OrderId) const;
+	FCSDeliveryOrderRuntime* FindOrderMutable(int32 OrderId);
+	const FCSDeliveryOrderRuntime* FindOrder(int32 OrderId) const;
+	int32 FindPrimaryOrderIndex() const;
+	void ReserveOrderStock(const FCSDeliveryOrderRuntime& Order);
+	void ReleaseOrderReservation(const FCSDeliveryOrderRuntime& Order);
+	void ClearDestinationAssignment(const FCSDeliveryOrderRuntime& Order);
+	void BroadcastOrdersChanged(const FCSDeliveryOrderRuntime& ChangedOrder);
+	void RemoveOrderAt(int32 OrderIndex, ECSDeliveryOrderStatus FinalStatus);
+	void ShowDeadlineExpiredSettlement(const FCSDeliveryOrderRuntime& ExpiredOrder);
+	bool IsOrderAtDestination(const FCSDeliveryOrderRuntime& Order, const ACSDeliveryDestinationActor* Destination) const;
+
+	// 단일 CurrentOrder 대신 여러 수락 대기·진행 중 주문을 함께 보관합니다.
+	UPROPERTY(Transient)
+	TArray<FCSDeliveryOrderRuntime> DeliveryOrders;
+
+	// 기존 단일 주문 UI와의 호환을 위해 가장 우선순위가 높은 주문을 반환합니다.
+	UPROPERTY(Transient)
+	FCSDeliveryOrderRuntime CurrentOrder;
+
+	UPROPERTY(Transient)
+	TMap<FName, int32> ReservedQuantities;
+
+	UPROPERTY(Transient)
+	int32 LastObservedBusinessDay = INDEX_NONE;
+
+	UPROPERTY(Transient)
+	int32 GeneratedOrderCountToday = 0;
+
+	UPROPERTY(Transient)
+	float NextOrderGenerationMinutes = -1.0f;
+
+	UPROPERTY(Transient)
+	int32 NextOrderId = 1;
+
+	// 평판별 최대 주문 수는 낮음 0, 보통 1, 좋음 2, 최고 3건입니다.
+	int32 MaxOrdersVeryBadOrBad = 0;
+	int32 MaxOrdersNormal = 1;
+	int32 MaxOrdersGood = 2;
+	int32 MaxOrdersExcellent = 3;
+	float MinimumOrderIntervalMinutes = 90.0f;
+	float MaximumOrderIntervalMinutes = 180.0f;
+	float AcceptanceWindowMinutes = 120.0f;
+	float DeliveryWindowMinutes = 180.0f;
+	int32 MinimumProductQuantity = 1;
+	int32 MaximumProductQuantity = 3;
+	float InStockProductPreference = 0.7f;
+	// 현재 포스트 프로세스 머티리얼에 설정된 초록 외곽선(Stencil 1)을 기본으로 사용합니다.
+	int32 DeliveryOutlineStencilValue = 1;
+};
