@@ -180,6 +180,16 @@ struct FCSTask_BrowseShelfInstanceData
 	// true인 동안은 Tick 맨 위 분기가 다른 로직을 전부 건너뛰고 InstantDisplayDuration 경과만 기다림
 	UPROPERTY()
 	bool bAwaitingRejectionExit = false;
+
+	// 위 대기가 실제 거절이 아니라 가격에 반응은 있지만 결국 사는 케이스일 때만 true
+	// 대기가 끝나는 시점에 이 플래그를 보고 그냥 지나갈지(false, 기존 거절 흐름) 상품을 담을지(true) 갈림
+	UPROPERTY()
+	bool bPendingTakeProductAfterReaction = false;
+
+	// 위 플래그가 true일 때 대기가 끝난 뒤 담을 상품 액터. 판단 시점(DecidePurchase 직후)과
+	// 실제로 담는 시점(대기 종료 후) 사이에 몇 틱이 비므로 그 사이 기억해둘 곳이 필요해서 추가
+	UPROPERTY()
+	TObjectPtr<AActor> PendingProductActor = nullptr;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Browse Shelf"))

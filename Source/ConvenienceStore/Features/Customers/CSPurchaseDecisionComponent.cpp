@@ -114,39 +114,19 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		return -1.0f;
 	}
 
-	// 데드존/가파름 값을 Archetype에서 가져옴
-	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
-	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
-	// 데드존 바깥 기울기 강화를 위한 배수 곱 (기존 3.0 * Elasticity)
-	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
-
-	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
-	const UCSStorePricingSubsystem* PricingSubsystem =
-		GetWorld() != nullptr
-			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
-			: nullptr;
-	const float ActualPrice = static_cast<float>(
-		IsValid(PricingSubsystem)
-			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
-			: ProductRow->RecommendedSalePrice);
-	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
+	const FCSPriceEvaluation PriceEval = EvaluatePrice(Candidate, *ProductRow);
+	const float PriceScore = PriceEval.PriceScore;
 
 	// 가격 하드컷
-	const float PriceRejectionThreshold = GetEffectivePriceRejectionThreshold();
-	if (PriceScore < PriceRejectionThreshold)
+	if (PriceScore < GetEffectivePriceRejectionThreshold())
 	{
 		OutRejectionInfo.Reason = ECSPurchaseRejectReason::PriceRejected;
 		OutRejectionInfo.ProductId = Candidate.ProductRowHandle.RowName;
-		OutRejectionInfo.ActualPrice = ActualPrice;
-		OutRejectionInfo.ReferencePrice = ReferencePrice;
-
-		// 가격이 정수 단위(1g)로만 조정되는데 예전엔 Severity = 1.0f - PriceScore라
-		// 하드컷 문턱(PriceScore<임계값)을 넘는 순간 Severity가 항상 0.9대로 튀어
-		// 손님이 비싸다는 느낌을 뛰어넘고 바로 터무니없는 가격이라고 여김 (1g 차이로 절벽처럼 느껴짐)
-		// 이제 Severity를 문턱 구간 [0, PriceRejectionThreshold] 안에서 0(문턱 바로 아래, 아슬아슬)~1(가격 0, 터무니없음)로
-		// 다시 정규화해서 문턱을 살짝 넘겼을 땐 비싸다고 여기다가 더 심하게 넘겨야 터무니 없는 가격이라고 여기게 함
-		const float SafeThreshold = FMath::Max(PriceRejectionThreshold, KINDA_SMALL_NUMBER);
-		OutRejectionInfo.Severity = FMath::Clamp((PriceRejectionThreshold - PriceScore) / SafeThreshold, 0.0f, 1.0f);
+		OutRejectionInfo.ActualPrice = PriceEval.ActualPrice;
+		OutRejectionInfo.ReferencePrice = PriceEval.ReferencePrice;
+		// ComputePriceReactionSeverity가 하드컷 구간을 항상 [0.6, 1.0]에 배정하므로
+		// 여기서 나오는 Severity는 언제나 "화남!!" 문턱을 넘는다 - 하드컷 ⟺ 화남!! 불변식
+		OutRejectionInfo.Severity = ComputePriceReactionSeverity(PriceScore);
 		return -1.0f;
 	}
 
@@ -195,17 +175,17 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		EnsureBudgetInitialized(*State);
 
 		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
-		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
+		BudgetScore = ComputeBudgetScore(PriceEval.ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
 
 		// 하드 지갑 초과(-1.0)면 카테고리 차단과 동일하게 구매 불가 신호 전파
 		if (BudgetScore < 0.f)
 		{
 			OutRejectionInfo.Reason = ECSPurchaseRejectReason::HardWalletExceeded;
 			OutRejectionInfo.ProductId = Candidate.ProductRowHandle.RowName;
-			OutRejectionInfo.ActualPrice = ActualPrice;
-			OutRejectionInfo.ReferencePrice = ReferencePrice;
+			OutRejectionInfo.ActualPrice = PriceEval.ActualPrice;
+			OutRejectionInfo.ReferencePrice = PriceEval.ReferencePrice;
 			const float SafeRemainingHardWallet = FMath::Max(static_cast<float>(State->GetRemainingHardWallet()), 1.0f);
-			OutRejectionInfo.Severity = FMath::Clamp((ActualPrice - State->GetRemainingHardWallet()) / SafeRemainingHardWallet, 0.0f, 1.0f);
+			OutRejectionInfo.Severity = FMath::Clamp((PriceEval.ActualPrice - State->GetRemainingHardWallet()) / SafeRemainingHardWallet, 0.0f, 1.0f);
 			return -1.0f;
 		}
 	}
@@ -330,7 +310,7 @@ int32 UCSPurchaseDecisionComponent::SoftmaxSelectIndex(const TArray<FCSPurchaseC
 // 진짜 원인 판정 기준: 반복구매 감쇠를 걷어내도(RepeatCount=0 가정) 여전히 기준선을 못 넘었을까?
 // 못 넘었으면(=애초부터 안 살 상품이었음) 진짜 가격/선호 문제라 PriceRejected로 표시
 // 넘었으면(=반복구매가 이번에만 결정타) 플레이어에게 알릴 이유가 없는 조용한 미구매라고 판단해 Reason=None으로 남겨둔다(연출 안 함)
-FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float Score) const
+FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate) const
 {
 	FCSPurchaseRejectionInfo Info;
 
@@ -340,20 +320,7 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 		return Info; // 데이터 무결성 문제 - 표시 대상 아님(Reason=None 기본값 그대로)
 	}
 
-	const float ReferencePrice = static_cast<float>(ProductRow->RecommendedSalePrice);
-	const UCSStorePricingSubsystem* PricingSubsystem =
-		GetWorld() != nullptr
-			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
-			: nullptr;
-	const float ActualPrice = static_cast<float>(
-		IsValid(PricingSubsystem)
-			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
-			: ProductRow->RecommendedSalePrice);
-
-	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
-	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
-	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
-	const float PriceScore = ComputePriceScore(ActualPrice, ReferencePrice, DeadZoneRatio, Steepness);
+	const FCSPriceEvaluation PriceEval = EvaluatePrice(Candidate, *ProductRow);
 
 	// 반복구매 감쇠를 걷어낸(RepeatCount=0 가정) 원래 카테고리 점수로 가상 총점을 다시 계산
 	// CategoryScore/BudgetScore가 여기서 -1일 수 없음 - 그랬다면 ScoreCandidate가 그 단계에서
@@ -364,12 +331,12 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 	if (UCSCustomerStateComponent* State = GetCustomerState())
 	{
 		const float OverrunPenalty = Archetype ? Archetype->BudgetOverrunPenalty : FallbackBudgetOverrunPenalty;
-		BudgetScore = ComputeBudgetScore(ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
+		BudgetScore = ComputeBudgetScore(PriceEval.ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
 	}
 
 	const float WeightSum = W_Price + W_Category + W_Budget;
 	const float ScoreWithoutRepeatPenalty = (WeightSum > 0.f)
-		? FMath::Clamp((W_Price * PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum, 0.f, 1.f)
+		? FMath::Clamp((W_Price * PriceEval.PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum, 0.f, 1.f)
 		: 0.f;
 
 	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
@@ -377,11 +344,11 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 		// 반복구매 감쇠를 빼고 봐도 기준선을 못 넘음 - 애초부터 가격/선호가 문제였던 진짜 거절
 		Info.Reason = ECSPurchaseRejectReason::PriceRejected;
 		Info.ProductId = Candidate.ProductRowHandle.RowName;
-		Info.ActualPrice = ActualPrice;
-		Info.ReferencePrice = ReferencePrice;
-
-		const float SafeMinPurchaseUtility = FMath::Max(GetEffectiveMinPurchaseUtility(), KINDA_SMALL_NUMBER);
-		Info.Severity = FMath::Clamp((GetEffectiveMinPurchaseUtility() - Score) / SafeMinPurchaseUtility, 0.0f, 1.0f);
+		Info.ActualPrice = PriceEval.ActualPrice;
+		Info.ReferencePrice = PriceEval.ReferencePrice;
+		// 총점 기반이 아니라 다른 두 경로(하드컷/구매성공 시 가격반응)와 동일하게 PriceScore 기반으로
+		// 통일 - 세 경로의 Severity가 같은 척도 위에 있어야 DT 티어 문턱이 일관되게 작동함
+		Info.Severity = ComputePriceReactionSeverity(PriceEval.PriceScore);
 	}
 	// else: 반복구매 감쇠가 이번 거절의 진짜 원인 - Reason=None(기본값)으로 두고 조용히 미구매
 
@@ -416,13 +383,16 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	// 1등 점수가 최소 구매 임계치보다 낮으면 손님이 살 게 없다고 판단하고 지나감
 	if (TopCandidates[0].Score < GetEffectiveMinPurchaseUtility())
 	{
-		OutRejectionInfo = BuildScoreShortfallRejectionInfo(TopCandidates[0], TopCandidates[0].Score);
+		OutRejectionInfo = BuildScoreShortfallRejectionInfo(TopCandidates[0]);
 		return false;
 	}
 
 	// 상위 후보들 중 softmax 확률로 하나 뽑기
 	const int32 SelectedIndex = SoftmaxSelectIndex(TopCandidates);
 	OutSelected = TopCandidates[SelectedIndex];
+
+	// 구매에 성공해도 가격이 어느 정도 부담스러웠으면 반응을 남김
+	OutRejectionInfo = BuildPriceReactionInfo(OutSelected);
 	return true;
 }
 
@@ -613,4 +583,75 @@ FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejec
 	Args.Add(TEXT("ActualPrice"), FText::AsNumber(FMath::RoundToInt(Info.ActualPrice)));
 	Args.Add(TEXT("ReferencePrice"), FText::AsNumber(FMath::RoundToInt(Info.ReferencePrice)));
 	return FText::Format(Tier.InnerThoughtTemplate, Args);
+}
+
+// 실제가/기준가 조회 + 데드존/기울기 반영 PriceScore 계산까지 한 번에 처리하는 공용 헬퍼
+// ScoreCandidate/BuildScoreShortfallRejectionInfo/BuildPriceReactionInfo가 전부 이 절차를 반복해서 뽑아냄
+UCSPurchaseDecisionComponent::FCSPriceEvaluation UCSPurchaseDecisionComponent::EvaluatePrice(const FCSPurchaseCandidate& Candidate, const FCSProductDataRow& ProductRow) const
+{
+	FCSPriceEvaluation Eval;
+	Eval.ReferencePrice = static_cast<float>(ProductRow.RecommendedSalePrice);
+
+	const UCSStorePricingSubsystem* PricingSubsystem =
+		GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStorePricingSubsystem>()
+			: nullptr;
+	Eval.ActualPrice = static_cast<float>(
+		IsValid(PricingSubsystem)
+			? PricingSubsystem->GetSalePrice(Candidate.ProductRowHandle)
+			: ProductRow.RecommendedSalePrice);
+
+	const float DeadZoneRatio = Archetype ? Archetype->AcceptanceLatitude : FallbackAcceptanceLatitude;
+	const float Elasticity = Archetype ? Archetype->PriceElasticity : FallbackPriceElasticity;
+	const float Steepness = 3.0f * Elasticity * PriceSteepnessMultiplier;
+	Eval.PriceScore = ComputePriceScore(Eval.ActualPrice, Eval.ReferencePrice, DeadZoneRatio, Steepness);
+	return Eval;
+}
+
+// PriceScore로 가격에 대한 반응 강도를 0(무반응)~1(최고 강도)로 환산
+float UCSPurchaseDecisionComponent::ComputePriceReactionSeverity(float PriceScore) const
+{
+	if (PriceScore >= 0.5f)
+	{
+		return 0.0f; // 데드존 이내이거나 더 저렴함 - 반응 없음
+	}
+
+	const float Threshold = GetEffectivePriceRejectionThreshold();
+	if (PriceScore <= Threshold)
+	{
+		// 하드컷 구간 - 항상 [0.6, 1.0]에 배정 너무 비싸서 화나는 정도의 문턱(DT SeverityThreshold 0.6)을 반드시 넘게 함
+		const float SafeThreshold = FMath::Max(Threshold, KINDA_SMALL_NUMBER);
+		return 0.6f + 0.4f * FMath::Clamp((Threshold - PriceScore) / SafeThreshold, 0.0f, 1.0f);
+	}
+
+	// 데드존 밖 ~ 하드컷 문턱 사이 - [0, 0.6) 구간에 배정
+	const float SafeSpan = FMath::Max(0.5f - Threshold, KINDA_SMALL_NUMBER);
+	return 0.6f * FMath::Clamp((0.5f - PriceScore) / SafeSpan, 0.0f, 1.0f);
+}
+
+// 구매 성공 여부와 무관하게 후보 하나의 가격 반응 정보를 만든다
+// Severity가 0이면(데드존 이내) 기본값(Reason=None)을 그대로 반환해 무반응을 표현
+FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildPriceReactionInfo(const FCSPurchaseCandidate& Candidate) const
+{
+	FCSPurchaseRejectionInfo Info;
+
+	const FCSProductDataRow* ProductRow = GetProductRow(Candidate);
+	if (ProductRow == nullptr)
+	{
+		return Info; // 데이터 무결성 문제 - 표시 대상 아님
+	}
+
+	const FCSPriceEvaluation Eval = EvaluatePrice(Candidate, *ProductRow);
+	const float Severity = ComputePriceReactionSeverity(Eval.PriceScore);
+	if (Severity <= 0.0f)
+	{
+		return Info; // 무반응
+	}
+
+	Info.Reason = ECSPurchaseRejectReason::PriceRejected;
+	Info.ProductId = Candidate.ProductRowHandle.RowName;
+	Info.ActualPrice = Eval.ActualPrice;
+	Info.ReferencePrice = Eval.ReferencePrice;
+	Info.Severity = Severity;
+	return Info;
 }
