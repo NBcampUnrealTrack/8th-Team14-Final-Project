@@ -49,8 +49,22 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 설 자리는 진열대의 CustomerShoppingPoint 마커에서 받아옵니다.
+	FVector BrowseLocation;
+	FRotator BrowseFacing;
+	float BrowseRadius = 0.0f;
+	if (!Subsystem->TryGetShelfBrowsePoint(PickedShelf, BrowseLocation, BrowseFacing, BrowseRadius))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[BrowseZone] %s: CustomerShoppingPoint 주변에 NavMesh가 없어 갈 수 없습니다. "
+				 "마커를 NavObstacleBox 바깥의 걸을 수 있는 바닥 위로 옮기세요."),
+			*PickedShelf->GetName());
+		State->MarkVisited(PickedShelf);
+		return EStateTreeRunStatus::Failed;
+	}
+
 	Data.TargetShelf = PickedShelf;
-	Data.TargetLocation = Subsystem->GetShelfBrowseLocation(PickedShelf, Data.BrowseDistance);
+	Data.TargetLocation = BrowseLocation;
 
 	// Succeeded를 반환하지 않고 Running을 반환합니다.
 	// 그래야 이 상태가 종료되지 않고 계속 유지되면서 자식 상태(MoveTo, Browse)들이
@@ -73,8 +87,24 @@ EStateTreeRunStatus FCSTask_MoveToLocation::EnterState(FStateTreeExecutionContex
 		return EStateTreeRunStatus::Failed;
 	}
 
-	const EPathFollowingRequestResult::Type Result =
-		Controller->MoveToLocation(Data.TargetLocation, Data.AcceptanceRadius);
+	// 진열대로 가는 이동이면 진열대가 정한 영역 반경 안에서 멈춤
+	float StopRadius = Data.AcceptanceRadius;
+	if (Data.TargetShelf != nullptr)
+	{
+		if (const UCSCustomerRuntimeSubsystem* Subsystem =
+			Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			FVector ZoneCenter;
+			FRotator ZoneFacing;
+			float ZoneRadius = 0.0f;
+			if (Subsystem->TryGetShelfBrowsePoint(Data.TargetShelf, ZoneCenter, ZoneFacing, ZoneRadius))
+			{
+				StopRadius = ZoneRadius;
+			}
+		}
+	}
+
+	const EPathFollowingRequestResult::Type Result = Controller->MoveToLocation(Data.TargetLocation, StopRadius, false);
 
 	if (Result == EPathFollowingRequestResult::Failed)
 	{
@@ -105,17 +135,49 @@ EStateTreeRunStatus FCSTask_MoveToLocation::Tick(FStateTreeExecutionContext& Con
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Idle)
 	{
 		const APawn* Pawn = Controller->GetPawn();
-		if (Pawn != nullptr)
+		if (Pawn == nullptr)
 		{
-			const float Dist2D = FVector::Dist2D(Pawn->GetActorLocation(), Data.TargetLocation);
+			return EStateTreeRunStatus::Failed;
+		}
 
-			// 캐릭터가 목표에 정확히 멈추지 못했다고  실패 처리되는 현상을 막기 위해 +100.0f 만큼의 거리를 허용
-			if (Dist2D <= Data.AcceptanceRadius + 100.0f)
+		// 진열대로 가는 이동이면 "그 진열대의 영역(마커 중심 · BrowseZoneRadius) 안에 멈췄는가"가
+		// 유일한 성공 조건입니다. 거리로 판정하면 진열대마다 기준이 달라집니다.
+		if (Data.TargetShelf != nullptr)
+		{
+			const UCSCustomerRuntimeSubsystem* Subsystem =
+				Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+			if (Subsystem == nullptr)
 			{
+				return EStateTreeRunStatus::Failed;
+			}
+
+			// 손님이 진열대의 구경 영역 안에 있는지 확인.
+			if (Subsystem->IsCustomerInsideBrowseZone(Data.TargetShelf, Pawn))
+			{
+				// 영역 안에 들어왔다면 이동 성공으로 판정
 				return EStateTreeRunStatus::Succeeded;
 			}
+			else
+			{
+				// 영역 밖에 있다면 이동 실패로 판정
+				return EStateTreeRunStatus::Failed;
+			}
 		}
-		return EStateTreeRunStatus::Failed;
+
+		// 계산대·출구처럼 영역이 없는 이동은 기존 거리 판정을 사용
+		const float Dist2D = FVector::Dist2D(Pawn->GetActorLocation(), Data.TargetLocation);
+
+		// 손님의 현재 위치와 목표 위치 사이의 평면 거리가 허용 반경 이내인지 확인
+		if (Dist2D <= Data.AcceptanceRadius)
+		{
+			// 허용 반경 안으로 들어왔다면 이동 성공으로 판정
+			return EStateTreeRunStatus::Succeeded;
+		}
+		else
+		{
+			// 허용 반경 밖에서 멈췄다면 이동 실패로 판정
+			return EStateTreeRunStatus::Failed;
+		}
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -504,11 +566,20 @@ EStateTreeRunStatus FCSTask_ReturnProducts::EnterState(FStateTreeExecutionContex
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	const FVector TargetLocation =
-		Subsystem->GetShelfBrowseLocation(Data.TargetShelf, Data.BrowseDistance);
+	// 설 자리는 진열대의 CustomerShoppingPoint 마커에서 받아옵니다.
+	FVector TargetLocation;
+	FRotator TargetFacing;
+	float TargetRadius = 0.0f;
+	if (!Subsystem->TryGetShelfBrowsePoint(Data.TargetShelf, TargetLocation, TargetFacing, TargetRadius))
+	{
+		// 예외처리) 붙잡아두면 손님이 상품을 든 채 소멸해 재고가 증발하므로 그 자리에 떨굽니다.
+		Subsystem->DropCustomerItems(Data.Actor);
+		return EStateTreeRunStatus::Succeeded;
+	}
 
+	// 여기는 TargetShelf를 이미 알고 있으므로 진열대가 정한 영역 반경을 그대로 씁니다.
 	const EPathFollowingRequestResult::Type Result =
-		Data.AIController->MoveToLocation(TargetLocation, Data.AcceptanceRadius);
+		Data.AIController->MoveToLocation(TargetLocation, TargetRadius, false);
 
 	if (Result == EPathFollowingRequestResult::AlreadyAtGoal)
 	{

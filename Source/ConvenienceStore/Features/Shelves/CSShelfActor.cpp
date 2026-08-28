@@ -1,11 +1,13 @@
 #include "Features/Shelves/CSShelfActor.h"
 
 #include "Components/ArrowComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "NavigationSystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
 ACSShelfActor::ACSShelfActor()
@@ -20,6 +22,31 @@ ACSShelfActor::ACSShelfActor()
 	ShelfMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShelfMesh"));
 	ShelfMesh->SetupAttachment(SceneRoot);
 	ShelfMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	// 진열대 위에 NavMesh가 깔리는 것을 막기 위한 박스입니다.
+	NavObstacleBox = CreateDefaultSubobject<UBoxComponent>(TEXT("NavObstacleBox"));
+	NavObstacleBox->SetupAttachment(SceneRoot);
+	// 충돌처리는 관여X
+	NavObstacleBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	NavObstacleBox->SetGenerateOverlapEvents(false);
+	// Dynamic Obstacle은 충돌 여부와 무관하게 박스 모양 그대로 NavMesh에 반영됩니다.
+	NavObstacleBox->SetCanEverAffectNavigation(true);
+	NavObstacleBox->bDynamicObstacle = true;
+	// 편집 중에만 보이는 표시물입니다.
+	NavObstacleBox->SetHiddenInGame(true);
+
+	// 손님이 설 자리를 가리키는 마커
+	CustomerShoppingPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("CustomerShoppingPoint"));
+	CustomerShoppingPoint->SetupAttachment(SceneRoot);
+	// 진열대 정면 120cm. NavObstacleBox 바깥이면서 NavMesh가 깔린 자리여야 합니다.
+	CustomerShoppingPoint->SetRelativeLocation(FVector(120.0f, 0.0f, 0.0f));
+	// Yaw 180 = 손님이 진열대를 돌아보는 방향입니다.
+	CustomerShoppingPoint->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
+	CustomerShoppingPoint->SetCanEverAffectNavigation(false);
+	CustomerShoppingPoint->SetHiddenInGame(true);
+	// 에디터에서 슬롯 마커와 구분되도록 색과 크기를 다르게 설정
+	CustomerShoppingPoint->ArrowColor = FColor(60, 200, 255);
+	CustomerShoppingPoint->ArrowSize = 1.5f;
 }
 
 void ACSShelfActor::OnConstruction(const FTransform& Transform)
@@ -219,29 +246,54 @@ void ACSShelfActor::SyncFacilityData()
 	}
 }
 
-bool ACSShelfActor::TryGetCustomerBrowseLocation(FVector& OutLocation) const
+bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const
 {
-	TArray<UArrowComponent*> ArrowComponents;
-	GetComponents<UArrowComponent>(ArrowComponents);
+	OutCenter = FVector::ZeroVector;
+	OutFacing = FRotator::ZeroRotator;
+	OutRadius = 0.0f;
 
-	static const FString BrowsePointName = TEXT("CustomerBrowsePoint");
-	static const FString BrowsePointPrefix = BrowsePointName + TEXT("_");
-	for (const UArrowComponent* ArrowComponent : ArrowComponents)
+	UWorld* World = GetWorld();
+	if (World == nullptr || !IsValid(CustomerShoppingPoint))
 	{
-		if (!IsValid(ArrowComponent))
-		{
-			continue;
-		}
-
-		const FString ComponentName = ArrowComponent->GetName();
-		if (ComponentName == BrowsePointName || ComponentName.StartsWith(BrowsePointPrefix))
-		{
-			OutLocation = ArrowComponent->GetComponentLocation();
-			return true;
-		}
+		return false;
 	}
 
-	return false;
+	const UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
+	if (NavSys == nullptr)
+	{
+		return false;
+	}
+
+	const FVector MarkerLocation = CustomerShoppingPoint->GetComponentLocation();
+
+	// 마커의 XY는 고정하고 Z만 NavMesh 높이로 맞춥니다.
+	const FVector QueryExtent(0.0f, 0.0f, 300.0f);
+	FNavLocation Projected;
+	if (!NavSys->ProjectPointToNavigation(MarkerLocation, Projected, QueryExtent))
+	{
+		// 마커 자리에 걸을 수 있는 바닥이 없음 → 갈 수 없는 진열대
+		return false;
+	}
+
+	OutCenter = FVector(MarkerLocation.X, MarkerLocation.Y, Projected.Location.Z);
+	// 캡슐이 기울지 않도록 Yaw만 남김
+	OutFacing = FRotator(0.0f, CustomerShoppingPoint->GetComponentRotation().Yaw, 0.0f);
+	OutRadius = BrowseZoneRadius;
+	return true;
+}
+
+bool ACSShelfActor::IsPointInsideBrowseZone(const FVector& WorldPoint) const
+{
+	FVector Center;
+	FRotator Facing;
+	float Radius = 0.0f;
+	if (!TryGetBrowseZone(Center, Facing, Radius))
+	{
+		return false;
+	}
+
+	// 종족마다 캡슐 높이가 달라 Z를 보면 판정이 종족별로 달라지므로 XY 거리만 비교
+	return FVector::Dist2D(WorldPoint, Center) <= Radius;
 }
 
 bool ACSShelfActor::TryGetSlotMarkerIndex(
