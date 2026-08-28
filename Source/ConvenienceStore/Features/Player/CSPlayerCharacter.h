@@ -13,6 +13,7 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMeshComponent;
 class ACSCartActor;
+class ACSDeliveryCartActor;
 class ACSDeliveryCrateActor;
 class ACSMagicWandActor;
 class ACSProductPickupActor;
@@ -103,6 +104,13 @@ protected:
 	// 현재 손잡이를 잡고 밀고 있는 수레입니다. 손에 드는 HeldActor와는 분리합니다.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Cart")
 	TObjectPtr<ACSCartActor> PushedCart;
+
+	// 운전 중인 배달 수레입니다. 일반 배송 상자 수레와 별도 상태로 관리합니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery Cart")
+	TObjectPtr<ACSDeliveryCartActor> DrivenDeliveryCart;
+
+	UPROPERTY(Transient)
+	bool bPreviousUseControllerRotationYaw = true;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Player|Mode")
 	ECSPlayerMode CurrentPlayerMode = ECSPlayerMode::Normal;
@@ -293,6 +301,9 @@ private:
 	void DropHeldItem();
 	void ThrowHeldItem();
 	void ToggleCartPush();
+	bool StartDrivingDeliveryCart(ACSDeliveryCartActor* DeliveryCart);
+	void StopDrivingDeliveryCart();
+	void ClearDeliveryCartDriveInput();
 	void SelectQuickbarSlot1();
 	void SelectQuickbarSlot2();
 	void SelectQuickbarSlot3();
