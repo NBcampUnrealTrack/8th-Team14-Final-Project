@@ -9,6 +9,7 @@
 #include "CSShelfActor.generated.h"
 
 class UArrowComponent;
+class UBoxComponent;
 class UPrimitiveComponent;
 class USceneComponent;
 class UStaticMeshComponent;
@@ -103,8 +104,11 @@ public:
 	// 조준 위치와 무관하게 진열대 전체에 배치 가능한 슬롯이 있는지 기준으로 외곽선 상태를 반환합니다.
 	ECSShelfPlacementPreviewState GetPlacementHighlightState(AActor* ItemActor) const;
 
-	// 선택적 손님 접근 마커가 있으면 해당 컴포넌트의 월드 위치를 반환합니다.
-	bool TryGetCustomerBrowseLocation(FVector& OutLocation) const;
+	// 손님 접근 마커를 기준으로 만든 도착 판정 영역을 반환
+	bool TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const;
+
+	// 월드 좌표가 도착 판정 영역 안인지 확인합니다.
+	bool IsPointInsideBrowseZone(const FVector& WorldPoint) const;
 
 	// 상품이 이 진열대에 배치될 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "Shelf")
@@ -139,6 +143,19 @@ protected:
 	// 개별 가구 블루프린트에서 메시 높이를 보정할 수 있도록 SceneRoot의 자식으로 둡니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ShelfMesh;
+
+	// 진열대 위에 NavMesh가 생성되지 않도록 막는 Box
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> NavObstacleBox;
+
+	// 손님이 진열대에 설 자리를 가리키는 마커입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UArrowComponent> CustomerShoppingPoint;
+
+	// 마커를 중심으로 만드는 도착 판정 영역의 반경
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Customer",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float BrowseZoneRadius = 75.0f;
 
 	// 미설치 물리를 켜기 직전의 Blueprint 상대 위치·회전·스케일을 보존합니다.
 	UPROPERTY(Transient)
