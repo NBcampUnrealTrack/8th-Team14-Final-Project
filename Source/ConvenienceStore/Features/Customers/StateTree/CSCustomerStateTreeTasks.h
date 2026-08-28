@@ -37,16 +37,13 @@ struct FCSTask_PickNextShelfInstanceData
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<ACSCustomerCharacter> Actor = nullptr;
 
-	// 진열대 정면에서 얼마나 떨어져 설지.
-	// 손님이 진열대 뒤에 선다면 음수로 바꿔서 방향 반전
-	UPROPERTY(EditAnywhere, Category = "Parameter")
-	float BrowseDistance = 120.0f;
-
 	// 선택된 진열대 (자식 상태의 Browse가 Input으로 사용)
 	UPROPERTY(EditAnywhere, Category = "Output")
 	TObjectPtr<AActor> TargetShelf = nullptr;
 
-	// 선택된 진열대의 구경 위치 (자식 상태의 MoveTo가 Input으로 사용)
+	// 선택된 진열대의 CustomerShoppingPoint 마커에서 받아온 설 자리
+	// (자식 상태의 MoveTo가 Input으로 사용).
+	// 거리 상수(BrowseDistance)로 계산하지 않고 진열대가 소유한 마커 값을 그대로 씁니다.
 	UPROPERTY(EditAnywhere, Category = "Output")
 	FVector TargetLocation = FVector::ZeroVector;
 };
@@ -91,9 +88,21 @@ struct FCSTask_MoveToLocationInstanceData
 	UPROPERTY(EditAnywhere, Category = "Input")
 	FVector TargetLocation = FVector::ZeroVector;
 
-	/// 이 거리 안쪽이면 도착 처리
-	UPROPERTY(EditAnywhere, Category = "Parameter")
-	float AcceptanceRadius = 50.0f;
+	// 진열대로 가는 이동이면 그 진열대를 바인딩합니다(PickNextShelf의 TargetShelf Output).
+	// 지정하면 정지 반경과 도착 판정을 **진열대가 소유한 BrowseZoneRadius**로 처리합니다.
+	// 계산대·출구처럼 영역이 없는 이동은 비워두면 아래 AcceptanceRadius로 기존 거리 판정을 씁니다.
+	UPROPERTY(EditAnywhere, Category = "Input")
+	TObjectPtr<AActor> TargetShelf = nullptr;
+
+	// TargetShelf가 비었을 때만 쓰는 값입니다.
+	// 경로 추종이 목표 앞에서 멈추는 거리이자, 도착 성공으로 인정하는 거리입니다.
+	// (bStopOnOverlap을 꺼서 두 값이 같아졌습니다)
+	//
+	// AgentRadius(75) 아래로 내리지 마세요.
+	// NavMesh가 벽·장애물에서 AgentRadius만큼 깎이므로, 목표가 구조물 근처면
+	// 손님이 그보다 가까이 갈 수 없어 도착 판정이 영영 통과하지 못합니다.
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float AcceptanceRadius = 75.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Move To Location"))
@@ -295,13 +304,6 @@ struct FCSTask_ReturnProductsInstanceData
 
 	UPROPERTY(EditAnywhere, Category = "Context")
 	TObjectPtr<AAIController> AIController = nullptr;
-
-	// 진열대 정면에서 얼마나 떨어져 설지. PickNextShelf와 같은 의미 (수정예정)
-	UPROPERTY(EditAnywhere, Category = "Parameter")
-	float BrowseDistance = 120.0f;
-
-	UPROPERTY(EditAnywhere, Category = "Parameter")
-	float AcceptanceRadius = 60.0f;
 
 	// 되돌려놓으러 가는 진열대
 	UPROPERTY()

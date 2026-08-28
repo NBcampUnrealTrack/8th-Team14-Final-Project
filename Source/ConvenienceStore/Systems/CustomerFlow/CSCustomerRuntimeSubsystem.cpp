@@ -9,6 +9,7 @@
 #include "Data/CSProductTypes.h"
 #include "EngineUtils.h"
 #include "Components/ArrowComponent.h"
+#include "NavigationSystem.h"
 // 아래 3개는 팀원 파일에 따라 수정해야함
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Items/CSProductPickupActor.h"
@@ -92,25 +93,43 @@ const TArray<TObjectPtr<AActor>>& UCSCustomerRuntimeSubsystem::GetShelves() cons
 	return Shelves;
 }
 
-FVector UCSCustomerRuntimeSubsystem::GetShelfBrowseLocation(const AActor* ShelfActor, const float BrowseDistance) const
+bool UCSCustomerRuntimeSubsystem::TryGetShelfBrowsePoint(const AActor* ShelfActor,FVector& OutLocation,FRotator& OutFacing,float& OutRadius) const
 {
-	if (ShelfActor == nullptr)
+	OutLocation = FVector::ZeroVector;
+	OutFacing = FRotator::ZeroRotator;
+	OutRadius = 0.0f;
+
+	const ACSShelfActor* Shelf = Cast<ACSShelfActor>(ShelfActor);
+	if (Shelf == nullptr)
 	{
-		return FVector::ZeroVector;
+		return false;
 	}
 
-	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(ShelfActor))
+	return Shelf->TryGetBrowseZone(OutLocation, OutFacing, OutRadius);
+}
+
+bool UCSCustomerRuntimeSubsystem::IsCustomerInsideBrowseZone(const AActor* ShelfActor,
+	const AActor* Customer) const
+{
+	const ACSShelfActor* Shelf = Cast<ACSShelfActor>(ShelfActor);
+	if (Shelf == nullptr || !IsValid(Customer))
 	{
-		FVector BrowseLocation;
-		if (Shelf->TryGetCustomerBrowseLocation(BrowseLocation))
-		{
-			return BrowseLocation;
-		}
+		return false;
 	}
 
-	//진열대 위치 + 진열대 정면방향 × BrowseDistance 를 계산해 반환. 손님이 그 진열대 앞에 서는 좌표반환
-	//EQS나 진열대에서 서 있는 위치를 알려줄 수 있으면 BrowseDistance 삭제 가능
-	return ShelfActor->GetActorLocation() + ShelfActor->GetActorForwardVector() * BrowseDistance;
+	return Shelf->IsPointInsideBrowseZone(Customer->GetActorLocation());
+}
+
+bool UCSCustomerRuntimeSubsystem::IsShelfSelectable(const AActor* ShelfActor) const
+{
+	// 접근 영역 유효성은 여기서 보지 않습니다.
+	// PickNextShelf가 TryGetShelfBrowsePoint 실패 시 MarkVisited 후 Failed로 끝내므로
+	// 못 갈 진열대가 다시 뽑히는 일이 없고, 그쪽에서 원인 로그도 남습니다.
+	// 여기서 미리 거르면 그 로그가 영영 안 찍히고, 이 함수가 StateTree 조건에서
+	// 매번 호출되는 만큼 진열대 수 × 손님 수만큼 NavMesh 투영이 발생합니다.
+	return IsValid(ShelfActor) &&
+		ShelfActor->Implements<UCSBuildableFacility>() &&
+		ICSBuildableFacility::Execute_IsFacilityInstalled(ShelfActor);
 }
 
 // [임시/테스트용]
@@ -122,9 +141,7 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObje
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (!IsValid(Shelf) ||
-			!Shelf->Implements<UCSBuildableFacility>() ||
-			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
+		if (!IsShelfSelectable(Shelf))
 		{
 			continue;
 		}
@@ -164,9 +181,9 @@ bool UCSCustomerRuntimeSubsystem::HasUnvisitedShelf(const TArray<TObjectPtr<AAct
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (!IsValid(Shelf) ||
-			!Shelf->Implements<UCSBuildableFacility>() ||
-			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
+		// PickRandomUnvisitedShelf와 후보 조건이 어긋나면
+		// "갈 곳이 있다"고 판정해놓고 정작 못 뽑는 상태가 되므로 같은 함수를 씁니다.
+		if (!IsShelfSelectable(Shelf))
 		{
 			continue;
 		}
@@ -776,9 +793,7 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomShelf() const
 	for (int32 i = 0; i < Shelves.Num(); i++)
 	{
 		AActor* Shelf = Shelves[i];
-		if (!IsValid(Shelf) ||
-			!Shelf->Implements<UCSBuildableFacility>() ||
-			!ICSBuildableFacility::Execute_IsFacilityInstalled(Shelf))
+		if (!IsShelfSelectable(Shelf))
 		{
 			continue;
 		}

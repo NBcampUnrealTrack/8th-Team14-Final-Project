@@ -88,9 +88,16 @@ public:
 	// 등록된 진열대 목록 Get 함수, 소비심리 파트가 목표를 정할 때 이 목록 쓰일 가능성 높음
 	const TArray<TObjectPtr<AActor>>& GetShelves() const;
 
-	// 손님이 진열대 앞에 서는 좌표. (현재 값을 줘서 직접 서 있는 위치를 값으로 제공)
-	// [중요] EQS나 진열대에서 서 있는 위치를 알려줄 수 있으면 [BrowseDistance 삭제 가능]
-	FVector GetShelfBrowseLocation(const AActor* ShelfActor, const float BrowseDistance) const;
+	// 손님이 진열대 앞에 설 자리와 도착 판정 영역을 진열대에서 받아옴
+	bool TryGetShelfBrowsePoint(const AActor* ShelfActor,FVector& OutLocation,FRotator& OutFacing,float& OutRadius) const;
+
+	// 손님이 지금 이 진열대의 도착 판정 영역 안에 있는지 확인합니다.
+	bool IsCustomerInsideBrowseZone(const AActor* ShelfActor, const AActor* Customer) const;
+
+	// 손님 방문 후보가 될 수 있는 진열대인지 한 번에 판정합니다.
+	// (유효 + 시설 인터페이스 구현 + 설치 완료)
+	// 진열대를 고르는 세 곳이 같은 조건을 쓰도록 모음
+	bool IsShelfSelectable(const AActor* ShelfActor) const;
 
 	// [임시 테스트용] 아직 안 가본 진열대 중 하나를 랜덤 반환. 없으면 nullptr
 	// 방문 기록은 손님 개인 데이터라 UCSCustomerStateComponent가 가지고 있기 때문에 서브시스템은 손님 목록이 없으므로 호출할 때 같이 넘겨줘야 한다
