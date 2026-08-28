@@ -9,6 +9,8 @@
 #include "Data/CSPurchaseDecisionTypes.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "DrawDebugHelpers.h"
 
 // =====================================================================
 // PickNextShelf
@@ -216,6 +218,32 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 	return EStateTreeRunStatus::Running;
 }
 
+// 거절 즉시표시(DrawDebugString) + LastRejectionInfo/LastRejectionTime 기록 +
+// NotifyPurchaseRejected 방송을 한 번에 처리하는 공용 절차. 빈 진열대 분기와 정상 거절 분기가 동일하게 씀
+static void CS_HandlePurchaseRejection(
+	FCSTask_BrowseShelfInstanceData& Data,
+	ACSCustomerCharacter& Customer,
+	UCSCustomerStateComponent& State,
+	UCSCustomerRuntimeSubsystem& Subsystem,
+	UCSPurchaseDecisionComponent& Decision,
+	const FCSPurchaseRejectionInfo& RejectionInfo,
+	UWorld* World)
+{
+	State.LastRejectionInfo = RejectionInfo;
+	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+
+	DrawDebugString(
+		World,
+		Customer.GetActorLocation() + FVector(0.0f, 0.0f, Customer.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
+		Decision.GetRejectionDisplayTier(RejectionInfo).DebugText.ToString(),
+		nullptr, FColor::White, Decision.GetInstantDisplayDuration(RejectionInfo.Reason), true);
+
+	Subsystem.NotifyPurchaseRejected(&Customer, RejectionInfo);
+
+	Data.bAwaitingRejectionExit = true;
+	Data.ElapsedTime = 0.0f;
+}
+
 EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
@@ -232,6 +260,29 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// Decision 조회를 여기로 옮김
+	UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+	if (Decision == nullptr)
+	{
+		// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 세션 자체를 진행할 수 없으므로 여기서 종료
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 거절 즉시표시가 떠 있는 동안은 다른 판단을 전부 건너뛰고 대기만 함
+	// (손님이 다음 진열대로 넘어가지 않고 그 자리에 머무르게 하는 역할)
+	// 대기시간은 방금 저장된 사유(State->LastRejectionInfo.Reason)에 따라 달라짐 - ShelfEmpty만 짧음
+	if (Data.bAwaitingRejectionExit)
+	{
+		if (Data.ElapsedTime < Decision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		Data.bAwaitingRejectionExit = false;
+		Data.ElapsedTime = 0.0f;
+		return EStateTreeRunStatus::Succeeded;
+	}
+
 	// 첫 라운드(세션 진입)에 재고가 없으면 세션 자체를 시작하지 않고 GlanceTime만큼만 짧게 머물다 지나감
 	// RoundCount == 0으로 제한하는 이유: 세션 도중(라운드 1 이상)에 다른 손님이 재고를 다 사가서 없어진 경우는
 	// 여기로 다시 빠지지 않고, 아래 BuildPurchaseCandidates가 빈 배열을 만들어 DecidePurchase가 자연히
@@ -246,7 +297,12 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		State->MarkVisited(ShelfActor);
 		// 진열대가 비어있어도 와서 확인하는 데는 시간이 들었다고 보고 최소 1만큼 차감 (기존 else 분기 그대로 유지)
 		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
-		return EStateTreeRunStatus::Succeeded;
+
+		// 빈 진열대도 거절 연출 대상 - 사유 기록 + 디버그 텍스트 + 방송 + 대기상태 진입
+		FCSPurchaseRejectionInfo RejectionInfo;
+		RejectionInfo.Reason = ECSPurchaseRejectReason::ShelfEmpty;
+		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
+		return EStateTreeRunStatus::Running;
 	}
 
 	// 라운드 0(첫 방문)은 BrowseTime, 그 이후 라운드는 SessionInterval만큼 대기 후 판단
@@ -264,13 +320,6 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		State->MarkVisited(ShelfActor);
 	}
 
-	// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 세션 자체를 진행할 수 없으므로 여기서 종료
-	UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
-	if (Decision == nullptr)
-	{
-		return EStateTreeRunStatus::Succeeded;
-	}
-
 	// 진열대 위 상품들을 판단용 후보 목록으로 변환
 	// 캐싱하지 않고 매 라운드 재조회 - 그 사이 다른 손님이 먼저 집어간 상품도 자연스럽게 반영됨
 	const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
@@ -286,7 +335,8 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	// 후보 중 하나를 확률적으로 선택하거나 다 별로면 미구매(false) 반환
 	FCSPurchaseCandidate Selected;
-	const bool bPicked = Decision->DecidePurchase(Candidates, Selected);
+	FCSPurchaseRejectionInfo RejectionInfo;
+	const bool bPicked = Decision->DecidePurchase(Candidates, Selected, RejectionInfo);
 
 	UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s | %s"),
 		*Customer->GetName(),
@@ -295,8 +345,16 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// 살 게 없다고 판단 -> 세션 종료 (다음 진열대로)
-		return EStateTreeRunStatus::Succeeded;
+		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 플레이어에게 딱히 알릴 이유가 없는 조용한 미구매
+		// 연출 없이 바로 세션 종료
+		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None)
+		{
+			return EStateTreeRunStatus::Succeeded;
+		}
+
+		// 그 외 사유는 거절 연출(사유 기록/디버그 텍스트/방송) 후 대기상태 진입
+		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
+		return EStateTreeRunStatus::Running;
 	}
 
 	Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
