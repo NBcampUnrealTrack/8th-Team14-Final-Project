@@ -504,6 +504,16 @@ private:
 	// 렌더링할 때마다 평면을 새로 만들고 파괴하면 성능 부하가 크므로 이를 방지하기 위해 풀링 기법을 적용함[cite: 1, 3]
 	UStaticMeshComponent* AcquireAccessZoneDisplay(int32 DisplayIndex);
 
+	// 접근 영역 박스 하나를 화면 바닥에 그릴 때 사용할 위치, 회전, 스케일을 계산하는 함수
+	// 크기나 피벗이 다른 매시로 교체해도 그려지는 판정 박스와 일치함
+	// 실패하면 false를 돌려주어 그리기를 건너뜀
+	bool TryCalculateAccessZoneDisplayTransform(
+		const FVector& ZoneCenter,
+		const FVector& ZoneScaledExtent,
+		float ZoneYaw,
+		FVector& OutLocation,
+		FRotator& OutRotation,
+		FVector& OutScale) const;
 
 	bool TryPickUpBuildableFacility(AActor* FacilityActor);
 	void TryPlaceHeldBuildableFacility();
