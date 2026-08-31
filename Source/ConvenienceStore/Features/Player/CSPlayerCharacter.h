@@ -9,8 +9,10 @@ class UCameraComponent;
 class UBoxComponent;
 class UInputAction;
 class UInputMappingContext;
+class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class USceneComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 class ACSCartActor;
 class ACSDeliveryCartActor;
@@ -163,6 +165,59 @@ protected:
 	UPROPERTY(Transient)
 	bool bHasHeldBuildablePlacementOverlap = false;
 
+	// -------------------------------------------------------------------------
+	// [손님 계산하기 위한 영역 시각화 변수 선언] - 백무송
+	// -------------------------------------------------------------------------
+
+
+    //진열대 몸통이 다른 진열대의 손님 쇼핑 판정 영역을 침범했는지 안했는지 판단하는 bool 변수
+    //프리뷰의 초록/빨강 색상 전환과 HUD의 경고 문구를 별도로 띄우기 위해 사용
+	UPROPERTY(Transient)
+	bool bHasHeldBuildableAccessZoneConflict = false;
+
+
+	// 진열대 손님 쇼핑 접근 영역이 매장 구역 안에 있는지 판단하는 bool 변수
+	// 구역 밖으로 나갈 경우 배치 차단
+	UPROPERTY(Transient)
+	bool bIsHeldBuildableAccessZoneInsideArea = true;
+
+
+    // 현재 선택한 진열대 몸통이 어느 진열대의 손님 쇼핑 영역에 침범 했는지 찾기 위한 배열
+    // AccessZoneQueryRange 범위내에 있는 진열대를 Tick마다 주기적으로 배열에 추가/삭제해서 어느 진열대 손님 쇼핑영역에 침범했는지 찾아냄
+	// 빨간색으로 시각화하기 위해 그래픽 렌더링 측에 전달하는 용도로 사용됨
+	UPROPERTY(Transient)
+	TArray<TWeakObjectPtr<UBoxComponent>> CachedBlockedAccessZoneBoxes;
+
+	// 플레이어가 들고 있는 시설의 손님 쇼핑 판정 영역을 그려주기 위한 Mesh (추후에 계산대 손님 줄 대기 판정 영역으로 수정시 추가될수도 있어서)
+	// 시설의 메인 메시 배열과 분리, 합칠 경우 Wall Snap 계산 시 바운딩 박스 크기에 평면 영역까지 덧붙여져 오작동하는 것을 방지
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> HeldAccessZonePreviewMeshes;
+
+	// 들고 있는 진열대 중심점과 손님 쇼핑 접근 영역 박스 사이의 상대적 간격과 각도를 기억해두는 배열
+	// 플레이어가 진열대를 들고 위아래를 쳐다볼 때(카메라 Pitch 변경), 바닥 영역 평면 그래픽이 같이 기울어져 땅을 파고들거나 공중에 뜨는 것을 방지
+	// 매 프레임 이 값을 꺼내와 시선 기울기가 섞이지 않도록 바닥 평면을 항상 땅에 평평하게 깔아주는 위치 계산용으로 사용됨
+	UPROPERTY(Transient)
+	TArray<FTransform> HeldAccessZoneBoxRelativeTransforms;
+
+	// 들고 있는 진열대의 손님 쇼핑 접근 영역 박스의 스케일이 적용되지 않은 원래 크기를 기억해두는 배열
+	// HeldAccessZoneBoxRelativeTransforms와 짝을 이루어 동작함
+	// 매 프레임 바닥 평면 그래픽의 스케일과 바닥과의 높이를  계산해서 맞춰줄 때 사용됨
+	UPROPERTY(Transient)
+	TArray<FVector> HeldAccessZoneBoxUnscaledExtents;
+
+	// 이미 맵에 설치되어 있는 주변 진열대들의 손님 쇼핑 영역을 바닥에 그려주기 위한 평면 Mesh 재사용 풀
+	// 플레이어가 들고 있는 진열대의 바닥 평면 배열과 섞이지 않도록 별개의 배열로 분리하여 관리함
+	// 배열을 합칠 경우 바닥에 고정되어야 할 남의 진열대 영역들까지 플레이어 손을 따라다니는 버그가 발생하므로 이를 방지하기 위해 사용됨
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> AccessZoneDisplayMeshes;
+
+	// 바닥에 그려진 주변 진열대들의 영역 색상을 실시간으로 바꾸기 위한 머티리얼 재사용 풀
+	// 선택한 진열대가 상대방의 특정 영역을 침범했을 때, 해당 영역 그래픽만 즉각적으로 빨간색으로 바꾸기 위해 사용됨
+	// 침범하지 않은 나머지 영역들은 기본 색상(청록색)으로 유지하도록 색상 파라미터를 조작하는 데 쓰임
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> AccessZoneDisplayMIDs;
+	// -------------------------------------------------------------------------
+
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> HeldBuildableStateActors;
 
@@ -185,6 +240,50 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Placement Preview",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float WallSnapSearchDistance = 50.0f;
+
+	// false면 접근 영역 규칙이 시각화와 HUD 경고만 하고 배치는 안막음
+	// 기존 레벨의 통로 폭을 정리하는 동안 임시로 내려 두는 스위치
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	bool bBlockPlacementOnAccessZoneRules = true;
+
+	// -------------------------------------------------------------------------
+	// [설정값 변수 선언부 - 거리 판정 및 Z-Fighting] 백무송
+	// -------------------------------------------------------------------------
+
+	// 접근 영역 판정 대상에 포함할 최대 검색 반경
+	// 이 범위 밖에 있는 멀리 떨어진 시설들은 Tick에서 제외
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone",
+		meta = (ClampMin = "100.0", UIMin = "100.0"))
+	float AccessZoneQueryRange = 2000.0f;
+
+	// 플레이어 주변 바닥에 다른 진열대의 접근 영역을 렌더링할 최대 표시 거리
+	// 판정 거리와 동일하게 그리면 바닥이 영역으로 뒤덮여 시야를 방해하므로, 시각화 거리만 더 짧게하기 위해 분리된 변수
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone",
+		meta = (ClampMin = "100.0", UIMin = "100.0"))
+	float AccessZoneVisualRange = 900.0f;
+
+	// 바닥에 그려질 접근 영역 평면의 Mesh를 할당할 변수
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	TObjectPtr<UStaticMesh> AccessZoneDisplayMesh;
+
+	// 접근 영역 Mesh에 할당 할 머티리얼
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	TObjectPtr<UMaterialInterface> AccessZoneDisplayMaterial;
+
+	// 바닥 평면 그래픽을 실제 땅바닥에서 띄워주는 높이 값
+	// Z-Fighting 현상 방지 (Z축에 겹치면 화면이 깜빡거리는 현상)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	float AccessZoneDisplayLift = 2.0f;
+
+	// 바닥에 표시되는 손님 쇼핑 판정영역의 기본 색상
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	FLinearColor NeutralZoneColor = FLinearColor(0.1f, 0.7f, 0.9f, 0.25f);
+
+	// 현재 들고 있는 시설이 침범 중인 영역에만 쓰는 색
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|AccessZone")
+	FLinearColor BlockedZoneColor = FLinearColor(1.0f, 0.15f, 0.1f, 0.6f);
+
+	// -------------------------------------------------------------------------
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Build|Rotation",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
@@ -361,9 +460,12 @@ private:
 		FVector& OutSnappedLocation,
 		FRotator& OutSnappedRotation) const;
 	void RefreshBuildPlacementAreaCache();
-	void CollectBuildPlacementCollisionBoxes(
+	// 태그로 시설의 판정용 박스를 모읍니다. 몸통과 접근 영역이 같은 함수를 씁니다.
+	// [백무송] 리팩토링하여 '접근 영역' 판정 시에도 구조 변경 없이 수학 계산 코드를 재사용할 수 있게 수정
+	void CollectBuildPlacementBoxesByTag(
 		AActor* FacilityActor,
-		TArray<UBoxComponent*>& OutCollisionBoxes) const;
+		const FName& BoxTag,
+		TArray<UBoxComponent*>& OutBoxes) const;
 	bool IsBuildPlacementInsideCachedAreas(
 		const TArray<UBoxComponent*>& CollisionBoxes,
 		const FVector& FacilityLocation,
@@ -373,9 +475,38 @@ private:
 		const TArray<UBoxComponent*>& CollisionBoxes,
 		const FVector& FacilityLocation,
 		const FRotator& FacilityRotation) const;
+
+	// [백무송]
+	// 선택한 진열대 몸통이 남의 접근 영역을 침범하는지, 내 접근 영역이 남의 진열대 몸통에 막히는지 2D SAT 방식으로 검사하는 함수
+	// 마주 보는 진열대들이 공간(접근 영역)을 서로 공유할 수 있도록, 영역 대 영역 충돌 검사는 의도적으로 루프에서 배제
+	// 충돌 시 OutBlockedZoneBoxes에 내가 침범한 상대방의 구체적인 영역 박스들을 담아 반환하며, 시각화 로직이 이 명단을 보고 해당 구역만 빨간색으로 칠하게 됨
+	bool HasBuildPlacementAccessZoneConflict(
+		AActor* FacilityActor,
+		const TArray<UBoxComponent*>& MyBodyBoxes,
+		const TArray<UBoxComponent*>& MyZoneBoxes,
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation,
+		TArray<TWeakObjectPtr<UBoxComponent>>& OutBlockedZoneBoxes) const;
+
+	// [백무송]
+	// 맵에 이미 설치되어 있는 주변 진열대들의 손님 접근 영역을 바닥 평면 그래픽으로 갱신하여 그려주는 함수
+	// 플레이어가 진열대를 들고 있을 때 Tick마다 실행되며, 내가 침범한 영역과 안전한 영역을 지정한 색으로 렌더링함
+	void RefreshInstalledAccessZoneDisplays();
+
+	// [백무송]
+	// 바닥에 그려진 모든 설치된 시설들의 접근 영역을 화면에서 비활성화 처리하는 함수
+	// 플레이어가 진열대 배치를 완료하거나 취소해서 손을 비웠을 때, 시야를 가리는 정보를 지움
+	void ClearInstalledAccessZoneDisplays();
+
+	// [백무송]
+	// 시각화에 사용할 바닥 평면 매시를 오브젝트 풀(AccessZoneDisplayMeshes)에서 가져오는 함수[cite: 3]
+	// 요청한 인덱스에 해당하는 평면이 풀에 이미 존재하면 재사용하고, 부족하면 새로 생성(NewObject)하여 캐시 배열에 추가함[cite: 3]
+	// 렌더링할 때마다 평면을 새로 만들고 파괴하면 성능 부하가 크므로 이를 방지하기 위해 풀링 기법을 적용함[cite: 1, 3]
+	UStaticMeshComponent* AcquireAccessZoneDisplay(int32 DisplayIndex);
+
+
 	bool TryPickUpBuildableFacility(AActor* FacilityActor);
 	void TryPlaceHeldBuildableFacility();
-	void DropHeldBuildableFacilityAsUninstalled();
 	bool TryCalculateBuildPlacementLocation(
 		AActor* FacilityActor,
 		FVector& OutPlacementLocation,
@@ -406,6 +537,11 @@ private:
 		FVector PlacementHint);
 
 	TArray<TWeakObjectPtr<UBoxComponent>> CachedBuildPlacementAreas;
+
+	// [백무송]
+	// 접근 영역 충돌 판정의 대상이 되는 맵 상의 모든 설치된 시설(진열대 등) 액터들의 목록을 미리 모아둔 배열
+	// 건축 모드 진입 시 Area 캐시를 돌 때 한 번만 순회하여 이 배열에 담아두고 판정에 재사용함
+	TArray<TWeakObjectPtr<AActor>> CachedAccessZoneFacilities;
 	bool bBuildPlacementAreaCacheInitialized = false;
 	bool bIsDropActionHeld = false;
 	float DropActionStartedTimeSeconds = 0.0f;

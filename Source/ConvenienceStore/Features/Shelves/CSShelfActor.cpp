@@ -47,6 +47,19 @@ ACSShelfActor::ACSShelfActor()
 	// 에디터에서 슬롯 마커와 구분되도록 색과 크기를 다르게 설정
 	CustomerShoppingPoint->ArrowColor = FColor(60, 200, 255);
 	CustomerShoppingPoint->ArrowSize = 1.5f;
+
+	// 손님이 설 자리를 건축 판정에 알리기 위한 박스
+	BrowseZoneBox = CreateDefaultSubobject<UBoxComponent>(TEXT("BrowseZoneBox"));
+	BrowseZoneBox->SetupAttachment(SceneRoot);
+	BrowseZoneBox->ComponentTags.Add(TEXT("BuildPlacementAccessZone"));
+	// 충돌에는 일절 관여하지 않음
+	BrowseZoneBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BrowseZoneBox->SetGenerateOverlapEvents(false);
+	BrowseZoneBox->SetCanEverAffectNavigation(false);
+	// 편집 중에만 보이는 표시
+	BrowseZoneBox->SetHiddenInGame(true);
+	// 에디터에서 CustomerShoppingPoint와 같은 색으로 설정(구분용)
+	BrowseZoneBox->ShapeColor = FColor(60, 200, 255);
 }
 
 void ACSShelfActor::OnConstruction(const FTransform& Transform)
@@ -57,6 +70,8 @@ void ACSShelfActor::OnConstruction(const FTransform& Transform)
 	SyncFacilityData();
 	// 블루프린트에서 배치한 슬롯 마커의 위치를 슬롯 데이터에 반영합니다.
 	SyncSlotsFromMarkers();
+	// 손님 도착 반경이 바뀌면 건축 판정용 영역 박스도 같이 따라갑니다.
+	SyncBrowseZoneBox();
 }
 
 void ACSShelfActor::BeginPlay()
@@ -244,6 +259,25 @@ void ACSShelfActor::SyncFacilityData()
 	{
 		ShelfType = FacilityData->ShelfType;
 	}
+}
+
+void ACSShelfActor::SyncBrowseZoneBox()
+{
+	if (!IsValid(BrowseZoneBox) || !IsValid(CustomerShoppingPoint))
+	{
+		return;
+	}
+
+	// 원형 도착 판정(BrowseZoneRadius)에 외접하는 박스입니다.
+	// 손님 도착 판정은 원 그대로 두고, 건축 판정만 이 박스를 사용합니다.
+	const FVector MarkerLocation = CustomerShoppingPoint->GetRelativeLocation();
+	BrowseZoneBox->SetRelativeLocation(
+		MarkerLocation + FVector(0.0f, 0.0f, BrowseZoneHeight * 0.5f));
+	// 박스가 기울지 않도록 Yaw만 남깁니다.
+	BrowseZoneBox->SetRelativeRotation(
+		FRotator(0.0f, CustomerShoppingPoint->GetRelativeRotation().Yaw, 0.0f));
+	BrowseZoneBox->SetBoxExtent(
+		FVector(BrowseZoneRadius, BrowseZoneRadius, BrowseZoneHeight * 0.5f));
 }
 
 bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const
