@@ -46,9 +46,6 @@ const FName BuildPlacementCollisionTag(TEXT("BuildPlacementCollision"));
 const FName BuildPlacementAreaTag(TEXT("BuildPlacementArea"));
 const FName BuildPlacementAccessZoneTag(TEXT("BuildPlacementAccessZone"));
 
-// 손님 쇼핑 판정 영역 크기를 컴포넌트 스케일로 바꾸는 나눗셈의 분모
-const float UnitPlaneSize = 100.0f;
-
 bool TryCalculateProspectiveBox(
 	const UBoxComponent* BoxComponent,
 	const AActor* FacilityActor,
@@ -1504,16 +1501,25 @@ void ACSPlayerCharacter::UpdateBuildPreviewComponentTransforms(
 		const FVector ZoneScaledExtent =
 			HeldAccessZoneBoxUnscaledExtents[ZoneIndex] *
 			ZoneBoxTransform.GetScale3D().GetAbs();
-		// 영역 박스의 바닥면에 맞추고, 바닥과의 Z-파이팅을 피해 띄움
-		FVector ZonePlaneLocation = ZoneBoxTransform.GetLocation();
-		ZonePlaneLocation.Z -= ZoneScaledExtent.Z - AccessZoneDisplayLift;
+		// 배치,크기 보정은 설치된 시설 표시와 같은 함수를 써서 두 표시가 어긋나지 않게 함
+		FVector ZonePlaneLocation;
+		FRotator ZonePlaneRotation;
+		FVector ZonePlaneScale;
+		if (!TryCalculateAccessZoneDisplayTransform(
+				ZoneBoxTransform.GetLocation(),
+				ZoneScaledExtent,
+				ZoneBoxTransform.Rotator().Yaw,
+				ZonePlaneLocation,
+				ZonePlaneRotation,
+				ZonePlaneScale))
+		{
+			continue;
+		}
+
 		ZonePlane->SetWorldLocationAndRotation(
 			ZonePlaneLocation,
-			FRotator(0.0f, ZoneBoxTransform.Rotator().Yaw, 0.0f).Quaternion());
-		ZonePlane->SetWorldScale3D(FVector(
-			ZoneScaledExtent.X * 2.0f / UnitPlaneSize,
-			ZoneScaledExtent.Y * 2.0f / UnitPlaneSize,
-			1.0f));
+			ZonePlaneRotation.Quaternion());
+		ZonePlane->SetWorldScale3D(ZonePlaneScale);
 		ZonePlane->UpdateBounds();
 	}
 }
@@ -3336,6 +3342,69 @@ void ACSPlayerCharacter::DestroyPlacementPreview()
 	PlacementPreviewActor = nullptr;
 }
 
+bool ACSPlayerCharacter::TryCalculateAccessZoneDisplayTransform(
+	const FVector& ZoneCenter,
+	const FVector& ZoneScaledExtent,
+	float ZoneYaw,
+	FVector& OutLocation,
+	FRotator& OutRotation,
+	FVector& OutScale) const
+{
+	OutLocation = FVector::ZeroVector;
+	OutRotation = FRotator::ZeroRotator;
+	OutScale = FVector::OneVector;
+	if (!IsValid(AccessZoneDisplayMesh) ||
+		ZoneCenter.ContainsNaN() ||
+		ZoneScaledExtent.ContainsNaN() ||
+		!FMath::IsFinite(ZoneYaw))
+	{
+		return false;
+	}
+
+	// 두께가 없는 영역은 그릴 사각형 자체가 없으므로 호출부에서 건너뜀
+	if (ZoneScaledExtent.X <= UE_KINDA_SMALL_NUMBER ||
+		ZoneScaledExtent.Y <= UE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	// 에셋의 바운드를 읽습니다.
+	// 크기가 다른 에셋이 들어와도 유연하게 원래 판정영역에 대응하게 변경
+	const FBox MeshBounds = AccessZoneDisplayMesh->GetBoundingBox();
+	const FVector MeshSize = MeshBounds.GetSize();
+	if (!MeshBounds.IsValid ||
+		MeshSize.ContainsNaN() ||
+		MeshSize.X <= UE_KINDA_SMALL_NUMBER ||
+		MeshSize.Y <= UE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// 영역 박스의 전체 폭을 Mesh의 전체 폭(MeshSize)으로 나눈 비율이 스케일
+	// Z는 바닥에 눕는 표시물이라 늘리지 않고 1로 고정
+	OutScale = FVector(
+		ZoneScaledExtent.X * 2.0f / MeshSize.X,
+		ZoneScaledExtent.Y * 2.0f / MeshSize.Y,
+		1.0f);
+	OutRotation = FRotator(0.0f, ZoneYaw, 0.0f);
+
+	// Z-fighting 방지
+	const FVector ZoneFloorCenter(
+		ZoneCenter.X,
+		ZoneCenter.Y,
+		ZoneCenter.Z - ZoneScaledExtent.Z + AccessZoneDisplayLift);
+
+	// 역보정 로직
+	// 이때동안 비율과 위치를 통해 판정영역과 똑같이 대응되게 할당함
+	const FVector MeshCenter = MeshBounds.GetCenter();
+	const FVector MeshPivotOffset(
+		MeshCenter.X * OutScale.X,
+		MeshCenter.Y * OutScale.Y,
+		MeshBounds.Min.Z * OutScale.Z);
+	OutLocation = ZoneFloorCenter - OutRotation.RotateVector(MeshPivotOffset);
+
+	return !OutLocation.ContainsNaN() && !OutScale.ContainsNaN();
+}
+
 UStaticMeshComponent* ACSPlayerCharacter::AcquireAccessZoneDisplay(int32 DisplayIndex)
 {
 	if (DisplayIndex < 0 || !IsValid(AccessZoneDisplayMesh))
@@ -3446,9 +3515,17 @@ void ACSPlayerCharacter::RefreshInstalledAccessZoneDisplays()
 		{
 			const FVector ZoneExtent = ZoneBox->GetScaledBoxExtent();
 			const FVector ZoneCenter = ZoneBox->GetComponentLocation();
-			const FRotator ZoneYaw(0.0f, ZoneBox->GetComponentRotation().Yaw, 0.0f);
-			if (ZoneExtent.X <= UE_KINDA_SMALL_NUMBER ||
-				ZoneExtent.Y <= UE_KINDA_SMALL_NUMBER)
+			// 배치,크기 보정은 손에 든 프리뷰와 같은 함수를 써서 두 표시가 어긋나지 않게 함
+			FVector DisplayLocation;
+			FRotator DisplayRotation;
+			FVector DisplayScale;
+			if (!TryCalculateAccessZoneDisplayTransform(
+					ZoneCenter,
+					ZoneExtent,
+					ZoneBox->GetComponentRotation().Yaw,
+					DisplayLocation,
+					DisplayRotation,
+					DisplayScale))
 			{
 				continue;
 			}
@@ -3463,16 +3540,9 @@ void ACSPlayerCharacter::RefreshInstalledAccessZoneDisplays()
 				continue;
 			}
 
-			// 영역 박스의 바닥면에 평면을 맞춥니다.
-			Display->SetWorldLocation(FVector(
-				ZoneCenter.X,
-				ZoneCenter.Y,
-				ZoneCenter.Z - ZoneExtent.Z + AccessZoneDisplayLift));
-			Display->SetWorldRotation(ZoneYaw);
-			Display->SetWorldScale3D(FVector(
-				ZoneExtent.X * 2.0f / UnitPlaneSize,
-				ZoneExtent.Y * 2.0f / UnitPlaneSize,
-				1.0f));
+			Display->SetWorldLocation(DisplayLocation);
+			Display->SetWorldRotation(DisplayRotation);
+			Display->SetWorldScale3D(DisplayScale);
 			// 내가 침범한 곳이면 Blocked, 안전한 곳이면 Neutral 파라미터로 머티리얼 색상을 변경
 			if (AccessZoneDisplayMIDs.IsValidIndex(UsedCount) &&
 				IsValid(AccessZoneDisplayMIDs[UsedCount]))
