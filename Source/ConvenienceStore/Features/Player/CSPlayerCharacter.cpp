@@ -36,6 +36,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 
@@ -43,6 +44,10 @@ namespace
 {
 const FName BuildPlacementCollisionTag(TEXT("BuildPlacementCollision"));
 const FName BuildPlacementAreaTag(TEXT("BuildPlacementArea"));
+const FName BuildPlacementAccessZoneTag(TEXT("BuildPlacementAccessZone"));
+
+// 손님 쇼핑 판정 영역 크기를 컴포넌트 스케일로 바꾸는 나눗셈의 분모
+const float UnitPlaneSize = 100.0f;
 
 bool TryCalculateProspectiveBox(
 	const UBoxComponent* BoxComponent,
@@ -74,6 +79,78 @@ bool TryCalculateProspectiveBox(
 		!OutBoxTransform.GetRotation().ContainsNaN() &&
 		!OutScaledExtent.ContainsNaN() &&
 		OutScaledExtent.GetMin() > UE_KINDA_SMALL_NUMBER;
+}
+
+
+//회전된 두 박스(OBB)의 XY 단면이 겹치는지 2D SAT 알고리즘으로 검사.
+//서로의 모서리가 상대방 박스 외곽에 있어도 겹침을 정확히 판정해 내기 위해 사용
+//종족마다 캡슐 높이가 달라 충돌 판정이 흔들리는 것을 막기 위해 XY 평면 면적만 정밀 검사하고, Z축은 층 구분용으로만 단순 비교.
+bool DoesBoxOverlapBox2D(const FTransform& TransformA, const FVector& ScaledExtentA,const FTransform& TransformB, const FVector& ScaledExtentB)
+{
+	// 두 박스의 가로축(X)과 세로축(Y) 방향을 추출
+	// 이 4개의 방향이 두 박스를 가르는 빈 공간이 있는지 테스트할 기준선이 됨
+	FVector2D AxisA[2] = {
+		FVector2D(TransformA.GetUnitAxis(EAxis::X)),
+		FVector2D(TransformA.GetUnitAxis(EAxis::Y)) };
+	FVector2D AxisB[2] = {
+		FVector2D(TransformB.GetUnitAxis(EAxis::X)),
+		FVector2D(TransformB.GetUnitAxis(EAxis::Y)) };
+
+	// 추출한 축의 길이를 1로 맞추는 정규화를 수행함
+	// 배치 회전은 보통 제자리 회전(Yaw)만 쓰므로 이미 길이가 1인 단위벡터이지만,
+	// 비정상적으로 기울어진 시설이 들어와 축 길이가 0이 되는 상황을 막고,그럴 시 겹치지 않은 것으로 넘깁니다
+	for (FVector2D& Axis : AxisA)
+	{
+		if (!Axis.Normalize())
+		{
+			return false;
+		}
+	}
+	for (FVector2D& Axis : AxisB)
+	{
+		if (!Axis.Normalize())
+		{
+			return false;
+		}
+	}
+	// CenterDelta: 두 박스의 중심점 사이가 얼만큼 떨어져 있는지 나타내는 거리 벡터
+	const FVector2D CenterDelta(
+		TransformB.GetLocation().X - TransformA.GetLocation().X,
+		TransformB.GetLocation().Y - TransformA.GetLocation().Y);
+
+	// HalfA, HalfB: 두 박스의 중심에서 끝부분까지의 길이(반지름 역할)
+	const FVector2D HalfA(ScaledExtentA.X, ScaledExtentA.Y);
+	const FVector2D HalfB(ScaledExtentB.X, ScaledExtentB.Y);
+
+	// SAT(분리축 정리): 4개의 기준축에 두 박스를 각각 투영하여 길이를 검사
+	const FVector2D TestAxes[4] = { AxisA[0], AxisA[1], AxisB[0], AxisB[1] };
+	for (const FVector2D& TestAxis : TestAxes)
+	{
+		// ProjectedA, ProjectedB: 테스트할 특정 축에 A박스와 B박스의 절반 크기를 투영한 길이
+		// 내적을 통해 각 박스의 로컬 축들이 기준 축에 얼마나 평행한지 비율을 구하고, 실제 길이를 곱해 산출
+		const double ProjectedA =
+			FMath::Abs(FVector2D::DotProduct(TestAxis, AxisA[0])) * HalfA.X +
+			FMath::Abs(FVector2D::DotProduct(TestAxis, AxisA[1])) * HalfA.Y;
+		const double ProjectedB =
+			FMath::Abs(FVector2D::DotProduct(TestAxis, AxisB[0])) * HalfB.X +
+			FMath::Abs(FVector2D::DotProduct(TestAxis, AxisB[1])) * HalfB.Y;
+		if (FMath::Abs(FVector2D::DotProduct(TestAxis, CenterDelta)) >
+			ProjectedA + ProjectedB)
+		{
+			return false;
+		}
+	}
+
+	// Z축비교 로직
+	// 위 4번의 SAT 루프를 통과했다면 바닥(XY)에서는 겹친 상태
+	// 마지막으로 두 박스의 Z축 Max과 Min을 비교하여, 평면상으로는 겹쳐도 1층과 2층처럼 다른 층에 있어 물리적으로 닿지 않는 상황을 걸러냄
+	const double MinA = TransformA.GetLocation().Z - ScaledExtentA.Z;
+	const double MaxA = TransformA.GetLocation().Z + ScaledExtentA.Z;
+	const double MinB = TransformB.GetLocation().Z - ScaledExtentB.Z;
+	const double MaxB = TransformB.GetLocation().Z + ScaledExtentB.Z;
+
+	// 두 박스의 Z축 범위가 서로 교차할 때만 true를 반환
+	return MaxA >= MinB && MinA <= MaxB;
 }
 
 void PlayPlayerGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioEvent)
@@ -750,6 +827,8 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 	{
 		UpdateBuildRotationInput(DeltaTime);
 		UpdateBuildPlacementPreview();
+		// 판정이 끝난 뒤에 그려야 침범 중인 영역을 같은 프레임에 침범 영역 색으로 변경
+		RefreshInstalledAccessZoneDisplays();
 		UpdateBuildModeHUD();
 		return;
 	}
@@ -1047,9 +1126,35 @@ void ACSPlayerCharacter::UpdateBuildModeHUD()
 	{
 		if (HeldActor->Implements<UCSBuildableFacility>())
 		{
-			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "BuildPlaceFacilityPrompt", "[Q] 시설 배치"),
-				FLinearColor::White);
+			// HUD에 표시될 건축 불가 사유를 결정하는 조건문
+			FText Prompt = NSLOCTEXT("Interaction", "BuildPlaceFacilityPrompt", "[Q] 시설 배치");
+			FLinearColor PromptColor = FLinearColor::White;
+			if (bHasHeldBuildablePlacementOverlap)
+			{
+				Prompt = NSLOCTEXT("Interaction", "BuildBlockedByOverlap",
+					"다른 시설과 겹칩니다");
+				PromptColor = FLinearColor::Red;
+			}
+			else if (bHasHeldBuildableAccessZoneConflict)
+			{
+				Prompt = NSLOCTEXT("Interaction", "BuildBlockedByAccessZone",
+					"손님 이동 구역을 막습니다");
+				PromptColor = FLinearColor::Red;
+			}
+			else if (!bIsHeldBuildableInsidePlacementArea)
+			{
+				Prompt = NSLOCTEXT("Interaction", "BuildOutsideArea",
+					"매장 밖에는 놓을 수 없습니다");
+				PromptColor = FLinearColor::Red;
+			}
+			else if (!bIsHeldBuildableAccessZoneInsideArea)
+			{
+				Prompt = NSLOCTEXT("Interaction", "BuildZoneOutsideArea",
+					"손님이 설 자리가 매장 밖으로 나갑니다");
+				PromptColor = FLinearColor::Red;
+			}
+
+			StorePlayerController->SetInteractionPrompt(Prompt, PromptColor);
 		}
 		return;
 	}
@@ -1186,6 +1291,59 @@ void ACSPlayerCharacter::ConfigureBuildPlacementPreview(AActor* FacilityActor)
 	}
 
 	HeldBuildableSourceMesh = HeldBuildableSourceMeshes[0];
+
+	// 들고 있는 시설의 예정 접근 영역을 시각화하기 위해 프리뷰 매시를 생성
+	// 색상 스왑이나 위치 갱신 로직은 몸통 배열과 같이 처리되도록 함
+	if (IsValid(AccessZoneDisplayMesh))
+	{
+		TArray<UBoxComponent*> AccessZoneBoxes;
+		CollectBuildPlacementBoxesByTag(
+			FacilityActor,
+			BuildPlacementAccessZoneTag,
+			AccessZoneBoxes);
+		for (const UBoxComponent* AccessZoneBox : AccessZoneBoxes)
+		{
+			// 박스의 가로(X)나 세로(Y) 크기가 0에 가까우면 유효하지 않은 영역이므로 무시함
+			const FVector ZoneUnscaledExtent = AccessZoneBox->GetUnscaledBoxExtent();
+			if (ZoneUnscaledExtent.X <= UE_KINDA_SMALL_NUMBER ||
+				ZoneUnscaledExtent.Y <= UE_KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+			// 접근 영역을 표시할 컴포넌트를 동적으로 생성
+			UStaticMeshComponent* ZonePlane = NewObject<UStaticMeshComponent>(
+				this,
+				NAME_None,
+				RF_Transient);
+			if (!IsValid(ZonePlane))
+			{
+				continue;
+			}
+
+			// 이 평면은 오직 시각적인 표시 용도
+			// 따라서 물리 충돌, 오버랩 이벤트, 네비게이션 메시(손님 길찾기) 영향, 그림자 등을 전부 꺼서 게임 플레이에 개입X
+			ZonePlane->SetupAttachment(GetRootComponent());
+			AddInstanceComponent(ZonePlane);
+			ZonePlane->RegisterComponent();
+			ZonePlane->SetAbsolute(true, true, true);
+			ZonePlane->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			ZonePlane->SetGenerateOverlapEvents(false);
+			ZonePlane->SetCanEverAffectNavigation(false);
+			ZonePlane->SetCastShadow(false);
+			ZonePlane->SetHiddenInGame(true);
+			ZonePlane->SetVisibility(false);
+			ZonePlane->SetStaticMesh(AccessZoneDisplayMesh);
+
+			// 진열대를 집어 든 상태라 카메라 Pitch 각도가 섞여 있음
+			// 바닥 평면이 뜨거나 땅을 파고드는 것을 막기 위해, 현재 위치를 그대로 고정하지 않고
+			// 진열대 중심점으로부터의 상대 트랜스폼 및 원본 크기만 배열에 저장함
+			// 이후 Tick마다 저장한 값들을 꺼내서 바닥에 깔리도록 위치를 새로 계산하는 데 사용함
+			HeldAccessZonePreviewMeshes.Add(ZonePlane);
+			HeldAccessZoneBoxRelativeTransforms.Add(
+				AccessZoneBox->GetComponentTransform().GetRelativeTransform(FacilityTransform));
+			HeldAccessZoneBoxUnscaledExtents.Add(ZoneUnscaledExtent);
+		}
+	}
 }
 
 void ACSPlayerCharacter::ClearBuildPlacementPreview()
@@ -1194,6 +1352,10 @@ void ACSPlayerCharacter::ClearBuildPlacementPreview()
 	bCanPlaceHeldBuildableFacility = false;
 	bIsHeldBuildableInsidePlacementArea = true;
 	bHasHeldBuildablePlacementOverlap = false;
+	bHasHeldBuildableAccessZoneConflict = false;//상태 플래그 초기화
+	bIsHeldBuildableAccessZoneInsideArea = true;//상태 플래그 초기화
+	CachedBlockedAccessZoneBoxes.Reset(); //저장된 값 비우기
+	ClearInstalledAccessZoneDisplays(); //영역 렌더링 끄기
 	CachedBuildPlacementLocation = FVector::ZeroVector;
 	CachedBuildPlacementRotation = FRotator::ZeroRotator;
 	HeldBuildableSourceMesh = nullptr;
@@ -1207,6 +1369,18 @@ void ACSPlayerCharacter::ClearBuildPlacementPreview()
 		}
 	}
 	BuildPlacementPreviewMeshes.Reset();
+	// 프리뷰가 종료될 때 월드에 잔상이 남지 않도록 직접 파괴해 줍니다.
+	for (UStaticMeshComponent* ZonePlane : HeldAccessZonePreviewMeshes)
+	{
+		if (IsValid(ZonePlane))
+		{
+			ZonePlane->DestroyComponent();
+		}
+	}
+	// 평면을 파괴한 후, 위치 계산에 사용하던 관련 배열들도 비워 다음 배치를 준비
+	HeldAccessZonePreviewMeshes.Reset();
+	HeldAccessZoneBoxRelativeTransforms.Reset();
+	HeldAccessZoneBoxUnscaledExtents.Reset();
 	if (IsValid(BuildPlacementPreviewMesh))
 	{
 		BuildPlacementPreviewMesh->SetHiddenInGame(true);
@@ -1245,6 +1419,19 @@ void ACSPlayerCharacter::ApplyBuildPlacementPreviewMaterial(bool bIsPlacementVal
 					: SourceMesh->GetMaterial(MaterialIndex));
 		}
 	}
+
+	// 배열은 스냅 계산 오류를 막기 위해 분리했지만, 시각적인 색상 피드백은 몸통과 똑같이 받아야 함.
+	// 따라서 몸통 프리뷰의 색상이 바뀔 때, 별도로 보관 중인 바닥 영역 평면들도 꺼내어 같은 색상으로 덮어씌워 줌
+	if (IsValid(PreviewMaterial))
+	{
+		for (UStaticMeshComponent* ZonePlane : HeldAccessZonePreviewMeshes)
+		{
+			if (IsValid(ZonePlane))
+			{
+				ZonePlane->SetMaterial(0, PreviewMaterial);
+			}
+		}
+	}
 }
 
 void ACSPlayerCharacter::SetBuildPlacementPreviewVisible(bool bIsVisible)
@@ -1255,6 +1442,16 @@ void ACSPlayerCharacter::SetBuildPlacementPreviewVisible(bool bIsVisible)
 		{
 			PreviewMesh->SetHiddenInGame(!bIsVisible);
 			PreviewMesh->SetVisibility(bIsVisible);
+		}
+	}
+	// 배열이 몸통 프리뷰와 분리되어 있으므로, 화면 가시성을 켜고 끄는 명령도 이 반복문을 통해 바닥 평면들에 별도로 전달해야 함
+	// 몸통 프리뷰가 화면에서 숨겨지거나 다시 나타날 때, 바닥 영역 평면도 같이 숨겨지거나 나타나게 동기화.
+	for (UStaticMeshComponent* ZonePlane : HeldAccessZonePreviewMeshes)
+	{
+		if (IsValid(ZonePlane))
+		{
+			ZonePlane->SetHiddenInGame(!bIsVisible);
+			ZonePlane->SetVisibility(bIsVisible);
 		}
 	}
 }
@@ -1284,6 +1481,40 @@ void ACSPlayerCharacter::UpdateBuildPreviewComponentTransforms(
 		PreviewMesh->SetWorldTransform(
 			HeldBuildableSourceRelativeTransforms[MeshIndex] * FacilityTransform);
 		PreviewMesh->UpdateBounds();
+	}
+
+	// 예정 접근 영역 평면은 배치 스냅 계산(CalculateCombinedBuildPreviewBounds)에
+	// 들어가면 안 되므로 별도 배열로 두고 여기서만 같이 옮깁니다.
+	for (int32 ZoneIndex = 0;
+		ZoneIndex < HeldAccessZonePreviewMeshes.Num() &&
+		ZoneIndex < HeldAccessZoneBoxRelativeTransforms.Num() &&
+		ZoneIndex < HeldAccessZoneBoxUnscaledExtents.Num();
+		++ZoneIndex)
+	{
+		UStaticMeshComponent* ZonePlane = HeldAccessZonePreviewMeshes[ZoneIndex];
+		if (!IsValid(ZonePlane))
+		{
+			continue;
+		}
+
+		// 판정이 쓰는 TryCalculateProspectiveBox와 같은 계산입니다.
+		// 여기서 배치 예정 트랜스폼으로 새로 풀어야 손에 든 자세가 섞이지 않습니다.
+		const FTransform ZoneBoxTransform =
+			HeldAccessZoneBoxRelativeTransforms[ZoneIndex] * FacilityTransform;
+		const FVector ZoneScaledExtent =
+			HeldAccessZoneBoxUnscaledExtents[ZoneIndex] *
+			ZoneBoxTransform.GetScale3D().GetAbs();
+		// 영역 박스의 바닥면에 맞추고, 바닥과의 Z-파이팅을 피해 띄움
+		FVector ZonePlaneLocation = ZoneBoxTransform.GetLocation();
+		ZonePlaneLocation.Z -= ZoneScaledExtent.Z - AccessZoneDisplayLift;
+		ZonePlane->SetWorldLocationAndRotation(
+			ZonePlaneLocation,
+			FRotator(0.0f, ZoneBoxTransform.Rotator().Yaw, 0.0f).Quaternion());
+		ZonePlane->SetWorldScale3D(FVector(
+			ZoneScaledExtent.X * 2.0f / UnitPlaneSize,
+			ZoneScaledExtent.Y * 2.0f / UnitPlaneSize,
+			1.0f));
+		ZonePlane->UpdateBounds();
 	}
 }
 
@@ -1473,6 +1704,7 @@ void ACSPlayerCharacter::RestoreHeldBuildableActorStates()
 void ACSPlayerCharacter::RefreshBuildPlacementAreaCache()
 {
 	CachedBuildPlacementAreas.Reset();
+	CachedAccessZoneFacilities.Reset();
 	bBuildPlacementAreaCacheInitialized = true;
 	UWorld* World = GetWorld();
 	if (!IsValid(World))
@@ -1489,6 +1721,13 @@ void ACSPlayerCharacter::RefreshBuildPlacementAreaCache()
 			continue;
 		}
 
+		// 접근 영역 판정 대상도 같은 순회에서 모읍니다.
+		// 박스는 판정 시점에 현재 트랜스폼을 읽으므로 시설이 움직여도 재수집이 필요 없습니다.
+		if (AreaOwner->Implements<UCSBuildableFacility>())
+		{
+			CachedAccessZoneFacilities.Add(AreaOwner);
+		}
+
 		TArray<UBoxComponent*> BoxComponents;
 		AreaOwner->GetComponents<UBoxComponent>(BoxComponents);
 		for (UBoxComponent* BoxComponent : BoxComponents)
@@ -1502,11 +1741,12 @@ void ACSPlayerCharacter::RefreshBuildPlacementAreaCache()
 	}
 }
 
-void ACSPlayerCharacter::CollectBuildPlacementCollisionBoxes(
+void ACSPlayerCharacter::CollectBuildPlacementBoxesByTag(
 	AActor* FacilityActor,
-	TArray<UBoxComponent*>& OutCollisionBoxes) const
+	const FName& BoxTag,
+	TArray<UBoxComponent*>& OutBoxes) const
 {
-	OutCollisionBoxes.Reset();
+	OutBoxes.Reset();
 	if (!IsValid(FacilityActor))
 	{
 		return;
@@ -1517,9 +1757,9 @@ void ACSPlayerCharacter::CollectBuildPlacementCollisionBoxes(
 	for (UBoxComponent* BoxComponent : BoxComponents)
 	{
 		if (IsValid(BoxComponent) &&
-			BoxComponent->ComponentHasTag(BuildPlacementCollisionTag))
+			BoxComponent->ComponentHasTag(BoxTag))
 		{
-			OutCollisionBoxes.Add(BoxComponent);
+			OutBoxes.Add(BoxComponent);
 		}
 	}
 }
@@ -1682,6 +1922,113 @@ bool ACSPlayerCharacter::HasBuildPlacementCollisionOverlap(
 	}
 
 	return false;
+}
+
+bool ACSPlayerCharacter::HasBuildPlacementAccessZoneConflict(
+	AActor* FacilityActor,
+	const TArray<UBoxComponent*>& MyBodyBoxes,
+	const TArray<UBoxComponent*>& MyZoneBoxes,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation,
+	TArray<TWeakObjectPtr<UBoxComponent>>& OutBlockedZoneBoxes) const
+{
+	// 이전 프레임에서 밟고 있던 상대방 영역 명단을 초기화
+	OutBlockedZoneBoxes.Reset();
+	if (!IsValid(FacilityActor))
+	{
+		return false;
+	}
+
+	// 배치 예정 위치로 선택된 진열대 몸통과 영역 박스들을 가상으로 미리 옮겨서 계산할 준비
+	TArray<TPair<FTransform, FVector>> MyBodyProspective;
+	TArray<TPair<FTransform, FVector>> MyZoneProspective;
+	auto BuildProspective = [&](
+		const TArray<UBoxComponent*>& SourceBoxes,
+		TArray<TPair<FTransform, FVector>>& OutProspective)
+	{
+		for (const UBoxComponent* SourceBox : SourceBoxes)
+		{
+			FTransform BoxTransform;
+			FVector ScaledExtent;
+			if (TryCalculateProspectiveBox(
+					SourceBox,
+					FacilityActor,
+					FacilityLocation,
+					FacilityRotation,
+					BoxTransform,
+					ScaledExtent))
+			{
+				OutProspective.Emplace(BoxTransform, ScaledExtent);
+			}
+		}
+	};
+	BuildProspective(MyBodyBoxes, MyBodyProspective);
+	BuildProspective(MyZoneBoxes, MyZoneProspective);
+	if (MyBodyProspective.IsEmpty() && MyZoneProspective.IsEmpty())
+	{
+		return false;
+	}
+
+	bool bHasConflict = false;
+	TArray<UBoxComponent*> OtherBodyBoxes;
+	TArray<UBoxComponent*> OtherZoneBoxes;
+	// 맵에 존재하는 다른 진열대들과 가상 박스들을 비교
+	for (const TWeakObjectPtr<AActor>& OtherWeak : CachedAccessZoneFacilities)
+	{
+		AActor* Other = OtherWeak.Get();
+		if (!IsValid(Other) ||
+			Other == FacilityActor ||
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Other))
+		{
+			continue;
+		}
+		// 멀리 있는 시설은 계산에서 제외해 Tick 비용을 묶어 둡니다.
+		if (FVector::DistSquared2D(Other->GetActorLocation(), FacilityLocation) >
+			FMath::Square(AccessZoneQueryRange))
+		{
+			continue;
+		}
+
+		CollectBuildPlacementBoxesByTag(Other, BuildPlacementCollisionTag, OtherBodyBoxes);
+		CollectBuildPlacementBoxesByTag(Other, BuildPlacementAccessZoneTag, OtherZoneBoxes);
+
+		// 규칙 A: 내 몸통이 남의 접근 영역을 침범했는지?
+		// 막힌 영역을 전부 지정한 색으로 변경해야 하므로 중간에 return하지 않습니다.
+		for (UBoxComponent* OtherZone : OtherZoneBoxes)
+		{
+			for (const TPair<FTransform, FVector>& MyBody : MyBodyProspective)
+			{
+				if (DoesBoxOverlapBox2D(
+						MyBody.Key,
+						MyBody.Value,
+						OtherZone->GetComponentTransform(),
+						OtherZone->GetScaledBoxExtent()))
+				{
+					OutBlockedZoneBoxes.AddUnique(OtherZone);
+					bHasConflict = true;
+					break;
+				}
+			}
+		}
+
+		// 규칙 B: 내 접근 영역이 남의 몸통에 막히는가
+		for (const UBoxComponent* OtherBody : OtherBodyBoxes)
+		{
+			for (const TPair<FTransform, FVector>& MyZone : MyZoneProspective)
+			{
+				if (DoesBoxOverlapBox2D(
+						MyZone.Key,
+						MyZone.Value,
+						OtherBody->GetComponentTransform(),
+						OtherBody->GetScaledBoxExtent()))
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return bHasConflict;
 }
 
 bool ACSPlayerCharacter::TryCalculateBuildSnapTransform(
@@ -1912,6 +2259,9 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 	// 계산 실패 시 이전 프레임의 불가 사유가 Q 입력에 남지 않도록 먼저 초기화합니다.
 	bIsHeldBuildableInsidePlacementArea = true;
 	bHasHeldBuildablePlacementOverlap = false;
+	bHasHeldBuildableAccessZoneConflict = false;
+	bIsHeldBuildableAccessZoneInsideArea = true;
+	CachedBlockedAccessZoneBoxes.Reset();
 	if (!IsBuildMode() ||
 		!IsValid(HeldActor) ||
 		!HeldActor->Implements<UCSBuildableFacility>() ||
@@ -1986,9 +2336,15 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 	}
 
 	TArray<UBoxComponent*> BuildPlacementCollisionBoxes;
-	CollectBuildPlacementCollisionBoxes(
+	TArray<UBoxComponent*> BuildPlacementAccessZoneBoxes;
+	CollectBuildPlacementBoxesByTag(
 		HeldActor,
+		BuildPlacementCollisionTag,
 		BuildPlacementCollisionBoxes);
+	CollectBuildPlacementBoxesByTag(
+		HeldActor,
+		BuildPlacementAccessZoneTag,
+		BuildPlacementAccessZoneBoxes);
 	const bool bIsInsideBuildPlacementArea =
 		IsBuildPlacementInsideCachedAreas(
 			BuildPlacementCollisionBoxes,
@@ -2000,12 +2356,34 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 			BuildPlacementCollisionBoxes,
 			CachedBuildPlacementLocation,
 			CachedBuildPlacementRotation);
+	// 규칙 A / B. 막힌 영역 목록은 설치된 시설의 영역 표시가 그대로 읽어 갑니다.
+	const bool bHasZoneConflict =
+		HasBuildPlacementAccessZoneConflict(
+			HeldActor,
+			BuildPlacementCollisionBoxes,
+			BuildPlacementAccessZoneBoxes,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation,
+			CachedBlockedAccessZoneBoxes);
+	// 규칙 C. 몸통과 같은 함수를 배열만 바꿔 호출합니다.
+	const bool bIsZoneInsideArea =
+		IsBuildPlacementInsideCachedAreas(
+			BuildPlacementAccessZoneBoxes,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation);
 	bIsHeldBuildableInsidePlacementArea = bIsInsideBuildPlacementArea;
 	bHasHeldBuildablePlacementOverlap = bHasFacilityOverlap;
+	bHasHeldBuildableAccessZoneConflict = bHasZoneConflict;
+	bIsHeldBuildableAccessZoneInsideArea = bIsZoneInsideArea;
+	// 신규 두 조건만 롤아웃 스위치로 묶습니다. 기존 조건은 검증된 동작이라 넣지 않습니다.
+	const bool bPassesAccessZoneRules =
+		!bBlockPlacementOnAccessZoneRules ||
+		(!bHasZoneConflict && bIsZoneInsideArea);
 	bCanPlaceHeldBuildableFacility =
 		bIsSurfaceValid &&
 		bIsInsideBuildPlacementArea &&
-		!bHasFacilityOverlap;
+		!bHasFacilityOverlap &&
+		bPassesAccessZoneRules;
 	ApplyBuildPlacementPreviewMaterial(bCanPlaceHeldBuildableFacility);
 	SetBuildPlacementPreviewVisible(true);
 }
@@ -2757,17 +3135,29 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	{
 		return;
 	}
-	// 다른 시설과 겹치면 Area 안팎과 무관하게 설치와 미설치 Drop을 모두 차단합니다.
+	// 다른 시설과 겹치면 매장 구역 안팎과 무관하게 차단합니다.
 	if (bHasHeldBuildablePlacementOverlap)
 	{
 		return;
 	}
-	if (!bIsHeldBuildableInsidePlacementArea)
+	// 손님 통로를 막는 자리도 같은 이유로 차단합니다.
+	if (bBlockPlacementOnAccessZoneRules && bHasHeldBuildableAccessZoneConflict)
 	{
-		DropHeldBuildableFacilityAsUninstalled();
 		return;
 	}
-	// 향후 다른 불가 조건이 추가되어도 자동으로 미설치 Drop하지 않습니다.
+	// 매장 밖에는 내려놓지도 못하게 합니다.
+	// 시설은 매장 구역 안에서만 손에서 떠나므로, 밖에 방치된 시설이 생기지 않습니다.
+	if (!bIsHeldBuildableInsidePlacementArea)
+	{
+		return;
+	}
+	// 몸통은 매장 안인데 접근 영역만 밖으로 나간 경우입니다.
+	// 손님이 못 오는 시설이 매장 한복판에 남으므로 마찬가지로 차단합니다.
+	if (bBlockPlacementOnAccessZoneRules && !bIsHeldBuildableAccessZoneInsideArea)
+	{
+		return;
+	}
+	// 위 분기가 놓친 불가 조건이 나중에 추가되어도 여기서 함께 막힙니다.
 	if (!bCanPlaceHeldBuildableFacility)
 	{
 		return;
@@ -2792,39 +3182,6 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 
 	// FinalizeBuildPlacement까지 끝난 실제 배치만 범용 성공 이벤트로 알립니다.
 	OnBuildableFacilityPlaced.Broadcast(FacilityToPlace);
-}
-
-void ACSPlayerCharacter::DropHeldBuildableFacilityAsUninstalled()
-{
-	if (!IsBuildMode() ||
-		!bHasBuildPlacementPreview ||
-		!IsValid(HeldActor) ||
-		!HeldActor->Implements<UCSBuildableFacility>())
-	{
-		return;
-	}
-
-	AActor* FacilityToDrop = HeldActor;
-	FacilityToDrop->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	FacilityToDrop->SetActorLocationAndRotation(
-		CachedBuildPlacementLocation,
-		CachedBuildPlacementRotation,
-		false,
-		nullptr,
-		ETeleportType::TeleportPhysics);
-	RestoreHeldBuildableActorStates();
-	FacilityToDrop->SetActorEnableCollision(true);
-	ICSBuildableFacility::Execute_InitializeAsUninstalledFacility(FacilityToDrop);
-
-	HeldActor = nullptr;
-	ResetBuildRotationInput();
-	HeldBuildableFacilityRotation = FRotator::ZeroRotator;
-	ClearBuildPlacementPreview();
-	if (ACSStorePlayerController* StorePlayerController =
-		Cast<ACSStorePlayerController>(GetController()))
-	{
-		StorePlayerController->ClearInteractionContext();
-	}
 }
 
 void ACSPlayerCharacter::TryUsePrimaryTool()
@@ -2977,6 +3334,168 @@ void ACSPlayerCharacter::DestroyPlacementPreview()
 	}
 
 	PlacementPreviewActor = nullptr;
+}
+
+UStaticMeshComponent* ACSPlayerCharacter::AcquireAccessZoneDisplay(int32 DisplayIndex)
+{
+	if (DisplayIndex < 0 || !IsValid(AccessZoneDisplayMesh))
+	{
+		return nullptr;
+	}
+	// 풀에 이미 만들어둔 그래픽이 있다면 새로 만들지 않고 그대로 반환
+	if (AccessZoneDisplayMeshes.IsValidIndex(DisplayIndex))
+	{
+		return AccessZoneDisplayMeshes[DisplayIndex];
+	}
+	// 풀은 앞에서부터 순서대로만 채워지므로 한 칸씩만 늘어납니다.
+	if (DisplayIndex != AccessZoneDisplayMeshes.Num())
+	{
+		return nullptr;
+	}
+	// 풀이 꽉 찼거나 처음 그리는 거라면, 새로운 Mesh 컴포넌트를 생성
+	UStaticMeshComponent* Display = NewObject<UStaticMeshComponent>(
+		this,
+		NAME_None,
+		RF_Transient);
+	if (!IsValid(Display))
+	{
+		return nullptr;
+	}
+
+	// 필요없는 설정 제거
+	Display->SetupAttachment(GetRootComponent());
+	AddInstanceComponent(Display);
+	Display->RegisterComponent();
+	// 제자리에 있는 시설의 영역을 그리므로 플레이어를 따라다니면 안 됩니다.
+	Display->SetAbsolute(true, true, true);
+	// 표시물이므로 조준 트레이스와 손님 이동에 절대 관여하지 않습니다.
+	Display->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Display->SetGenerateOverlapEvents(false);
+	Display->SetCanEverAffectNavigation(false);
+	Display->SetCastShadow(false);
+	Display->SetStaticMesh(AccessZoneDisplayMesh);
+	Display->SetHiddenInGame(false);
+	Display->SetVisibility(false);
+
+	// 충돌 시 실시간으로  색상을 바꾸기 위해, 동적 머티리얼 인스턴스를 생성해서 같이 저장
+	UMaterialInstanceDynamic* DisplayMID = nullptr;
+	if (IsValid(AccessZoneDisplayMaterial))
+	{
+		DisplayMID = Display->CreateAndSetMaterialInstanceDynamicFromMaterial(
+			0,
+			AccessZoneDisplayMaterial);
+	}
+	AccessZoneDisplayMeshes.Add(Display);
+	AccessZoneDisplayMIDs.Add(DisplayMID);
+	return Display;
+}
+
+// 맵 바닥에 그려져 있던 모든 주변 진열대들의 영역 평면 그래픽을 화면에서 숨김
+// 파괴하는 것이 아니라 가시성만 꺼두어, 나중에 다시 건축 모드를 켰을 때 렉 없이 재사용할 수 있게 함
+void ACSPlayerCharacter::ClearInstalledAccessZoneDisplays()
+{
+	for (UStaticMeshComponent* Display : AccessZoneDisplayMeshes)
+	{
+		if (IsValid(Display))
+		{
+			Display->SetVisibility(false);
+		}
+	}
+}
+
+void ACSPlayerCharacter::RefreshInstalledAccessZoneDisplays()
+{
+	// 시설을 들고 있을 때만 표시
+	if (!IsBuildMode() ||
+		!IsValid(HeldActor) ||
+		!HeldActor->Implements<UCSBuildableFacility>())
+	{
+		ClearInstalledAccessZoneDisplays();
+		return;
+	}
+
+	// 메시가 지정되지 않았으면 무시
+	if (!IsValid(AccessZoneDisplayMesh))
+	{
+		ClearInstalledAccessZoneDisplays();
+		return;
+	}
+
+	int32 UsedCount = 0;
+	TArray<UBoxComponent*> ZoneBoxes;
+	// 저장해둔 맵 전체의 설치된 시설들을 순회
+	for (const TWeakObjectPtr<AActor>& OtherWeak : CachedAccessZoneFacilities)
+	{
+		AActor* Other = OtherWeak.Get();
+		if (!IsValid(Other) ||
+			Other == HeldActor ||
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Other))
+		{
+			continue;
+		}
+		// 시각화 거리를 충돌 판정 거리보다 짧게 둡니다
+		// 이유: 다 보이면 시각적으로 난잡할 수도 있음
+		if (FVector::DistSquared2D(Other->GetActorLocation(), GetActorLocation()) >
+			FMath::Square(AccessZoneVisualRange))
+		{
+			continue;
+		}
+
+		CollectBuildPlacementBoxesByTag(Other, BuildPlacementAccessZoneTag, ZoneBoxes);
+		for (UBoxComponent* ZoneBox : ZoneBoxes)
+		{
+			const FVector ZoneExtent = ZoneBox->GetScaledBoxExtent();
+			const FVector ZoneCenter = ZoneBox->GetComponentLocation();
+			const FRotator ZoneYaw(0.0f, ZoneBox->GetComponentRotation().Yaw, 0.0f);
+			if (ZoneExtent.X <= UE_KINDA_SMALL_NUMBER ||
+				ZoneExtent.Y <= UE_KINDA_SMALL_NUMBER)
+			{
+				continue;
+			}
+
+			// 지금 내 몸통이 침범 중인 영역 색 변경
+			// 전부 같은 색이면 진열대가 몰려 있을 때 무엇 때문에 막혔는지 알 수 없음
+			const bool bIsBlocked = CachedBlockedAccessZoneBoxes.Contains(
+				TWeakObjectPtr<UBoxComponent>(ZoneBox));
+			UStaticMeshComponent* Display = AcquireAccessZoneDisplay(UsedCount);
+			if (!IsValid(Display))
+			{
+				continue;
+			}
+
+			// 영역 박스의 바닥면에 평면을 맞춥니다.
+			Display->SetWorldLocation(FVector(
+				ZoneCenter.X,
+				ZoneCenter.Y,
+				ZoneCenter.Z - ZoneExtent.Z + AccessZoneDisplayLift));
+			Display->SetWorldRotation(ZoneYaw);
+			Display->SetWorldScale3D(FVector(
+				ZoneExtent.X * 2.0f / UnitPlaneSize,
+				ZoneExtent.Y * 2.0f / UnitPlaneSize,
+				1.0f));
+			// 내가 침범한 곳이면 Blocked, 안전한 곳이면 Neutral 파라미터로 머티리얼 색상을 변경
+			if (AccessZoneDisplayMIDs.IsValidIndex(UsedCount) &&
+				IsValid(AccessZoneDisplayMIDs[UsedCount]))
+			{
+				AccessZoneDisplayMIDs[UsedCount]->SetVectorParameterValue(
+					TEXT("ZoneColor"),
+					bIsBlocked ? BlockedZoneColor : NeutralZoneColor);
+			}
+			Display->SetVisibility(true);
+			++UsedCount;
+		}
+	}
+
+	// Tick에서 다 그리고 남은 그래픽 풀은 화면에 남지 않도록 다시 숨겨줌
+	for (int32 DisplayIndex = UsedCount;
+		DisplayIndex < AccessZoneDisplayMeshes.Num();
+		++DisplayIndex)
+	{
+		if (IsValid(AccessZoneDisplayMeshes[DisplayIndex]))
+		{
+			AccessZoneDisplayMeshes[DisplayIndex]->SetVisibility(false);
+		}
+	}
 }
 
 void ACSPlayerCharacter::RefreshShelfPlacementHighlights()

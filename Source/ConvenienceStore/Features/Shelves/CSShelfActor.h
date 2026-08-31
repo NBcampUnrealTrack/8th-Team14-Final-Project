@@ -125,6 +125,8 @@ protected:
 	void SyncSlotsFromMarkers();
 	// 시설 DataTable 행에서 현재 진열대가 제공하는 보관 환경을 읽어옵니다.
 	void SyncFacilityData();
+	// 마커와 반경 변경을 접근 영역 박스에 반영합니다.
+	void SyncBrowseZoneBox();
 	// 냉장·냉동 상품이 현재 시설의 보관 환경과 맞지 않는지 확인합니다.
 	bool ShouldWarnStorage(AActor* ItemActor) const;
 	// 외곽선 표시를 끌 때 기존 Custom Depth 설정을 복원합니다.
@@ -152,10 +154,19 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UArrowComponent> CustomerShoppingPoint;
 
+	// 손님이 설 자리를 건축 판정에 알리기 위한 표시용 박스
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> BrowseZoneBox;
+
 	// 마커를 중심으로 만드는 도착 판정 영역의 반경
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Customer",
 		meta = (ClampMin = "1.0", UIMin = "1.0"))
 	float BrowseZoneRadius = 75.0f;
+
+	// 건축 판정에서 세로로 볼 범위입니다. 층이 다른 시설을 구분하는 데만 사용
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Customer",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float BrowseZoneHeight = 200.0f;
 
 	// 미설치 물리를 켜기 직전의 Blueprint 상대 위치·회전·스케일을 보존합니다.
 	UPROPERTY(Transient)
