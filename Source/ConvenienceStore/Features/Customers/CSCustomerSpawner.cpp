@@ -238,10 +238,10 @@ void ACSCustomerSpawner::ApplyCustomerVisual(ACSCustomerCharacter* Customer, con
 	{
 		MeshComp->SetAnimInstanceClass(Visual->AnimBlueprintClass);
 	}
-	else if (Visual->FallbackWalkAnimation != nullptr)
+	else
 	{
-		// ABP가 없을 때 쓰는 간이 재생 방식
-		MeshComp->PlayAnimation(Visual->FallbackWalkAnimation, /*bLooping=*/ true);
+		// ABP가 없는 종족은 캐릭터가 이동/상품 행동 상태에 맞춰 폴백 애니메이션을 제어합니다.
+		Customer->InitializeFallbackAnimations(Visual);
 	}
 }
 

@@ -210,6 +210,10 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 	Data.ElapsedTime = 0.0f;
 	Data.RoundCount = 0;
 	Data.bBudgetCharged = false;
+	Data.Phase = ECSCustomerBrowsePhase::WaitingBeforeThink;
+	Data.bThinkingAttemptedForRound = false;
+	Data.bPendingTakeProductAfterReaction = false;
+	Data.PendingProductActor = nullptr;
 
 	if (Data.Actor == nullptr || Data.TargetShelf == nullptr)
 	{
@@ -241,7 +245,9 @@ static void CS_HandlePurchaseRejection(
 
 	Subsystem.NotifyPurchaseRejected(&Customer, RejectionInfo);
 
-	Data.bAwaitingRejectionExit = true;
+	Data.Phase = ECSCustomerBrowsePhase::WaitingReaction;
+	Data.bPendingTakeProductAfterReaction = false;
+	Data.PendingProductActor = nullptr;
 	Data.ElapsedTime = 0.0f;
 }
 
@@ -266,7 +272,7 @@ static void CS_HandlePriceReactionThenBuy(
 		Decision.GetRejectionDisplayTier(ReactionInfo).DebugText.ToString(),
 		nullptr, FColor::White, DisplayDuration, true);
 
-	Data.bAwaitingRejectionExit = true;
+	Data.Phase = ECSCustomerBrowsePhase::WaitingReaction;
 	Data.bPendingTakeProductAfterReaction = true;
 	Data.PendingProductActor = ProductActor;
 	Data.ElapsedTime = 0.0f;
@@ -322,6 +328,64 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	return EStateTreeRunStatus::Running;
 }
 
+// Pick 종료 뒤 보관해 둔 상품을 다시 검증해서 가져간 후 기존 세션 지속 판정을 그대로 실행합니다.
+static EStateTreeRunStatus CS_CompletePendingProductTake(
+	FCSTask_BrowseShelfInstanceData& Data,
+	ACSCustomerCharacter& Customer,
+	AActor* ShelfActor,
+	UCSCustomerStateComponent& State,
+	UCSCustomerRuntimeSubsystem& Subsystem,
+	UCSPurchaseDecisionComponent& Decision)
+{
+	AActor* PendingProduct = Data.PendingProductActor;
+	Data.PendingProductActor = nullptr;
+	Data.bPendingTakeProductAfterReaction = false;
+	Data.Phase = ECSCustomerBrowsePhase::WaitingBeforeThink;
+	Data.bThinkingAttemptedForRound = false;
+	Data.ElapsedTime = 0.0f;
+
+	// Pick 재생 중 다른 손님이 먼저 가져갔을 수 있으므로 실제 획득 직전에 다시 확인합니다.
+	if (!IsValid(PendingProduct))
+	{
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// TakeProduct는 검증 실패 시 NAME_None, 실제 획득 완료 시 ProductId를 반환합니다.
+	const FName TakenProductId =
+		Subsystem.TakeProduct(ShelfActor, PendingProduct, &Customer);
+	if (TakenProductId.IsNone())
+	{
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	Data.RoundCount++;
+	return CS_EvaluateSessionContinuation(Data, Customer, State, Decision);
+}
+
+// 구매 확정 상품을 기억하고 Pick을 시작합니다. 애니메이션이 없으면 기존 즉시 획득으로 폴백합니다.
+static EStateTreeRunStatus CS_BeginPickOrTake(
+	FCSTask_BrowseShelfInstanceData& Data,
+	ACSCustomerCharacter& Customer,
+	AActor* ShelfActor,
+	AActor* ProductActor,
+	UCSCustomerStateComponent& State,
+	UCSCustomerRuntimeSubsystem& Subsystem,
+	UCSPurchaseDecisionComponent& Decision)
+{
+	Data.PendingProductActor = ProductActor;
+	if (Customer.PlayPickAnimation())
+	{
+		Data.Phase = ECSCustomerBrowsePhase::Picking;
+		Data.ElapsedTime = 0.0f;
+		return EStateTreeRunStatus::Running;
+	}
+
+	// Thinking Hold 중 Pick이 누락되면 Transform을 먼저 원복하고 기존 즉시 획득으로 폴백합니다.
+	Customer.ReleaseActionTransitionHold();
+	return CS_CompletePendingProductTake(
+		Data, Customer, ShelfActor, State, Subsystem, Decision);
+}
+
 EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Context,
 	const float DeltaTime) const
 {
@@ -330,6 +394,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	ACSCustomerCharacter* Customer = Data.Actor;
 	AActor* ShelfActor = Data.TargetShelf;
+	if (!IsValid(Customer) || !IsValid(ShelfActor) || Context.GetWorld() == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
 	UCSCustomerStateComponent* State = Customer->GetCustomerState();
 	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 
@@ -343,20 +412,42 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	if (Decision == nullptr)
 	{
 		// 이 손님에게 판단 컴포넌트가 붙어있지 않으면 세션 자체를 진행할 수 없으므로 여기서 종료
+		Customer->ReleaseActionTransitionHold();
 		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// Thinking/Pick은 캐릭터가 재생 길이로 관리하므로 종료될 때까지 구매 판단/상품 획득을 진행하지 않습니다.
+	if (Data.Phase == ECSCustomerBrowsePhase::Thinking)
+	{
+		if (Customer->IsActionAnimationPlaying())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		Data.Phase = ECSCustomerBrowsePhase::Evaluating;
+		Data.ElapsedTime = 0.0f;
+	}
+	else if (Data.Phase == ECSCustomerBrowsePhase::Picking)
+	{
+		if (Customer->IsActionAnimationPlaying())
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		return CS_CompletePendingProductTake(
+			Data, *Customer, ShelfActor, *State, *Subsystem, *Decision);
 	}
 
 	// 거절 즉시표시(또는 가격 반응 표시)가 떠 있는 동안은 다른 판단을 전부 건너뛰고 대기만 함
 	// (손님이 다음 진열대로 넘어가지 않고 그 자리에 머무르게 하는 역할)
 	// 대기시간은 방금 저장된 사유(State->LastRejectionInfo.Reason)에 따라 달라짐 - ShelfEmpty만 짧음
-	if (Data.bAwaitingRejectionExit)
+	if (Data.Phase == ECSCustomerBrowsePhase::WaitingReaction)
 	{
 		if (Data.ElapsedTime < Decision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
 		{
 			return EStateTreeRunStatus::Running;
 		}
 
-		Data.bAwaitingRejectionExit = false;
 		Data.ElapsedTime = 0.0f;
 
 		// 대기가 실제 거절이 아니라 가격 반응은 있었지만 결국 사는 케이스였다면
@@ -364,17 +455,14 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		if (Data.bPendingTakeProductAfterReaction)
 		{
 			Data.bPendingTakeProductAfterReaction = false;
-			AActor* PendingProduct = Data.PendingProductActor;
-			Data.PendingProductActor = nullptr;
-
-			// 최대 몇 초씩 대기하는 동안 다른 손님이 같은 상품을 먼저 집어갔을 수 있음
-			// 이 방어가 없으면 이미 사라진 액터를 TakeProduct에 넘겨 크래시로 이어짐
-			if (IsValid(PendingProduct))
-			{
-				Subsystem->TakeProduct(ShelfActor, PendingProduct, Customer);
-				Data.RoundCount++;
-			}
-			return CS_EvaluateSessionContinuation(Data, *Customer, *State, *Decision);
+			return CS_BeginPickOrTake(
+				Data,
+				*Customer,
+				ShelfActor,
+				Data.PendingProductActor,
+				*State,
+				*Subsystem,
+				*Decision);
 		}
 
 		// 그 외에는 기존 그대로 - 실제 거절이었으므로 아무것도 안 담고 세션 종료
@@ -385,7 +473,8 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// RoundCount == 0으로 제한하는 이유: 세션 도중(라운드 1 이상)에 다른 손님이 재고를 다 사가서 없어진 경우는
 	// 여기로 다시 빠지지 않고, 아래 BuildPurchaseCandidates가 빈 배열을 만들어 DecidePurchase가 자연히
 	// false(미구매)를 반환하며 세션이 끝나도록 둔다
-	if (Data.RoundCount == 0 && !Subsystem->HasShelfStock(ShelfActor))
+	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
+		Data.RoundCount == 0 && !Subsystem->HasShelfStock(ShelfActor))
 	{
 		if (Data.ElapsedTime < Data.GlanceTime)
 		{
@@ -403,13 +492,43 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Running;
 	}
 
-	// 라운드 0(첫 방문)은 BrowseTime, 그 이후 라운드는 SessionInterval만큼 대기 후 판단
-	const float RequiredWait = (Data.RoundCount == 0) ? Data.BrowseTime : Data.SessionInterval;
-	if (Data.ElapsedTime < RequiredWait)
+	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink)
 	{
-		return EStateTreeRunStatus::Running;
+		// 첫 라운드는 Thinking이 기존 BrowseTime을 대체합니다. 누락됐을 때만 BrowseTime을 기다립니다.
+		if (Data.RoundCount == 0 && !Data.bThinkingAttemptedForRound)
+		{
+			Data.bThinkingAttemptedForRound = true;
+			if (Customer->PlayThinkingAnimation())
+			{
+				Data.Phase = ECSCustomerBrowsePhase::Thinking;
+				Data.ElapsedTime = 0.0f;
+				return EStateTreeRunStatus::Running;
+			}
+
+			Data.ElapsedTime = 0.0f;
+		}
+
+		const float RequiredWait = (Data.RoundCount == 0) ? Data.BrowseTime : Data.SessionInterval;
+		if (Data.ElapsedTime < RequiredWait)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		// 추가 라운드는 기존 SessionInterval이 지난 뒤 Thinking을 다시 한 번 재생합니다.
+		if (Data.RoundCount > 0 && !Data.bThinkingAttemptedForRound)
+		{
+			Data.bThinkingAttemptedForRound = true;
+			if (Customer->PlayThinkingAnimation())
+			{
+				Data.Phase = ECSCustomerBrowsePhase::Thinking;
+				Data.ElapsedTime = 0.0f;
+				return EStateTreeRunStatus::Running;
+			}
+		}
+
+		Data.Phase = ECSCustomerBrowsePhase::Evaluating;
+		Data.ElapsedTime = 0.0f;
 	}
-	Data.ElapsedTime = 0.0f;
 
 	// 사든 안 사든 방문한 건 사실이므로 첫 라운드에서 한 번만 기록
 	// (재방문은 하지 않는다는 원칙 - HasUnvisitedShelf가 이 기록으로 게이트 역할을 함)
@@ -447,27 +566,52 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		// 연출 없이 바로 세션 종료
 		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None)
 		{
+			Customer->ReleaseActionTransitionHold();
 			return EStateTreeRunStatus::Succeeded;
 		}
 
 		// 그 외 사유는 거절 연출(사유 기록/디버그 텍스트/방송) 후 대기상태 진입
+		Customer->ReleaseActionTransitionHold();
 		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
 		return EStateTreeRunStatus::Running;
 	}
 
 	// 가격 반응(Reason=PriceRejected, 무반응이면 None)이 있으면 즉시 담지 않고 먼저 멈춰서
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
-	// (위 bAwaitingRejectionExit 분기의 bPendingTakeProductAfterReaction 처리가 이어받음)
+	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
 	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None)
 	{
+		Customer->ReleaseActionTransitionHold();
 		CS_HandlePriceReactionThenBuy(Data, *Customer, *State, *Decision, RejectionInfo, Selected.ProductActor, Context.GetWorld());
 		return EStateTreeRunStatus::Running;
 	}
 
-	// 무반응이면 예전처럼 즉시 담고 바로 다음 판단
-	Subsystem->TakeProduct(ShelfActor, Selected.ProductActor, Customer);
-	Data.RoundCount++;
-	return CS_EvaluateSessionContinuation(Data, *Customer, *State, *Decision);
+	// 무반응 구매도 Pick 종료 후에만 상품을 가져갑니다. Pick 누락 시에는 즉시 획득으로 폴백합니다.
+	return CS_BeginPickOrTake(
+		Data,
+		*Customer,
+		ShelfActor,
+		Selected.ProductActor,
+		*State,
+		*Subsystem,
+		*Decision);
+}
+
+void FCSTask_BrowseShelf::ExitState(FStateTreeExecutionContext& Context,
+	const FStateTreeTransitionResult& Transition) const
+{
+	FInstanceDataType& Data = Context.GetInstanceData(*this);
+	if (IsValid(Data.Actor))
+	{
+		// 강제 퇴장/제압 등 상위 전이는 진행 중인 상품 행동을 즉시 중단할 수 있어야 합니다.
+		Data.Actor->CancelActionAnimation();
+	}
+
+	Data.ElapsedTime = 0.0f;
+	Data.Phase = ECSCustomerBrowsePhase::WaitingBeforeThink;
+	Data.bThinkingAttemptedForRound = false;
+	Data.bPendingTakeProductAfterReaction = false;
+	Data.PendingProductActor = nullptr;
 }
 
 // =====================================================================

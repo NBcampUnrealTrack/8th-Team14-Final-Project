@@ -20,6 +20,7 @@
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 
+#include "Animation/AnimSequence.h"
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -32,6 +33,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/GameInstance.h"
 #include "Engine/OverlapResult.h"
@@ -819,6 +821,8 @@ void ACSPlayerCharacter::RestoreFacilityMagicWands(AActor* FacilityActor)
 void ACSPlayerCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+	// 아래 모드별 early return과 무관하게 플레이어 이동 애니메이션은 항상 먼저 갱신합니다.
+	UpdatePlayerLocomotionAnimation();
 
 	if (IsBuildMode())
 	{
@@ -874,6 +878,44 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 	else
 	{
 		UpdateInteractionHUD();
+	}
+}
+
+void ACSPlayerCharacter::UpdatePlayerLocomotionAnimation(bool bForce)
+{
+	constexpr float WalkEnterSpeed = 10.0f;
+	constexpr float IdleEnterSpeed = 5.0f;
+	const float HorizontalSpeed = GetVelocity().Size2D();
+	if (bPlayerWalkingAnimation)
+	{
+		if (HorizontalSpeed <= IdleEnterSpeed)
+		{
+			bPlayerWalkingAnimation = false;
+		}
+	}
+	else if (HorizontalSpeed >= WalkEnterSpeed)
+	{
+		bPlayerWalkingAnimation = true;
+	}
+
+	UAnimSequence* DesiredAnimation =
+		bPlayerWalkingAnimation ? PlayerWalkAnimation.Get() : PlayerIdleAnimation.Get();
+	if (!IsValid(DesiredAnimation))
+	{
+		DesiredAnimation =
+			bPlayerWalkingAnimation ? PlayerIdleAnimation.Get() : PlayerWalkAnimation.Get();
+	}
+
+	if (!IsValid(DesiredAnimation) ||
+		(!bForce && CurrentPlayerLocomotionAnimation == DesiredAnimation))
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		MeshComponent->PlayAnimation(DesiredAnimation, true);
+		CurrentPlayerLocomotionAnimation = DesiredAnimation;
 	}
 }
 

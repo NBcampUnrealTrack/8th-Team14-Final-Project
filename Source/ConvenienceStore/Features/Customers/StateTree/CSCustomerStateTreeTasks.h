@@ -136,6 +136,16 @@ struct FCSTask_MoveToLocation : public FStateTreeTaskCommonBase
 // 이후 계속 담을지 확률로 정해질 때마다 SessionInterval만큼 대기하고 라운드를 반복함
 // =====================================================================
 
+UENUM()
+enum class ECSCustomerBrowsePhase : uint8
+{
+	WaitingBeforeThink,
+	Thinking,
+	Evaluating,
+	WaitingReaction,
+	Picking
+};
+
 USTRUCT()
 struct FCSTask_BrowseShelfInstanceData
 {
@@ -176,10 +186,13 @@ struct FCSTask_BrowseShelfInstanceData
 	UPROPERTY()
 	bool bBudgetCharged = false;
 
-	// 거절 즉시표시(디버그 텍스트)가 떠 있는 동안 손님을 이 자리에 붙잡아두기 위한 플래그
-	// true인 동안은 Tick 맨 위 분기가 다른 로직을 전부 건너뛰고 InstantDisplayDuration 경과만 기다림
+	// 구경 대기, 고민, 판단, 가격 반응, 집기 순서를 명시적으로 유지합니다.
 	UPROPERTY()
-	bool bAwaitingRejectionExit = false;
+	ECSCustomerBrowsePhase Phase = ECSCustomerBrowsePhase::WaitingBeforeThink;
+
+	// 현재 라운드에서 Thinking 재생을 이미 시도했는지 기록하여 누락 시 폴백 대기만 수행합니다.
+	UPROPERTY()
+	bool bThinkingAttemptedForRound = false;
 
 	// 위 대기가 실제 거절이 아니라 가격에 반응은 있지만 결국 사는 케이스일 때만 true
 	// 대기가 끝나는 시점에 이 플래그를 보고 그냥 지나갈지(false, 기존 거절 흐름) 상품을 담을지(true) 갈림
@@ -209,6 +222,9 @@ struct FCSTask_BrowseShelf : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
 		const float DeltaTime) const override;
+
+	virtual void ExitState(FStateTreeExecutionContext& Context,
+		const FStateTreeTransitionResult& Transition) const override;
 };
 
 // =====================================================================
