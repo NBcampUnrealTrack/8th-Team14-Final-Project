@@ -33,6 +33,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Data/CSVillainTypes.h"
 #include "Math/RandomStream.h"
 #include "CSCustomerRuntimeSubsystem.generated.h"
 
@@ -306,6 +307,10 @@ public:
 	// 절도범이 사라지기 직전에 호출. 손실이 일어났다고 알리는 부분
 	// NotifyCustomerDespawned 안에서 불리므로 태스크가 직접 부를 일은 없습니다.
 	void ReportShopliftEscaped(ACSCustomerCharacter* Customer);
+
+	// 도망치는 빌런(손님)이 들고 있는 상품들의 목록을 정산용 리포트 포맷에 맞게 변환하여 추출
+	UFUNCTION(BlueprintPure, Category = "Customer|Shoplift")
+	TArray<FCSStolenProductRecord> GetStolenProductRecords(const ACSCustomerCharacter* Customer) const;
 
 	// 빌런 제압 -------
 

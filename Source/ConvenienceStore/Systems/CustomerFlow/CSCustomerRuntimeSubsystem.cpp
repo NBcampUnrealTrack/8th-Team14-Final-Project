@@ -1221,6 +1221,68 @@ void UCSCustomerRuntimeSubsystem::ReportShopliftEscaped(ACSCustomerCharacter* Cu
 	OnShopliftEscaped.Broadcast(Customer, LostGold);
 }
 
+TArray<FCSStolenProductRecord> UCSCustomerRuntimeSubsystem::GetStolenProductRecords(
+	const ACSCustomerCharacter* Customer) const
+{
+	TArray<FCSStolenProductRecord> StolenProducts;
+
+	if (IsValid(Customer) == false)
+	{
+		return StolenProducts;
+	}
+
+	const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return StolenProducts;
+	}
+
+	// 같은 상품을 여러 개 훔쳤을 때 행이 갈라지지 않도록 상품ID로 접는다.
+	TMap<FName, int32> RecordIndexByProductId;
+	for (int32 i = 0; i < State->SelectProducts.Num(); i++)
+	{
+		const FCSSelectProduct& Selected = State->SelectProducts[i];
+
+		// ProductRow.RowName이 ProductId다. 비어 있으면 분석 화면에서 행을 만들 수 없다.
+		const FName ProductId = Selected.ProductRow.RowName;
+		if (ProductId.IsNone())
+		{
+			continue;
+		}
+
+		if (const int32* ExistingIndex = RecordIndexByProductId.Find(ProductId))
+		{
+			FCSStolenProductRecord& Existing = StolenProducts[*ExistingIndex];
+			if (Existing.Quantity < MAX_int32)
+			{
+				++Existing.Quantity;
+			}
+			continue;
+		}
+
+		// 손님이 파괴되면 ProductId로 이름을 되찾을 방법이 없으므로 지금 스냅샷을 뜬다.
+		const FCSProductDataRow* ProductData = Selected.ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("UCSCustomerRuntimeSubsystem::GetStolenProductRecords"));
+
+		FCSStolenProductRecord& NewRecord = StolenProducts.AddDefaulted_GetRef();
+		NewRecord.ProductId = ProductId;
+		// 행이 사라진 상품이라도 목록에서 빠지지 않게 ProductId를 표시 이름으로 대체한다.
+		if (ProductData != nullptr)
+		{
+			NewRecord.DisplayName = ProductData->DisplayName;
+		}
+		else
+		{
+			NewRecord.DisplayName = FText::FromName(ProductId);
+		}
+		NewRecord.Quantity = 1;
+		// 다음 번에 똑같은 상품이 나오면 바로 찾을 수 있도록 인덱스 사전에 등록
+		RecordIndexByProductId.Add(ProductId, StolenProducts.Num() - 1);
+	}
+
+	return StolenProducts;
+}
+
 bool UCSCustomerRuntimeSubsystem::CanSubdueCustomer(const ACSCustomerCharacter* Customer) const
 {
 	if (IsValid(Customer) == false)
