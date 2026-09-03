@@ -128,6 +128,18 @@ void UCSCustomerStateComponent::MarkVillainActionDone()
 	bVillainActionDone = true;
 }
 
+bool UCSCustomerStateComponent::MarkShopliftLossReported()
+{
+	// 이미 집계된 손님이면 호출자가 방송을 건너뛸 수 있게 false를 돌려준다.
+	if (bShopliftLossReported)
+	{
+		return false;
+	}
+
+	bShopliftLossReported = true;
+	return true;
+}
+
 bool UCSCustomerStateComponent::IsSubdued() const
 {
 	return bIsSubdued;
