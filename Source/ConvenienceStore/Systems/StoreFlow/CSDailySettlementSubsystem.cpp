@@ -153,11 +153,21 @@ void UCSDailySettlementSubsystem::HandleShopliftEscaped(
 	ACSCustomerCharacter* Customer,
 	int32 LostGold)
 {
-	(void)Customer;
 	ACSStoreGameState* StoreGameState =
 		GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
-	if (IsValid(StoreGameState))
+	if (!IsValid(StoreGameState))
 	{
-		StoreGameState->RecordShopliftLoss(LostGold);
+		return;
 	}
+
+	// 상품별 도난 내역은 손님 파트의 헬퍼가 만들어 줍니다.
+	// 이 콜백 안에서 즉시 불러야 합니다. 방송 이후에는 손님이 파괴되거나
+	// SelectProducts가 비워져 항상 빈 배열이 돌아옵니다.
+	TArray<FCSStolenProductRecord> StolenProducts;
+	if (IsValid(CustomerRuntimeSubsystem))
+	{
+		StolenProducts = CustomerRuntimeSubsystem->GetStolenProductRecords(Customer);
+	}
+
+	StoreGameState->RecordShopliftLoss(LostGold, StolenProducts);
 }

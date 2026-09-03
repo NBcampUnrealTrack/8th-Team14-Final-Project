@@ -760,7 +760,7 @@ bool ACSStoreGameState::RecordOrderExpense(
 	return true;
 }
 
-bool ACSStoreGameState::RecordShopliftLoss(int32 LostGold)
+bool ACSStoreGameState::RecordShopliftLoss(int32 LostGold,const TArray<FCSStolenProductRecord>& StolenProducts)
 {
 	if (LostGold < 0 || LostGold > MAX_int32 - DailyShopliftLossGold)
 	{
@@ -768,6 +768,22 @@ bool ACSStoreGameState::RecordShopliftLoss(int32 LostGold)
 	}
 
 	DailyShopliftLossGold += LostGold;
+
+	// 폐기와 같은 형태로 쌓아 두면 상품 분석 화면이 같은 코드로 읽어갈 수 있습니다.
+	for (const FCSStolenProductRecord& StolenProduct : StolenProducts)
+	{
+		if (StolenProduct.ProductId.IsNone() || StolenProduct.Quantity <= 0)
+		{
+			continue;
+		}
+
+		int32& StolenQuantity = DailyStolenProductQuantities.FindOrAdd(StolenProduct.ProductId);
+		StolenQuantity = static_cast<int32>(FMath::Min<int64>(
+			static_cast<int64>(StolenQuantity) + StolenProduct.Quantity,
+			MAX_int32));
+		DailyStolenProductNames.FindOrAdd(StolenProduct.ProductId) = StolenProduct.DisplayName;
+	}
+
 	OnDailySalesChanged.Broadcast();
 	return true;
 }
@@ -840,6 +856,8 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailyShopliftLossGold = 0;
 	DailyDisposedProductQuantities.Reset();
 	DailyDisposedProductNames.Reset();
+	DailyStolenProductQuantities.Reset();
+	DailyStolenProductNames.Reset();
 	DailyCheckoutTransactions.Reset();
 	NextTransactionId = 1;
 	DailyStartingReputationScore = CurrentReputationScore;
