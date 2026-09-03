@@ -7,6 +7,7 @@
 #include "Engine/DataTable.h"
 #include "Engine/GameInstance.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 
@@ -184,6 +185,20 @@ bool ACSStoreGameMode::RequestClosingDailySummary()
 		StoreGameState->bIsDailySummaryPending)
 	{
 		return false;
+	}
+
+	// 정산 화면을 띄우기 전에 남아 있는 손님을 전부 정리합니다.
+	// DespawnAllCustomers가 절도범과 일반 손님을 두 갈래로 나눠 처리하므로
+	// 이 호출 하나로 둘 다 마감 종 시점에 확정됩니다.
+	//   절도범   : 상품을 유지한 채 파괴 → 손실이 당일 장부로 확정
+	//   그 외    : 상품을 낙하시켜 재고로 회수한 뒤 파괴
+	//
+	// RequestDailySummary가 요약 위젯을 생성하므로 반드시 그 앞에서 불러야
+	// 위젯 첫 프레임부터 올바른 금액이 보입니다. 뒤에 두면 플레이어 눈앞에서 금액이 튀어오릅니다.
+	if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+		GetWorld() ? GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
+	{
+		CustomerRuntimeSubsystem->DespawnAllCustomers();
 	}
 
 	StoreGameState->RequestDailySummary();

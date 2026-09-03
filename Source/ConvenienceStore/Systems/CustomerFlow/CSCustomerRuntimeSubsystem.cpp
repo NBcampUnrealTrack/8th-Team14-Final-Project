@@ -38,12 +38,6 @@ void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	ShelfRandomStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
-
-	ACSStoreGameState* StoreState = InWorld.GetGameState<ACSStoreGameState>();
-	if (StoreState != nullptr)
-	{
-		StoreState->OnBusinessDayStarted.AddDynamic(this, &UCSCustomerRuntimeSubsystem::HandleBusinessDayStarted);
-	}
 }
 
 void UCSCustomerRuntimeSubsystem::RefreshShelves()
@@ -533,6 +527,21 @@ void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
 
 		// 계산이 완료되었음을 브로드캐스트하여, UI 갱신이나 매출 증가 등의 후속 시스템 처리 유도
 		OnCheckoutCompleted.Broadcast(Front);
+
+		// 결제가 끝난 상품은 더 이상 월드로 되돌릴 대상이 아니다.
+		// SelectProducts는 "월드에서 지운 상품의 복원 데이터"이므로 남겨두면
+		// 이후 어떤 경로로 파괴되든 DropCustomerItems가 실물을 다시 스폰해
+		// 판 물건이 공짜로 재고에 돌아온다.
+		//
+		// 반드시 방송 뒤여야 한다. CSPurchaseVerificationSubsystem이 방송 중에
+		// SelectProducts.Num()으로 담은 개수를 읽으므로, 앞에 두면 통계가 전부 0이 된다.
+		//
+		// StateTree 영향 없음. ST_Customer에서 HasItemsInCart는 Checkout / Shoplift /
+		// ReturnItems 세 상태의 Enter Condition이고, 결제 후 목적지인 Leave는 조건이 없다.
+		if (State != nullptr)
+		{
+			State->ClearSelectItems();
+		}
 	}
 }
 
@@ -985,6 +994,46 @@ void UCSCustomerRuntimeSubsystem::PrepareForcedLeave(ACSCustomerCharacter* Custo
 
 }
 
+bool UCSCustomerRuntimeSubsystem::IsEscapingShoplifter(const ACSCustomerCharacter* Customer) const
+{
+	if (IsValid(Customer) == false)
+	{
+		return false;
+	}
+
+	const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	// 절도를 실행한 빌런만 손실 대상이다.
+	// 아직 저지르지 않은 빌런은 겉보기에 일반 손님과 구분되지 않으므로 제외한다.
+	// CanSubdueCustomer가 실행 전 빌런을 제압 대상에서 빼는 것과 같은 기준.
+	if (State->PlannedVillainAction != ECSVillainAction::Shoplift
+		|| State->bVillainActionDone == false)
+	{
+		return false;
+	}
+
+	// 제압된 빌런은 상품을 이미 떨어뜨렸으므로 손실이 없다.
+	// 금액상으로는 SelectProducts가 비어 자동으로 걸러지지만,
+	// SubduedDespawn 타이머가 도는 중에 밖에서 파괴하면 그 태스크가
+	// Data.Actor == nullptr을 만나 Failed를 뱉으므로 여기서 먼저 제외한다.
+	if (State->IsSubdued())
+	{
+		return false;
+	}
+
+	// 정상적으로 계산을 마친 손님은 절도범이 아니다.
+	if (State->bCheckoutDone)
+	{
+		return false;
+	}
+
+	return true;
+}
+
 void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 {
 	UWorld* World = GetWorld();
@@ -1013,16 +1062,10 @@ void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 			continue;
 		}
 
-		const UCSCustomerStateComponent* State = Customer->GetCustomerState();
-
 		// 절도를 실행하고 아직 도주 중인 손님인가.
-		const bool bIsEscapingThief = (State != nullptr)
-			&& State->PlannedVillainAction == ECSVillainAction::Shoplift
-			&& State->bVillainActionDone;
-
-		if (bIsEscapingThief)
+		if (IsEscapingShoplifter(Customer))
 		{
-			// [고민중] 훔친 물건을 떨어뜨리지 않는다.
+			// 훔친 물건을 떨어뜨리지 않는다.
 			//
 			// NotifyCustomerDespawned는 내부에서 ReportShopliftEscaped를 부르는데,
 			// 그 함수는 SelectProducts가 비어 있으면 조기 return한다.
@@ -1047,7 +1090,7 @@ void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 
 	if (RemainingCustomers.Num() > 0)
 	{
-		// 정상 흐름이라면 0이어야 한다. 0이 아니면 퇴장 경로가 막힌 것이다.
+		// 마감 종 시점에 매장과 거리에 남아 있던 인원이다. 0이 아닌 것이 정상이다.
 		UE_LOG(LogTemp, Warning, TEXT("[영업일전환] 남아 있던 손님 %d명 정리"),
 			RemainingCustomers.Num());
 	}
@@ -1148,6 +1191,13 @@ void UCSCustomerRuntimeSubsystem::ReportShopliftEscaped(ACSCustomerCharacter* Cu
 
 	// 상품이 없으면 손실도 없음
 	if (State->SelectProducts.Num() == 0)
+	{
+		return;
+	}
+
+	// 손실 확정 지점이 정문 퇴장 / 마감 종 / 영업일 전환 세 곳이므로
+	// 한 손님의 손실이 두 번 장부에 올라가지 않도록 첫 호출에서만 통과시킨다.
+	if (State->MarkShopliftLossReported() == false)
 	{
 		return;
 	}
@@ -1264,9 +1314,5 @@ bool UCSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer(ACSCustomerCharacter*
 	return true;
 }
 
-void UCSCustomerRuntimeSubsystem::HandleBusinessDayStarted(int32 NewBusinessDay)
-{
-	DespawnAllCustomers();
-}
 
 

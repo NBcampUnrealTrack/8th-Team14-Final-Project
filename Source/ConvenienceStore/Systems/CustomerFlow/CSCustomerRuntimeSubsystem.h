@@ -272,9 +272,18 @@ public:
 	// 판정과 분리한 이유: 조건은 매 틱 불리고 정리는  한 번만 불려야 함
 	void PrepareForcedLeave(ACSCustomerCharacter* Customer);
 
-	// 월드에 남은 손님을 전부 정리하고 파괴합니다.(안전 및 최적화용)
-	// 다음 영업일 시작 시 호출
+	// 월드에 남은 손님을 전부 정리하고 파괴합니다.
+	// 절도범은 상품을 유지한 채 파괴해 손실을 당일 장부로 확정하고,
+	// 그 외 손님은 상품을 낙하시켜 재고로 되돌린 뒤 파괴합니다.
+	//
+	// 호출부는 마감 종(ACSStoreGameMode::RequestClosingDailySummary) 하나뿐입니다.
+	// 반드시 ACSStoreGameState::BeginNextBusinessDay의 일일값 리셋보다 먼저 불러야
+	// 절도 손실이 당일 장부에 남습니다. 리셋 뒤에 부르면 다음 날로 넘어갑니다.
 	void DespawnAllCustomers();
+
+	// 절도를 실행하고 아직 잡히지 않은 도주 중인 손님인지 판정합니다.
+	// 마감 확정과 영업일 전환이 같은 기준을 쓰도록 한 곳에 모아둡니다.
+	bool IsEscapingShoplifter(const ACSCustomerCharacter* Customer) const;
 
 	FCSOnCustomerForcedToLeave OnCustomerForcedToLeave;
 
@@ -363,11 +372,4 @@ private:
 
 	// 타이머 콜백 - 위젯을 숨김(뷰포트에서 제거하지 않고 Collapsed 처리만 - 다음 호출 때 재사용하기 위함)
 	void HideInnerThought();
-
-protected:
-
-	// OnBusinessDayStarted 가 DYNAMIC 델리게이트라 UFUNCTION + int32 파라미터가 필수입니다.
-	// 하나라도 빠지면 AddDynamic 이 런타임에 조용히 실패합니다.
-	UFUNCTION()
-	void HandleBusinessDayStarted(int32 NewBusinessDay);
 };
