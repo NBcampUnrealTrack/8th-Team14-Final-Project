@@ -6,6 +6,9 @@
 #include "Features/Customers/CSCustomerAIController.h"
 #include "Features/Customers/CSCustomerBasketActor.h"
 #include "Features/Customers/CSCustomerShoppingBagActor.h"
+#include "Data/CSCustomerVisualDataAsset.h"
+#include "Animation/AnimSequence.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -13,6 +16,7 @@
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
@@ -20,7 +24,8 @@
 ACSCustomerCharacter::ACSCustomerCharacter()
 {
  	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.075f;
 
 	CustomerState = CreateDefaultSubobject<UCSCustomerStateComponent>(TEXT("CustomerState"));
 	PurchaseDecision = CreateDefaultSubobject<UCSPurchaseDecisionComponent>(TEXT("PurchaseDecision"));
@@ -56,6 +61,286 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	DropOriginRight->SetRelativeLocation(FVector(0.0f, 35.0f, -83.0f));
 	DropOriginRight->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
 	DropOriginRight->SetHiddenInGame(true);
+}
+
+void ACSCustomerCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateLocomotionAnimation();
+}
+
+void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
+	}
+	bActionAnimationPlaying = false;
+	bHoldActionTransformOnFinish = false;
+	bActionTransitionHoldActive = false;
+	RestoreActionMeshRotation();
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACSCustomerCharacter::InitializeFallbackAnimations(
+	const UCSCustomerVisualDataAsset* Visual)
+{
+	if (!IsValid(Visual))
+	{
+		return;
+	}
+
+	FallbackIdleAnimation = Visual->FallbackIdleAnimation;
+	FallbackWalkAnimation = Visual->FallbackWalkAnimation;
+	FallbackThinkingAnimation = Visual->FallbackThinkingAnimation;
+	FallbackPickAnimation = Visual->FallbackPickAnimation;
+	ActionMeshWorldZOffset = Visual->ActionMeshWorldZOffset;
+	bFallbackAnimationsInitialized = true;
+	UpdateLocomotionAnimation(true);
+}
+
+bool ACSCustomerCharacter::PlayThinkingAnimation()
+{
+	return PlayActionAnimation(FallbackThinkingAnimation, true);
+}
+
+bool ACSCustomerCharacter::PlayPickAnimation()
+{
+	return PlayActionAnimation(FallbackPickAnimation, false);
+}
+
+bool ACSCustomerCharacter::IsActionAnimationPlaying() const
+{
+	return bActionAnimationPlaying;
+}
+
+void ACSCustomerCharacter::CancelActionAnimation()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
+	}
+
+	bActionAnimationPlaying = false;
+	bHoldActionTransformOnFinish = false;
+	ReleaseActionTransitionHold();
+}
+
+void ACSCustomerCharacter::ReleaseActionTransitionHold()
+{
+	if (bActionAnimationPlaying)
+	{
+		return;
+	}
+
+	const bool bHadHeldActionTransform =
+		bActionTransitionHoldActive || bActionMeshRotationApplied;
+	bActionTransitionHoldActive = false;
+	bHoldActionTransformOnFinish = false;
+	if (!bHadHeldActionTransform)
+	{
+		return;
+	}
+
+	UpdateLocomotionAnimation(true);
+	RefreshLocomotionAnimationPose();
+	RestoreActionMeshRotation();
+}
+
+void ACSCustomerCharacter::UpdateLocomotionAnimation(bool bForce)
+{
+	if (!bFallbackAnimationsInitialized || bActionAnimationPlaying ||
+		bActionTransitionHoldActive)
+	{
+		return;
+	}
+
+	// 서로 다른 시작/정지 기준으로 경계 속도에서 Idle/Walk가 반복 전환되지 않게 합니다.
+	constexpr float WalkEnterSpeed = 10.0f;
+	constexpr float IdleEnterSpeed = 5.0f;
+	const float HorizontalSpeed = GetVelocity().Size2D();
+	if (bFallbackWalking)
+	{
+		if (HorizontalSpeed <= IdleEnterSpeed)
+		{
+			bFallbackWalking = false;
+		}
+	}
+	else if (HorizontalSpeed >= WalkEnterSpeed)
+	{
+		bFallbackWalking = true;
+	}
+
+	UAnimSequence* DesiredAnimation =
+		bFallbackWalking ? FallbackWalkAnimation.Get() : FallbackIdleAnimation.Get();
+	if (!IsValid(DesiredAnimation))
+	{
+		DesiredAnimation =
+			bFallbackWalking ? FallbackIdleAnimation.Get() : FallbackWalkAnimation.Get();
+	}
+
+	if (!IsValid(DesiredAnimation) || (!bForce && CurrentFallbackLoopAnimation == DesiredAnimation))
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		MeshComponent->PlayAnimation(DesiredAnimation, true);
+		CurrentFallbackLoopAnimation = DesiredAnimation;
+	}
+}
+
+void ACSCustomerCharacter::RefreshLocomotionAnimationPose()
+{
+	if (!IsValid(CurrentFallbackLoopAnimation))
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh(); IsValid(MeshComponent))
+	{
+		MeshComponent->SetPosition(0.0f, false);
+		MeshComponent->TickAnimation(0.0f, false);
+		MeshComponent->RefreshBoneTransforms();
+	}
+}
+
+bool ACSCustomerCharacter::PlayActionAnimation(
+	UAnimSequence* Animation,
+	bool bHoldTransformAfterFinish)
+{
+	if (bActionAnimationPlaying || !IsValid(Animation))
+	{
+		return false;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	UWorld* World = GetWorld();
+	if (!IsValid(MeshComponent) || !IsValid(World))
+	{
+		return false;
+	}
+
+	bActionTransitionHoldActive = false;
+	bHoldActionTransformOnFinish = bHoldTransformAfterFinish;
+	bActionAnimationPlaying = true;
+	MeshComponent->PlayAnimation(Animation, false);
+	const float PlayLength = FMath::Max(0.0f, Animation->GetPlayLength());
+	const float SafeStartOffset = FMath::Clamp(
+		ActionAnimationStartOffsetSeconds,
+		0.0f,
+		PlayLength);
+	MeshComponent->SetPosition(SafeStartOffset, false);
+	// Single Node의 첫 Pose를 같은 게임 프레임에 평가한 뒤 Mesh Transform을 보정합니다.
+	MeshComponent->TickAnimation(0.0f, false);
+	MeshComponent->RefreshBoneTransforms();
+	ApplyActionMeshRotation();
+
+	const float RemainingPlayLength = PlayLength - SafeStartOffset;
+	if (RemainingPlayLength <= 0.0f)
+	{
+		// 재생할 구간이 없으면 Hold를 남기지 않고 기존 누락 애니메이션 폴백으로 복귀합니다.
+		bHoldActionTransformOnFinish = false;
+		HandleActionAnimationFinished();
+		return false;
+	}
+
+	World->GetTimerManager().SetTimer(
+		ActionAnimationTimerHandle,
+		this,
+		&ACSCustomerCharacter::HandleActionAnimationFinished,
+		RemainingPlayLength,
+		false);
+	return true;
+}
+
+void ACSCustomerCharacter::HandleActionAnimationFinished()
+{
+	bActionAnimationPlaying = false;
+	if (bHoldActionTransformOnFinish)
+	{
+		bHoldActionTransformOnFinish = false;
+		bActionTransitionHoldActive = true;
+		return;
+	}
+
+	ReleaseActionTransitionHold();
+}
+
+void ACSCustomerCharacter::ApplyActionMeshRotation()
+{
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (bActionMeshRotationApplied || !IsValid(MeshComponent))
+	{
+		return;
+	}
+
+	SavedActionMeshRelativeTransform = MeshComponent->GetRelativeTransform();
+
+	FTransform BasketAnchorWorldTransform = FTransform::Identity;
+	bActionBasketAnchorTransformCached = IsValid(BasketAnchor);
+	if (bActionBasketAnchorTransformCached)
+	{
+		SavedActionBasketAnchorRelativeTransform = BasketAnchor->GetRelativeTransform();
+		BasketAnchorWorldTransform = BasketAnchor->GetComponentTransform();
+	}
+
+	// AddLocalRotation의 Quaternion 오버로드로 현재 Mesh의 로컬 X축 기준 -90도를 합성합니다.
+	const FQuat LocalXRotationOffset(
+		FVector::ForwardVector,
+		FMath::DegreesToRadians(-90.0f));
+	MeshComponent->AddLocalRotation(
+		LocalXRotationOffset,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	MeshComponent->AddWorldOffset(
+		FVector(0.0f, 0.0f, ActionMeshWorldZOffset),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	bActionMeshRotationApplied = true;
+
+	if (bActionBasketAnchorTransformCached && IsValid(BasketAnchor))
+	{
+		// Basket/ShoppingBag은 Mesh의 자식이므로 액션 Transform 보정을 상속하지 않도록 기존 월드 자세를 유지합니다.
+		BasketAnchor->SetWorldTransform(
+			BasketAnchorWorldTransform,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+}
+
+void ACSCustomerCharacter::RestoreActionMeshRotation()
+{
+	if (!bActionMeshRotationApplied)
+	{
+		return;
+	}
+
+	if (USkeletalMeshComponent* MeshComponent = GetMesh(); IsValid(MeshComponent))
+	{
+		MeshComponent->SetRelativeTransform(
+			SavedActionMeshRelativeTransform,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+
+	if (bActionBasketAnchorTransformCached && IsValid(BasketAnchor))
+	{
+		BasketAnchor->SetRelativeTransform(
+			SavedActionBasketAnchorRelativeTransform,
+			false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
+
+	bActionMeshRotationApplied = false;
+	bActionBasketAnchorTransformCached = false;
 }
 
 void ACSCustomerCharacter::BeginPlay()

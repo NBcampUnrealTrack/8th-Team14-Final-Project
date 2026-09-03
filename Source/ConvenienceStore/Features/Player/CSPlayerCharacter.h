@@ -14,6 +14,7 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UAnimSequence;
 class ACSCartActor;
 class ACSDeliveryCartActor;
 class ACSDeliveryCrateActor;
@@ -80,6 +81,12 @@ protected:
 	// 플레이어 시점을 제공하는 1인칭 카메라입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UCameraComponent> FirstPersonCamera;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|Locomotion")
+	TObjectPtr<UAnimSequence> PlayerIdleAnimation;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Animation|Locomotion")
+	TObjectPtr<UAnimSequence> PlayerWalkAnimation;
 
 	// 손에 든 물체를 카메라 앞에 부착하는 기준점입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -386,6 +393,7 @@ protected:
 
 
 private:
+	void UpdatePlayerLocomotionAnimation(bool bForce = false);
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
 	void StartSprint();
@@ -413,6 +421,11 @@ private:
 	void EquipSelectedQuickbarTool();
 	void StoreEquippedQuickbarTool();
 	void UpdateQuickbarHUD();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> CurrentPlayerLocomotionAnimation;
+
+	bool bPlayerWalkingAnimation = false;
 
 	UFUNCTION()
 	void HandleQuickbarChanged();
