@@ -123,6 +123,16 @@ public:
 	// 빌런 행동을 실행한 뒤 호출. 안 부르면 트리가 그 상태에 갇힙니다
 	void MarkVillainActionDone();
 
+	// 절도 손실을 이미 장부에 올렸는지 확인하는 변수.
+	// 손실 확정 지점이 정문 퇴장 / 마감 종 / 영업일 전환 세 곳으로 늘어났으므로
+	// 이 플래그가 없으면 같은 손님의 손실이 두 번 집계될 수 있다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Villain")
+	bool bShopliftLossReported = false;
+
+	// 절도 손실 집계 시 호출. 이번 호출이 첫 집계면 true, 이미 올렸으면 false.
+	// MarkSubdued와 같은 방식으로 호출자가 중복을 걸러낼 근거를 돌려준다.
+	bool MarkShopliftLossReported();
+
 	// 제압된 빌런인지 확인하는 변수
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Villain")
 	bool bIsSubdued = false;

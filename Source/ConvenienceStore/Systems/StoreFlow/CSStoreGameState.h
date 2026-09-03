@@ -5,6 +5,8 @@
 #include "Data/CSCheckoutTypes.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSStorePhaseTypes.h"
+// RecordShopliftLoss가 FCSStolenProductRecord 배열을 받으므로 전방 선언으로는 부족합니다.
+#include "Data/CSVillainTypes.h"
 #include "CSStoreGameState.generated.h"
 
 class UCSStoreProgressionDataAsset;
@@ -214,6 +216,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TMap<FName, FText> DailyDisposedProductNames;
 
+	// 상품 분석에서 오늘 도난당한 상품별 수량을 표시하기 위한 집계 [윤서희님 확인 부탁]
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	TMap<FName, int32> DailyStolenProductQuantities;
+
+	// 도주한 손님이 파괴되면 SelectProducts도 사라지므로 방송 시점의 상품명을 기록 [윤서희님 확인 부탁]
+	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
+	TMap<FName, FText> DailyStolenProductNames;
+
 	// 오늘 발생한 결제 거래를 정산과 판매 보고서에서 조회할 수 있도록 저장합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store|Sales")
 	TArray<FCSCheckoutTransaction> DailyCheckoutTransactions;
@@ -381,7 +391,8 @@ public:
 	// 결제는 이미 TrySpendFunds에서 총지출에 포함되었으므로 발주 종류별 금액만 분류합니다.
 	bool RecordOrderExpense(int32 Amount, bool bFacilityOrder, bool bImmediateDelivery);
 
-	bool RecordShopliftLoss(int32 LostGold);
+	// 도주에 성공한 빌런 한 명의 손실을 기록합
+	bool RecordShopliftLoss(int32 LostGold, const TArray<FCSStolenProductRecord>& StolenProducts);
 
 	UFUNCTION(BlueprintPure, Category = "Store|Sales")
 	int32 GetDailyTotalLossGold() const;
