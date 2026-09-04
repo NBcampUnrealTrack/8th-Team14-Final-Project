@@ -15,6 +15,8 @@ class ACSCustomerShoppingBagActor;
 class UCSPurchaseDecisionComponent;
 class UPrimitiveComponent;
 class UCSInnerThoughtWidget;
+class UCSCustomerVisualDataAsset;
+class UAnimSequence;
 struct FCSSelectProduct;
 
 UCLASS()
@@ -61,8 +63,18 @@ public:
 	// 끄는 곳: CSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer() (제압 성공)
 	void SetVillainHighlight(bool bEnabled);
 
+	// AnimBlueprint가 없는 종족의 Idle/Walk 및 일회성 상품 행동 애니메이션을 초기화합니다.
+	void InitializeFallbackAnimations(const UCSCustomerVisualDataAsset* Visual);
+	bool PlayThinkingAnimation();
+	bool PlayPickAnimation();
+	bool IsActionAnimationPlaying() const;
+	void CancelActionAnimation();
+	void ReleaseActionTransitionHold();
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// 파괴될 때 AIController도 같이 정리
 	virtual void Destroyed() override;
@@ -117,7 +129,49 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|InnerThought")
 	TSubclassOf<UCSInnerThoughtWidget> InnerThoughtWidgetClass;
 
+	// Thinking/Pick 방향 보정 중 Mesh를 월드 Z축으로 이동할 거리입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Animation")
+	float ActionMeshWorldZOffset = -30.0f;
+
+	// Thinking/Pick의 첫 T-Pose 프레임을 건너뛰기 위한 공통 시작 시간입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Animation",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float ActionAnimationStartOffsetSeconds = 0.04f;
+
 private:
+	void UpdateLocomotionAnimation(bool bForce = false);
+	void RefreshLocomotionAnimationPose();
+	bool PlayActionAnimation(UAnimSequence* Animation, bool bHoldTransformAfterFinish);
+	void HandleActionAnimationFinished();
+	void ApplyActionMeshRotation();
+	void RestoreActionMeshRotation();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> FallbackIdleAnimation;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> FallbackWalkAnimation;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> FallbackThinkingAnimation;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> FallbackPickAnimation;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> CurrentFallbackLoopAnimation;
+
+	FTimerHandle ActionAnimationTimerHandle;
+	bool bFallbackAnimationsInitialized = false;
+	bool bFallbackWalking = false;
+	bool bActionAnimationPlaying = false;
+	bool bHoldActionTransformOnFinish = false;
+	bool bActionTransitionHoldActive = false;
+	FTransform SavedActionMeshRelativeTransform = FTransform::Identity;
+	FTransform SavedActionBasketAnchorRelativeTransform = FTransform::Identity;
+	bool bActionMeshRotationApplied = false;
+	bool bActionBasketAnchorTransformCached = false;
+
 	// 외곽선을 켜기 전 원래 상태를 기억해뒀다가 끌 때 복원
 	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
 	TMap<TObjectPtr<UPrimitiveComponent>, int32> OriginalCustomStencilValues;
