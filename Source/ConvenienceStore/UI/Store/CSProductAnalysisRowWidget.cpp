@@ -7,7 +7,8 @@ void UCSProductAnalysisRowWidget::SetRowData(
 	const FText& ProductName,
 	int32 SoldQuantity,
 	int32 RemainingStock,
-	int32 DisposedQuantity)
+	int32 DisposedQuantity,
+	int32 StolenQuantity)
 {
 	if (IsValid(ProductNameText)) ProductNameText->SetText(ProductName);
 	if (IsValid(SoldQuantityText)) SoldQuantityText->SetText(FText::AsNumber(SoldQuantity));
@@ -20,6 +21,10 @@ void UCSProductAnalysisRowWidget::SetRowData(
 	if (IsValid(DisposedQuantityText))
 	{
 		DisposedQuantityText->SetText(FText::AsNumber(DisposedQuantity));
+	}
+	if (IsValid(StolenQuantityText))
+	{
+		StolenQuantityText->SetText(FText::AsNumber(StolenQuantity));
 	}
 
 	const bool bOutOfStock = RemainingStock <= 0;

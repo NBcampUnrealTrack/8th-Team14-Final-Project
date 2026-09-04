@@ -17,13 +17,15 @@ public:
 		const FText& ProductName,
 		int32 SoldQuantity,
 		int32 RemainingStock,
-		int32 DisposedQuantity);
+		int32 DisposedQuantity,
+		int32 StolenQuantity);
 
 protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ProductNameText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SoldQuantityText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RemainingStockText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DisposedQuantityText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StolenQuantityText;
 	// 품절 여부에 따른 상태 마커 연출용입니다.
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> DefaultStatusMarker;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> OutOfStockStatusBox;

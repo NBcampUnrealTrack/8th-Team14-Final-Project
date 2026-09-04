@@ -36,6 +36,7 @@ void UCSProductAnalysisWidget::NativeConstruct()
 	if (IsValid(AllFilterButton)) AllFilterButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleAllFilterClicked);
 	if (IsValid(OutOfStockFilterButton)) OutOfStockFilterButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleOutOfStockFilterClicked);
 	if (IsValid(HasWasteFilterButton)) HasWasteFilterButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleHasWasteFilterClicked);
+	if (IsValid(HasTheftFilterButton)) HasTheftFilterButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleHasTheftFilterClicked);
 	if (IsValid(SalesSortButton)) SalesSortButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleSalesSortClicked);
 	if (IsValid(AnalysisCloseButton)) AnalysisCloseButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleCloseClicked);
 
@@ -47,6 +48,7 @@ void UCSProductAnalysisWidget::NativeDestruct()
 	if (IsValid(AllFilterButton)) AllFilterButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleAllFilterClicked);
 	if (IsValid(OutOfStockFilterButton)) OutOfStockFilterButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleOutOfStockFilterClicked);
 	if (IsValid(HasWasteFilterButton)) HasWasteFilterButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleHasWasteFilterClicked);
+	if (IsValid(HasTheftFilterButton)) HasTheftFilterButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleHasTheftFilterClicked);
 	if (IsValid(SalesSortButton)) SalesSortButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleSalesSortClicked);
 	if (IsValid(AnalysisCloseButton)) AnalysisCloseButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleCloseClicked);
 
@@ -77,7 +79,7 @@ void UCSProductAnalysisWidget::BuildAnalysisEntries()
 	const ACSStoreGameState* StoreGameState = World ? World->GetGameState<ACSStoreGameState>() : nullptr;
 	if (!IsValid(StoreGameState)) return;
 
-	// 당일 판매 또는 폐기 이력이 있는 상품을 분석 목록에 포함합니다.
+	// 당일 판매·폐기·절도 이력이 있는 상품을 분석 목록에 포함합니다.
 	TMap<FName, int32> EntryIndexByProductId;
 	for (const FCSCheckoutTransaction& Transaction : StoreGameState->DailyCheckoutTransactions)
 	{
@@ -123,6 +125,24 @@ void UCSProductAnalysisWidget::BuildAnalysisEntries()
 		EntryIndexByProductId.Add(DisposedProduct.Key, AnalysisEntries.Num() - 1);
 	}
 
+	// 판매나 폐기 없이 절도만 발생한 상품도 당일 손실 기록이므로 별도 행을 만듭니다.
+	for (const TPair<FName, int32>& StolenProduct : StoreGameState->DailyStolenProductQuantities)
+	{
+		if (StolenProduct.Key.IsNone() || StolenProduct.Value <= 0 ||
+			EntryIndexByProductId.Contains(StolenProduct.Key))
+		{
+			continue;
+		}
+
+		FProductAnalysisEntry& NewEntry = AnalysisEntries.AddDefaulted_GetRef();
+		NewEntry.ProductId = StolenProduct.Key;
+		const FText* StolenProductName = StoreGameState->DailyStolenProductNames.Find(StolenProduct.Key);
+		NewEntry.ProductName = StolenProductName && !StolenProductName->IsEmpty()
+			? *StolenProductName
+			: FText::FromName(StolenProduct.Key);
+		EntryIndexByProductId.Add(StolenProduct.Key, AnalysisEntries.Num() - 1);
+	}
+
 	const UCSStoreStockSubsystem* StockSubsystem = World->GetSubsystem<UCSStoreStockSubsystem>();
 	for (FProductAnalysisEntry& Entry : AnalysisEntries)
 	{
@@ -131,6 +151,7 @@ void UCSProductAnalysisWidget::BuildAnalysisEntries()
 			Entry.RemainingStock = StockSubsystem->GetProductStock(Entry.ProductId).TotalQuantity;
 		}
 		Entry.DisposedQuantity = StoreGameState->DailyDisposedProductQuantities.FindRef(Entry.ProductId);
+		Entry.StolenQuantity = StoreGameState->DailyStolenProductQuantities.FindRef(Entry.ProductId);
 	}
 }
 
@@ -213,7 +234,8 @@ void UCSProductAnalysisWidget::RebuildRows()
 	{
 		const bool bMatchesFilter = ActiveFilter == EProductFilter::All ||
 			(ActiveFilter == EProductFilter::OutOfStock && Entry.RemainingStock <= 0) ||
-			(ActiveFilter == EProductFilter::HasWaste && Entry.DisposedQuantity > 0);
+			(ActiveFilter == EProductFilter::HasWaste && Entry.DisposedQuantity > 0) ||
+			(ActiveFilter == EProductFilter::HasTheft && Entry.StolenQuantity > 0);
 		if (bMatchesFilter) DisplayEntries.Add(Entry);
 	}
 
@@ -232,7 +254,8 @@ void UCSProductAnalysisWidget::RebuildRows()
 	{
 		UCSProductAnalysisRowWidget* Row = CreateWidget<UCSProductAnalysisRowWidget>(GetOwningPlayer(), ProductAnalysisRowClass);
 		if (!IsValid(Row)) continue;
-		Row->SetRowData(Entry.ProductName, Entry.SoldQuantity, Entry.RemainingStock, Entry.DisposedQuantity);
+		Row->SetRowData(Entry.ProductName, Entry.SoldQuantity, Entry.RemainingStock,
+			Entry.DisposedQuantity, Entry.StolenQuantity);
 		ProductListScrollBox->AddChild(Row);
 	}
 }
@@ -242,14 +265,17 @@ void UCSProductAnalysisWidget::RefreshControlPresentation()
 	const bool bAllSelected = ActiveFilter == EProductFilter::All;
 	const bool bOutOfStockSelected = ActiveFilter == EProductFilter::OutOfStock;
 	const bool bHasWasteSelected = ActiveFilter == EProductFilter::HasWaste;
+	const bool bHasTheftSelected = ActiveFilter == EProductFilter::HasTheft;
 	SetSelectionVisibility(AllFilterSelectedBackground, AllFilterDefaultBackground, bAllSelected);
 	SetSelectionVisibility(OutOfStockFilterSelectedBackground, OutOfStockFilterDefaultBackground, bOutOfStockSelected);
 	SetSelectionVisibility(HasWasteFilterSelectedBackground, HasWasteFilterDefaultBackground, bHasWasteSelected);
+	SetSelectionVisibility(HasTheftFilterSelectedBackground, HasTheftFilterDefaultBackground, bHasTheftSelected);
 	SetSelectionVisibility(SalesSortSelectedBackground, SalesSortDefaultBackground, bSalesSortActive);
 
 	if (IsValid(AllFilterText)) AllFilterText->SetColorAndOpacity(bAllSelected ? SelectedButtonTextColor : BasicButtonTextColor);
 	if (IsValid(OutOfStockFilterText)) OutOfStockFilterText->SetColorAndOpacity(bOutOfStockSelected ? SelectedButtonTextColor : BasicButtonTextColor);
 	if (IsValid(HasWasteFilterText)) HasWasteFilterText->SetColorAndOpacity(bHasWasteSelected ? SelectedButtonTextColor : BasicButtonTextColor);
+	if (IsValid(HasTheftFilterText)) HasTheftFilterText->SetColorAndOpacity(bHasTheftSelected ? SelectedButtonTextColor : BasicButtonTextColor);
 	if (IsValid(SalesSortText)) SalesSortText->SetColorAndOpacity(bSalesSortActive ? SelectedButtonTextColor : BasicButtonTextColor);
 	if (IsValid(SalesSortDirectionIcon))
 	{
@@ -283,6 +309,13 @@ void UCSProductAnalysisWidget::HandleOutOfStockFilterClicked()
 void UCSProductAnalysisWidget::HandleHasWasteFilterClicked()
 {
 	ActiveFilter = EProductFilter::HasWaste;
+	RefreshControlPresentation();
+	RebuildRows();
+}
+
+void UCSProductAnalysisWidget::HandleHasTheftFilterClicked()
+{
+	ActiveFilter = EProductFilter::HasTheft;
 	RefreshControlPresentation();
 	RebuildRows();
 }

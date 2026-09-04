@@ -35,6 +35,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> AllFilterButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> OutOfStockFilterButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> HasWasteFilterButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> HasTheftFilterButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> SalesSortButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> AnalysisCloseButton;
 
@@ -45,6 +46,8 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> OutOfStockFilterDefaultBackground;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> HasWasteFilterSelectedBackground;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> HasWasteFilterDefaultBackground;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> HasTheftFilterSelectedBackground;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> HasTheftFilterDefaultBackground;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SalesSortSelectedBackground;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SalesSortDefaultBackground;
 	// 정렬 방향 아이콘 연출용입니다.
@@ -54,6 +57,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> AllFilterText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> OutOfStockFilterText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HasWasteFilterText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HasTheftFilterText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SalesSortText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScrollBox> ProductListScrollBox;
 
@@ -72,7 +76,8 @@ private:
 	{
 		All,
 		OutOfStock,
-		HasWaste
+		HasWaste,
+		HasTheft
 	};
 
 	struct FProductAnalysisEntry
@@ -82,6 +87,7 @@ private:
 		int32 SoldQuantity = 0;
 		int32 RemainingStock = 0;
 		int32 DisposedQuantity = 0;
+		int32 StolenQuantity = 0;
 	};
 
 	EProductFilter ActiveFilter = EProductFilter::All;
@@ -99,6 +105,7 @@ private:
 	UFUNCTION() void HandleAllFilterClicked();
 	UFUNCTION() void HandleOutOfStockFilterClicked();
 	UFUNCTION() void HandleHasWasteFilterClicked();
+	UFUNCTION() void HandleHasTheftFilterClicked();
 	UFUNCTION() void HandleSalesSortClicked();
 	UFUNCTION() void HandleCloseClicked();
 };
