@@ -41,6 +41,7 @@ public:
 
 	// 계산·정산처럼 상시 HUD를 가려야 하는 UI의 요청을 등록하거나 해제합니다.
 	// 요청이 모두 해제된 뒤에만 HUD를 이전 표시 상태로 복원합니다.
+	UFUNCTION(BlueprintCallable, Category = "UI|HUD")
 	void SetStoreHUDHidden(UObject* Requester, bool bShouldHide);
 
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
