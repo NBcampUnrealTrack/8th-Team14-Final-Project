@@ -83,3 +83,21 @@ void ACSTrashActor::ShowMeshAfterDrop()
 
 	TrashMesh->SetVisibility(true, true);
 }
+
+void ACSTrashActor::PrepareForCustomerDrop()
+{
+	if (!IsValid(TrashMesh))
+	{
+		return;
+	}
+
+	// 통로에 떨어진 쓰레기가 손님/플레이어 이동을 막으면 안 되므로 Pawn 채널만 무시한다
+	// (E키 상호작용이 쓰는 Visibility 채널은 그대로 Block 유지 - 줍기 기능 유지)
+	TrashMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+
+	// 정적 블로킹 메시가 런타임에 스폰될 때마다 내비메시를 다시 구우면 그때마다 프레임이 끊긴다
+	TrashMesh->SetCanEverAffectNavigation(false);
+
+	// 캡슐 중심(스폰 좌표)에서 바닥까지 물리로 자연스럽게 떨어뜨린다
+	EnableWorldDropPhysics();
+}

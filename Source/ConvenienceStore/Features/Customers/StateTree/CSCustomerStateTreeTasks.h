@@ -103,6 +103,14 @@ struct FCSTask_MoveToLocationInstanceData
 	// 손님이 그보다 가까이 갈 수 없어 도착 판정이 영영 통과하지 못합니다.
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "1.0", UIMin = "1.0"))
 	float AcceptanceRadius = 75.0f;
+
+	// 청결도 신호(버리기 진행률 / 목격 판정)의 기준점이 되는 이동 시작 좌표. EnterState에서 갱신
+	UPROPERTY()
+	FVector MoveStartLocation = FVector::ZeroVector;
+
+	// 목격 판정을 1초 간격으로만 굴리기 위한 경과 시간 누적자. EnterState에서 0으로 리셋
+	UPROPERTY()
+	float WitnessCheckElapsedTime = 0.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Move To Location"))

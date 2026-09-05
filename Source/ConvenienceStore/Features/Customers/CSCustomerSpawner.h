@@ -90,6 +90,24 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Spawn")
 	TArray<TObjectPtr<UCSCustomerArchetypeDataAsset>> Archetypes;
 
+	// 청결도 : 손님이 오늘 진열대 이동 중 통로에 쓰레기를 버릴 확률
+	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float TrashDropChance = 0.30f;
+
+	// 청결도 : 버릴 경우, 몇 번째 진열대 이동에서 버릴지의 범위(양끝 포함, 균등 분포)
+	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "1"))
+	int32 MinTrashDropTravelIndex = 1;
+
+	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "1"))
+	int32 MaxTrashDropTravelIndex = 2;
+
+	// 청결도 : 그 이동에서 진행률(0~1) 중 몇 %쯤에서 버릴지의 범위
+	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinTrashDropProgress = 0.3f;
+
+	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MaxTrashDropProgress = 0.8f;
+
 private:
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열
 	UPROPERTY()
@@ -110,9 +128,15 @@ private:
 	// 영업 도중 평판이 달라져도 이 값은 그대로이므로 스폰률이 일정
 	ECSReputationGrade AppliedReputationGrade = ECSReputationGrade::Normal;
 
+	// 그날 개점 시점에 스캔해둔 매장 내 진열대 개수
+	int32 CachedShelfCountAtOpen = 0;
+
 	// 게임 상태에서 현재 평판 등급을 읽어 AppliedReputationGrade에 반영
 	// 호출처는 BeginPlay와 개점 전환 둘뿐이다.
 	void RefreshAppliedReputationGrade();
+
+	// UCSCustomerRuntimeSubsystem에 등록된 진열대 개수를 읽어 CachedShelfCountAtOpen에 반영
+	void RefreshCachedShelfCount();
 
 	// 생성 간격과 동시 인원 상한을 계산할 때 쓰는 평판 등급.
 	// 게임 상태를 실시간으로 조회하지 않고 개점에 찍어 둔 평판으로 돌려준다.
