@@ -51,6 +51,7 @@ void ACSCustomerSpawner::BeginPlay()
 
 	// ApplySpawnTimer()가 평판값을 읽어 간격을 계산하므로, 반드시 AppliedReputationGrade값을 할당하고 타이머를 시작한다.
 	RefreshAppliedReputationGrade();
+	RefreshCachedShelfCount();
 	ApplySpawnTimer();
 }
 
@@ -99,6 +100,9 @@ void ACSCustomerSpawner::HandleStorePhaseChanged(ECStorePhase NewPhase)
 		// 여기서 찍은 값으로 마감까지 스폰 간격과 동시 인원 상한이 결정된다.
 		RefreshAppliedReputationGrade();
 
+		// 같은 이유로 그날의 진열대 개수도 개점 시점에 고정한다
+		RefreshCachedShelfCount();
+
 		UE_LOG(LogTemp, Log,
 			TEXT("[CSCustomerSpawner] 개점 - 오늘 적용 평판 등급 %s / 생성 간격 %.2f초 / 동시 상한 %d명"),
 			*UEnum::GetDisplayValueAsText(AppliedReputationGrade).ToString(),
@@ -129,6 +133,15 @@ void ACSCustomerSpawner::RefreshAppliedReputationGrade()
 		// 만약  문제가 생겼다면,에러가 나지 않도록 가장 안전한 기본값인 'Normal' 등급을 임시로 적용
 		AppliedReputationGrade = ECSReputationGrade::Normal;
 	}
+}
+
+void ACSCustomerSpawner::RefreshCachedShelfCount()
+{
+	// 이 서브시스템이 이미 설치 완료된 진열대만 추려서 들고 있으므로 그대로 개수만 읽어오면 된다.
+	const UCSCustomerRuntimeSubsystem* RuntimeSubsystem =
+		IsValid(GetWorld()) ? GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+
+	CachedShelfCountAtOpen = IsValid(RuntimeSubsystem) ? RuntimeSubsystem->GetShelves().Num() : 0;
 }
 
 ECSReputationGrade ACSCustomerSpawner::GetReputationGrade() const
@@ -601,6 +614,24 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 			   *Customer->GetName(),
 			   Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"),
 			   *UEnum::GetDisplayValueAsText(VillainAction).ToString());
+		}
+
+		// 청결도 신호(버리는 손님) pre-roll : 결과와 무관하게 항상 정확히 3회 뽑는다.
+		// 호출 횟수를 손님마다 고정해야 이후 CharacterScale 등 다른 굴림의 시드가 밀리지 않는다.
+		if (State != nullptr)
+		{
+			const int32 TrashSeed = MasterStream.RandHelper(MAX_int32);
+			FRandomStream TrashStream(TrashSeed);
+
+			State->bWillDropTrash = TrashStream.FRand() < TrashDropChance;
+
+			// 이동 인덱스 상한은 설정값과 그날 개점 시점에 스캔해둔 실제 진열대 개수 중
+			// 더 작은 쪽으로 제한한다 - 진열대보다 큰 인덱스를 뽑으면 그 손님은
+			// 물리적으로 그 이동 자체를 할 수 없어 항상 못 버리게 된다
+			const int32 EffectiveMaxTravelIndex =
+				FMath::Max(MinTrashDropTravelIndex, FMath::Min(MaxTrashDropTravelIndex, CachedShelfCountAtOpen));
+			State->TrashDropTravelIndex = TrashStream.RandRange(MinTrashDropTravelIndex, EffectiveMaxTravelIndex);
+			State->TrashDropProgress = TrashStream.FRandRange(MinTrashDropProgress, MaxTrashDropProgress);
 		}
 
 		// =============
