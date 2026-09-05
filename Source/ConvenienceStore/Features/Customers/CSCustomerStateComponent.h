@@ -211,4 +211,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	float LastRejectionTime = 0.0f;
 
+	// 이 손님의 가격 불쾌가 하루 평판 집계(DailyPriceUpsetSum)에 이미 반영됐는지
+	// 손님 한 명이 여러 번 가격에 반응해도 평판 감점은 방문당 1회로 제한하기 위한 플래그
+	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
+	bool bPriceUpsetCounted = false;
+
 };

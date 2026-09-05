@@ -1,5 +1,5 @@
-﻿// 계산 포기 + 빈손 퇴장을 하루 동안 집계했다가 마감 시점에 평판 점수로 반영하는 서브시스템
-// 정상 결제는 카운트만 하고, 계산 포기/빈손 퇴장은 각각 확률 추첨을 거쳐서만 카운트한다
+﻿// 계산 포기 + 빈손 퇴장 + 가격 불쾌를 하루 동안 집계했다가 마감 시점에 평판 점수로 반영하는 서브시스템
+// 정상 결제는 카운트만 하고, 계산 포기/빈손 퇴장/가격 불쾌는 각각 확률 추첨을 거쳐서만 카운트한다
 // 손님 경험이 나쁜 날마다 원인 전부가 매번 깎이면 하루 변동폭이 지나치게 커지기 때문에 이 추첨이 완충 역할을 한다
 
 #pragma once
@@ -7,6 +7,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Math/RandomStream.h"
+#include "Data/CSPurchaseDecisionTypes.h"
 #include "CSStoreReputationSubsystem.generated.h"
 
 class ACSCustomerCharacter;
@@ -48,6 +49,30 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Reputation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float CountRollChance = 0.3f;
 
+	// 가격 불쾌 3단 계단식 곡선 - Severity가 이 값 미만이면 가중치 0(무시)
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PriceUpsetLowThreshold = 0.4f;
+
+	// 이 값부터 위 구간(HighWeight 쪽)으로 넘어간다
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PriceUpsetMidThreshold = 0.6f;
+
+	// MidThreshold부터 이 폭만큼 지나면(=0.6+0.9 지점) 가중치가 최대(1.0)로 포화
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.01"))
+	float PriceUpsetHighSpan = 0.3f;
+
+	// LowThreshold~MidThreshold 구간에서 도달하는 가중치(동시에 위 구간의 시작값)
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PriceUpsetMidWeight = 0.3f;
+
+	// MidThreshold 이후 구간에서 추가로 더해지는 가중치 몫(MidWeight + 이 값 = 최대 1.0)
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PriceUpsetHighWeight = 0.7f;
+
+	// 만족도 계산에서 가격 불쾌 누적치(DailyPriceUpsetSum) 1단위가 정상 결제 몇 건과 같은 무게로 깎이는지
+	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset")
+	float PriceUpsetWeight = 1.5f;
+
 private:
 	// 정상 결제 카운트만 올림(추첨 없음)
 	UFUNCTION()
@@ -61,6 +86,10 @@ private:
 	UFUNCTION()
 	void HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone);
 
+	// 가격 불쾌 반응(거절이든 반응 후 구매든)을 사유 필터링 + 1일 1회 제한 + 추첨을 거쳐 누적
+	UFUNCTION()
+	void HandlePurchaseRejected(ACSCustomerCharacter* Customer, FCSPurchaseRejectionInfo Info);
+
 	// 마감 종 확정 직후, 정산 위젯이 뜨기 전에 동기 호출된다(RequestDailySummary 안에서 브로드캐스트)
 	UFUNCTION()
 	void HandleDailySummaryRequested();
@@ -72,13 +101,16 @@ private:
 	// 누적 카운터로 만족도와 평판 델타를 계산해 AddReputation을 호출
 	void SettleDailyReputation() const;
 
-	// 하루 카운터 4개(입장/정상결제/계산포기/빈손퇴장)를 0으로 되돌림
+	// 하루 카운터 5개(입장/정상결제/계산포기/빈손퇴장/가격불쾌)를 0으로 되돌림
 	void ResetDailyCounters();
 
-	// 계산 포기 / 빈손 퇴장을 카운트에 반영할지 CountRollChance로 추첨
+	// 계산 포기 / 빈손 퇴장 / 가격 불쾌를 카운트에 반영할지 CountRollChance로 추첨
 	bool RollShouldCount() const;
 
-	// 하루 동안 매장에 실제로 들어온 손님 수 (가게 앞만 지나간 행인은 제외)
+	// 가격 불쾌 Severity(0~1)를 3단 계단식으로 평판 가중치(0~1)로 환산
+	float ComputePriceUpsetWeight(float Severity) const;
+
+	// 하루 동안 매장에 실제로 들어온 손님 수 (가게 앞만 지나간 행인 / 영업종료 강제 퇴장 손님은 제외)
 	int32 DailyEnteredCustomers = 0;
 
 	// 하루 동안 정상 결제를 완료한 횟수
@@ -90,6 +122,9 @@ private:
 	// 하루 동안 추첨을 통과해 카운트에 반영된 빈손 퇴장 횟수
 	int32 DailyEmptyHandedDepartures = 0;
 
-	// 계산 포기 / 빈손 퇴장 추첨 전용 스트림
+	// 하루 동안 누적된 가격 불쾌 가중치 합(손님당 최대 1.0씩, 1일 1회 제한 적용됨)
+	float DailyPriceUpsetSum = 0.0f;
+
+	// 계산 포기 / 빈손 퇴장 / 가격 불쾌 추첨 전용 스트림
 	mutable FRandomStream ReputationRollStream;
 };

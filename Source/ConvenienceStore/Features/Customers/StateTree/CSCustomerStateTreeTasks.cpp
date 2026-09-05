@@ -272,6 +272,12 @@ static void CS_HandlePriceReactionThenBuy(
 		Decision.GetRejectionDisplayTier(ReactionInfo).DebugText.ToString(),
 		nullptr, FColor::White, DisplayDuration, true);
 
+	// 가격 반응은 구매 성공 여부와 무관하게 평판에 영향을 준다 - 구매가 성사돼도 이 방송은 그대로 나가야 함
+	if (UCSCustomerRuntimeSubsystem* Subsystem = World != nullptr ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
+	{
+		Subsystem->NotifyPurchaseRejected(&Customer, ReactionInfo);
+	}
+
 	Data.Phase = ECSCustomerBrowsePhase::WaitingReaction;
 	Data.bPendingTakeProductAfterReaction = true;
 	Data.PendingProductActor = ProductActor;
