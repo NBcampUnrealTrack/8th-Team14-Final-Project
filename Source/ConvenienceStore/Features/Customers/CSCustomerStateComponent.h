@@ -217,4 +217,30 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	bool bPriceUpsetCounted = false;
 
+	// 청결도 -------
+
+	// 스폰 시점에 pre-roll로 확정된, 이 손님이 오늘 진열대 이동 중 통로에 쓰레기를 버릴지 여부
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
+	bool bWillDropTrash = false;
+
+	// 몇 번째 진열대 이동에서 버릴지(1부터 시작). pre-roll로 스폰 시점에 확정
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
+	int32 TrashDropTravelIndex = 0;
+
+	// 그 이동에서 출발 지점 대비 몇 %쯤 걸었을 때 버릴지(0~1). pre-roll로 스폰 시점에 확정
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
+	float TrashDropProgress = 0.0f;
+
+	// 오늘 다른 손님이 흘린 쓰레기를 목격해 평판 집계(DailyTrashWitnessed)에 이미 반영됐는지
+	// 손님 한 명이 여러 번 목격해도 반영은 방문당 1회로 제한하기 위한 플래그
+	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
+	bool bTrashWitnessedToday = false;
+
+	// 오늘 목격 확률 굴림을 이미 한 번 시도했는지(성공/실패 무관). 굴림 자체를 하루 1회로 제한하는 용도
+	// 이게 없으면 진열대를 여러 번 오가며 같은 쓰레기 옆을 지날 때마다 다시 굴려서
+	// "30% 확률"이 하루 동안 여러 번 누적 시도되어 사실상 30%보다 훨씬 높아진다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
+	bool bHasAttemptedTrashWitnessRoll = false;
+
 };

@@ -89,6 +89,13 @@ EStateTreeRunStatus FCSTask_MoveToLocation::EnterState(FStateTreeExecutionContex
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 청결도 신호(버리기 진행률 / 목격 판정)의 기준점. 재진입 사이에 남아있는 값을 매번 새로 잡아야 함
+	if (const APawn* Pawn = Controller->GetPawn())
+	{
+		Data.MoveStartLocation = Pawn->GetActorLocation();
+	}
+	Data.WitnessCheckElapsedTime = 0.0f;
+
 	// 진열대로 가는 이동이면 진열대가 정한 영역 반경 안에서 멈춤
 	float StopRadius = Data.AcceptanceRadius;
 	if (Data.TargetShelf != nullptr)
@@ -133,10 +140,63 @@ EStateTreeRunStatus FCSTask_MoveToLocation::Tick(FStateTreeExecutionContext& Con
 		return EStateTreeRunStatus::Failed;
 	}
 
+	APawn* Pawn = Controller->GetPawn();
+
+	// 청결도 신호(버리는 손님 / 보는 손님)는 진열대로 가는 이동에서만 판정한다
+	if (Data.TargetShelf != nullptr && Pawn != nullptr)
+	{
+		ACSCustomerCharacter* Customer = Cast<ACSCustomerCharacter>(Pawn);
+		UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
+		UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+
+		if (State != nullptr && Subsystem != nullptr)
+		{
+			// 버리는 손님 : 몇 번째 진열대 이동인지는 VisitedShelves.Num()+1로 유추한다.
+			// Browse가 첫 라운드 진입 시에만 MarkVisited를 부르므로, 지금(이동 중)은
+			// 아직 이번 진열대가 방문 목록에 없다 - PickNextShelf::EnterState의 재진입 처리 주석 참고
+			if (State->bWillDropTrash && (State->VisitedShelves.Num() + 1) == State->TrashDropTravelIndex)
+			{
+				const float TotalDist = FVector::Dist2D(Data.MoveStartLocation, Data.TargetLocation);
+				if (TotalDist > KINDA_SMALL_NUMBER)
+				{
+					const float Progress = FVector::Dist2D(Data.MoveStartLocation, Pawn->GetActorLocation()) / TotalDist;
+					if (Progress >= State->TrashDropProgress)
+					{
+						Subsystem->SpawnTrashNearCustomer(Customer);
+						// 하루 1회 보장 - 이후 이동에서 조건이 다시 참이 되어도 재발동하지 않음
+						State->bWillDropTrash = false;
+					}
+				}
+			}
+
+			// 보는 손님 : 1초 간격으로만 캐시된 쓰레기와의 거리를 확인해 판정 비용을 억제한다.
+			// 굴림 자체를 하루 1회로 제한한다(bHasAttemptedTrashWitnessRoll)
+			if (!State->bTrashWitnessedToday && !State->bHasAttemptedTrashWitnessRoll)
+			{
+				Data.WitnessCheckElapsedTime += DeltaTime;
+				if (Data.WitnessCheckElapsedTime >= 1.0f)
+				{
+					Data.WitnessCheckElapsedTime = 0.0f;
+
+					if (Subsystem->IsTrashNearby(Pawn->GetActorLocation(), Subsystem->TrashWitnessRadius))
+					{
+						// 오늘 처음 쓰레기를 발견한 순간 - 성공/실패와 무관하게 시도 자체를 여기서 소진한다
+						State->bHasAttemptedTrashWitnessRoll = true;
+
+						if (Subsystem->RollTrashWitnessed())
+						{
+							State->bTrashWitnessedToday = true;
+							Subsystem->NotifyTrashWitnessed(Customer);
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// 단순 버전의 MoveToLocation이라 완료 콜백이 없으므로 매 틱 폴링하여 이동 종료를 판단합니다
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Idle)
 	{
-		const APawn* Pawn = Controller->GetPawn();
 		if (Pawn == nullptr)
 		{
 			return EStateTreeRunStatus::Failed;

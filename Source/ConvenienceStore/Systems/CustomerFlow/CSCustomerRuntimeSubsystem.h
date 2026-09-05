@@ -40,6 +40,7 @@
 class ACSCustomerCharacter;
 class ACSShelfActor;
 class ACSProductPickupActor;
+class ACSTrashActor;
 class UCSInnerThoughtWidget;
 struct FCSSelectProduct;
 
@@ -64,12 +65,16 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerChara
 // 손님이 구매를 거절했을 때 방송. 거절 연출(디버그 텍스트/속마음 위젯)과
 // 애니메이션 파트의 향후 구독을 위한 채널. Info는 사유/강도 등 거절 상세 정보
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnPurchaseRejected, ACSCustomerCharacter*, Customer, FCSPurchaseRejectionInfo, Info);
+// 손님이 다른 손님이 흘린 쓰레기를 목격해 평판 반영 대상이 됐을 때 방송
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnTrashWitnessed, ACSCustomerCharacter*, Customer);
 
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 public:
+	UCSCustomerRuntimeSubsystem();
+
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	// =====================================================================
@@ -135,6 +140,42 @@ public:
 	// 이 래퍼를 거치게 해 캡슐화
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	void NotifyPurchaseRejected(ACSCustomerCharacter* Customer, const FCSPurchaseRejectionInfo& Info);
+
+	// =====================================================================
+	// 청결도 (버리는 손님 / 보는 손님)
+	// =====================================================================
+
+	// 손님이 흘린 쓰레기의 액터 클래스. 생성자에서 BP_Trash로 기본값을 채운다
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Trash")
+	TSubclassOf<AActor> TrashActorClass;
+
+	// 목격 판정 반경
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Trash", meta = (ClampMin = "0.0"))
+	float TrashWitnessRadius = 600.0f;
+
+	// 캐시된 쓰레기가 반경 안에 있을 때 실제로 목격 처리할 확률
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Trash", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float TrashWitnessChance = 0.3f;
+
+	// Customer 발밑 근처에 TrashActorClass(폴백 시 ACSTrashActor)를 스폰하고 캐시에 등록한다
+	// 캐시 등록까지 이 함수 하나로 끝내 호출부(StateTree 태스크)가 캐시 구조를 몰라도 되게 한다
+	// Location이 아니라 Customer를 받는 이유: 캡슐 중심이 아니라 바닥 높이를 직접 계산해야 하고,
+	// 스폰 직후 ACSTrashActor::PrepareForCustomerDrop()(물리·충돌·내비메시 정리)도 이 안에서 처리하기 때문
+	void SpawnTrashNearCustomer(ACSCustomerCharacter* Customer);
+
+	// 캐시된 쓰레기 중 Location 반경 Radius 안에 하나라도 살아 있는 게 있는지 확인한다
+	// TActorIterator로 매 틱 월드를 훑지 않고 캐시 배열만 검사하는 것이 이 함수의 성능 전제
+	bool IsTrashNearby(const FVector& Location, float Radius) const;
+
+	// 목격 판정 확률(TrashWitnessChance)을 전용 스트림으로 굴린다
+	bool RollTrashWitnessed() const;
+
+	// 손님이 다른 손님의 쓰레기를 목격했을 때 호출. OnTrashWitnessed를 직접 Broadcast하지 않고
+	// 이 래퍼를 거치게 해 캡슐화(NotifyPurchaseRejected와 동일한 이유)
+	void NotifyTrashWitnessed(ACSCustomerCharacter* Customer);
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnTrashWitnessed OnTrashWitnessed; // 쓰레기 목격 순간 방송. 청결도 평판 반영은 구독하는 쪽(평판 서브시스템) 담당
 
 	// =====================================================================
 	// 속마음 위젯
@@ -371,6 +412,13 @@ private:
 	// ShowInnerThought()가 재사용하는 캐싱된 화면 하단 대화창 위젯 인스턴스
 	UPROPERTY()
 	TObjectPtr<UCSInnerThoughtWidget> CachedInnerThoughtWidget;
+
+	// 손님이 흘린 쓰레기 캐시. IsTrashNearby가 TActorIterator 없이 반경 검사를 하기 위한 목록
+	// 유효하지 않은 항목(플레이어가 주워서 파괴됨 등)은 검사 시점에 걸러내므로 mutable
+	mutable TArray<TWeakObjectPtr<ACSTrashActor>> DroppedTrashCache;
+
+	// 목격 판정 30% 확률 굴림 전용 스트림. RollTrashWitnessed가 const라서 mutable 필요
+	mutable FRandomStream TrashWitnessRollStream;
 
 	// 위 위젯을 Duration 뒤 숨기기 위한 타이머
 	FTimerHandle InnerThoughtHideTimerHandle;

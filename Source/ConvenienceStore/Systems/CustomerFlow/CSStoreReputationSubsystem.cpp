@@ -21,6 +21,7 @@ void UCSStoreReputationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		RuntimeSubsystem->OnCheckoutAbandoned.AddDynamic(this, &UCSStoreReputationSubsystem::HandleCheckoutAbandoned);
 		RuntimeSubsystem->OnCustomerDespawned.AddDynamic(this, &UCSStoreReputationSubsystem::HandleCustomerDespawned);
 		RuntimeSubsystem->OnPurchaseRejected.AddDynamic(this, &UCSStoreReputationSubsystem::HandlePurchaseRejected);
+		RuntimeSubsystem->OnTrashWitnessed.AddDynamic(this, &UCSStoreReputationSubsystem::HandleTrashWitnessed);
 	}
 
 	if (ACSStoreGameState* GameState = InWorld.GetGameState<ACSStoreGameState>())
@@ -40,6 +41,7 @@ void UCSStoreReputationSubsystem::Deinitialize()
 			RuntimeSubsystem->OnCheckoutAbandoned.RemoveDynamic(this, &UCSStoreReputationSubsystem::HandleCheckoutAbandoned);
 			RuntimeSubsystem->OnCustomerDespawned.RemoveDynamic(this, &UCSStoreReputationSubsystem::HandleCustomerDespawned);
 			RuntimeSubsystem->OnPurchaseRejected.RemoveDynamic(this, &UCSStoreReputationSubsystem::HandlePurchaseRejected);
+			RuntimeSubsystem->OnTrashWitnessed.RemoveDynamic(this, &UCSStoreReputationSubsystem::HandleTrashWitnessed);
 		}
 
 		if (ACSStoreGameState* GameState = World->GetGameState<ACSStoreGameState>())
@@ -139,6 +141,13 @@ void UCSStoreReputationSubsystem::HandlePurchaseRejected(ACSCustomerCharacter* C
 	State->bPriceUpsetCounted = true;
 }
 
+void UCSStoreReputationSubsystem::HandleTrashWitnessed(ACSCustomerCharacter* Customer)
+{
+	// 이 델리게이트는 하루 1회 캡(bTrashWitnessedToday)과 30% 목격 확률을
+	// CSCustomerRuntimeSubsystem이 이미 통과시킨 뒤에만 들어오므로 그대로 누적한다
+	++DailyTrashWitnessed;
+}
+
 void UCSStoreReputationSubsystem::HandleDailySummaryRequested()
 {
 	SettleDailyReputation();
@@ -163,7 +172,8 @@ void UCSStoreReputationSubsystem::SettleDailyReputation() const
 		(static_cast<float>(DailyNormalCheckouts)
 			- CheckoutAbandonedWeight * DailyCheckoutAbandoned
 			- EmptyHandedWeight * DailyEmptyHandedDepartures
-			- PriceUpsetWeight * DailyPriceUpsetSum)
+			- PriceUpsetWeight * DailyPriceUpsetSum
+			- TrashWitnessWeight * DailyTrashWitnessed)
 		/ static_cast<float>(DailyEnteredCustomers);
 
 	const float RawDelta = (Satisfaction - SatisfactionBaseline) * ReputationDeltaScale;
@@ -181,9 +191,9 @@ void UCSStoreReputationSubsystem::SettleDailyReputation() const
 	GameState->AddReputation(RoundedDelta);
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("[평판 정산] 입장=%d 정상결제=%d 계산포기=%d 빈손퇴장=%d 가격불쾌=%.3f 만족도=%.3f 델타=%d"),
+		TEXT("[평판 정산] 입장=%d 정상결제=%d 계산포기=%d 빈손퇴장=%d 가격불쾌=%.3f 쓰레기목격=%d 만족도=%.3f 델타=%d"),
 		DailyEnteredCustomers, DailyNormalCheckouts, DailyCheckoutAbandoned, DailyEmptyHandedDepartures,
-		DailyPriceUpsetSum, Satisfaction, RoundedDelta);
+		DailyPriceUpsetSum, DailyTrashWitnessed, Satisfaction, RoundedDelta);
 }
 
 void UCSStoreReputationSubsystem::ResetDailyCounters()
@@ -193,6 +203,7 @@ void UCSStoreReputationSubsystem::ResetDailyCounters()
 	DailyCheckoutAbandoned = 0;
 	DailyEmptyHandedDepartures = 0;
 	DailyPriceUpsetSum = 0.0f;
+	DailyTrashWitnessed = 0;
 }
 
 bool UCSStoreReputationSubsystem::RollShouldCount() const

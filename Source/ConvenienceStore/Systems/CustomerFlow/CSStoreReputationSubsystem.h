@@ -1,5 +1,6 @@
-﻿// 계산 포기 + 빈손 퇴장 + 가격 불쾌를 하루 동안 집계했다가 마감 시점에 평판 점수로 반영하는 서브시스템
+﻿// 계산 포기 + 빈손 퇴장 + 가격 불쾌 + 쓰레기 목격을 하루 동안 집계했다가 마감 시점에 평판 점수로 반영하는 서브시스템
 // 정상 결제는 카운트만 하고, 계산 포기/빈손 퇴장/가격 불쾌는 각각 확률 추첨을 거쳐서만 카운트한다
+// 쓰레기 목격은 방송 전에 이미 CSCustomerRuntimeSubsystem에서 확률 추첨(하루 1회 캡 + 목격 확률)을 거치므로 여기서는 그대로 누적만 한다
 // 손님 경험이 나쁜 날마다 원인 전부가 매번 깎이면 하루 변동폭이 지나치게 커지기 때문에 이 추첨이 완충 역할을 한다
 
 #pragma once
@@ -73,6 +74,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset")
 	float PriceUpsetWeight = 1.5f;
 
+	// 만족도 계산에서 쓰레기 목격 1건이 정상 결제 몇 건과 같은 무게로 깎이는지
+	// 배선만 해둔 초기값 - 실제 튜닝은 밸런싱 단계에서 진행
+	UPROPERTY(EditAnywhere, Category = "Reputation|Trash")
+	float TrashWitnessWeight = 0.5f;
+
 private:
 	// 정상 결제 카운트만 올림(추첨 없음)
 	UFUNCTION()
@@ -89,6 +95,11 @@ private:
 	// 가격 불쾌 반응(거절이든 반응 후 구매든)을 사유 필터링 + 1일 1회 제한 + 추첨을 거쳐 누적
 	UFUNCTION()
 	void HandlePurchaseRejected(ACSCustomerCharacter* Customer, FCSPurchaseRejectionInfo Info);
+
+	// 쓰레기 목격을 누적. 하루 1회 캡과 30% 목격 확률은 방송 전에 CSCustomerRuntimeSubsystem이
+	// 이미 거쳤으므로, 여기서는 HandlePurchaseRejected와 달리 RollShouldCount()를 다시 거치지 않는다
+	UFUNCTION()
+	void HandleTrashWitnessed(ACSCustomerCharacter* Customer);
 
 	// 마감 종 확정 직후, 정산 위젯이 뜨기 전에 동기 호출된다(RequestDailySummary 안에서 브로드캐스트)
 	UFUNCTION()
@@ -124,6 +135,11 @@ private:
 
 	// 하루 동안 누적된 가격 불쾌 가중치 합(손님당 최대 1.0씩, 1일 1회 제한 적용됨)
 	float DailyPriceUpsetSum = 0.0f;
+
+	// 하루 동안 다른 손님의 쓰레기를 목격해 평판에 반영된 횟수(손님당 1일 1회 제한 적용됨)
+	// 목격 판정 자체(하루 1회 캡 + 30% 확률)는 CSCustomerRuntimeSubsystem이 이미 마쳤으므로
+	// 가격 불쾌와 달리 여기서는 별도 추첨 없이 그대로 누적한다
+	int32 DailyTrashWitnessed = 0;
 
 	// 계산 포기 / 빈손 퇴장 / 가격 불쾌 추첨 전용 스트림
 	mutable FRandomStream ReputationRollStream;

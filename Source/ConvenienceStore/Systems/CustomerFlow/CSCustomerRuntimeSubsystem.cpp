@@ -14,6 +14,9 @@
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
+#include "Features/Trash/CSTrashActor.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Components/CapsuleComponent.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
@@ -29,6 +32,17 @@ TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("0 이상이면 이 값을 손님 관련 굴림(종족 배정/예산 추첨/진열대 선택)의 고정 시드로 사용. -1(기본값)이면 매번 다른 시드"),
 	ECVF_Default);
 
+UCSCustomerRuntimeSubsystem::UCSCustomerRuntimeSubsystem()
+{
+	// UWorldSubsystem은 디테일 패널이 없어 TrashActorClass를 에디터에서 지정할 수 없으므로, 여기서 BP_Trash를 기본값으로 채운다.
+	static ConstructorHelpers::FClassFinder<AActor> TrashActorClassFinder(
+		TEXT("/Game/ConvenienceStore/Feature/Trash/BP_Trash"));
+	if (TrashActorClassFinder.Succeeded())
+	{
+		TrashActorClass = TrashActorClassFinder.Class;
+	}
+}
+
 void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
@@ -36,6 +50,9 @@ void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// 이 서브시스템이 살아있는 동안 한 번만 시드를 잡음
 	const int32 FixedSeed = CVarCS_FixedSeed.GetValueOnGameThread();
 	ShelfRandomStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
+
+	// ShelfRandomStream과 같은 FixedSeed 값을 쓰지만 별개의 객체라 시퀀스가 서로 얽히지 않는다
+	TrashWitnessRollStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
 }
@@ -275,6 +292,83 @@ void UCSCustomerRuntimeSubsystem::NotifyPurchaseRejected(ACSCustomerCharacter* C
 	}
 
 	OnPurchaseRejected.Broadcast(Customer, Info);
+}
+
+void UCSCustomerRuntimeSubsystem::SpawnTrashNearCustomer(ACSCustomerCharacter* Customer)
+{
+	if (!IsValid(Customer))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// Customer->GetActorLocation()은 캡슐 중심이라 그대로 스폰하면 공중에 뜬 채로 보인다.
+	// 캡슐 반높이만큼 내려서 바닥 근처에서 시작시키고, 남은 오차는 아래 물리 낙하가 보정한다.
+	FVector SpawnLocation = Customer->GetActorLocation();
+	if (const UCapsuleComponent* Capsule = Customer->GetCapsuleComponent())
+	{
+		SpawnLocation.Z -= Capsule->GetScaledCapsuleHalfHeight();
+	}
+
+	TSubclassOf<AActor> SpawnClass = TrashActorClass;
+	if (SpawnClass == nullptr)
+	{
+		SpawnClass = ACSTrashActor::StaticClass();
+	}
+
+	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+	AActor* SpawnedActor = World->SpawnActor<AActor>(SpawnClass, SpawnTransform);
+
+	// 캐시에는 실제로 청결도 판정에 쓰이는 ACSTrashActor(파생 포함)만 등록한다
+	if (ACSTrashActor* SpawnedTrash = Cast<ACSTrashActor>(SpawnedActor))
+	{
+		// 물리 낙하 + Pawn 충돌 무시 + 내비메시 영향 제거를 여기서 한 번에 정리한다
+		// (레벨에 미리 배치된 튜토리얼용 인스턴스는 그대로 두고, 런타임 스폰 인스턴스만 손댐)
+		SpawnedTrash->PrepareForCustomerDrop();
+		DroppedTrashCache.Add(SpawnedTrash);
+	}
+}
+
+bool UCSCustomerRuntimeSubsystem::IsTrashNearby(const FVector& Location, float Radius) const
+{
+	// 플레이어가 주워서 이미 파괴된 항목을 검사 시점에 걸러낸다.
+	DroppedTrashCache.RemoveAll([](const TWeakObjectPtr<ACSTrashActor>& Trash)
+	{
+		return !Trash.IsValid();
+	});
+
+	const float RadiusSquared = FMath::Square(Radius);
+	for (const TWeakObjectPtr<ACSTrashActor>& Trash : DroppedTrashCache)
+	{
+		const ACSTrashActor* TrashActor = Trash.Get();
+		if (TrashActor != nullptr &&
+			FVector::DistSquared(TrashActor->GetActorLocation(), Location) <= RadiusSquared)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UCSCustomerRuntimeSubsystem::RollTrashWitnessed() const
+{
+	return TrashWitnessRollStream.FRand() < TrashWitnessChance;
+}
+
+void UCSCustomerRuntimeSubsystem::NotifyTrashWitnessed(ACSCustomerCharacter* Customer)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	OnTrashWitnessed.Broadcast(Customer);
 }
 
 // 화면 하단 대화창 스타일 위젯 인스턴스 하나를 캐싱해서 재사용

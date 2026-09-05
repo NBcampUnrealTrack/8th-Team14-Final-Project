@@ -37,6 +37,9 @@ public:
 	// 내려놓을 때 메시를 다시 보이게 함
 	void ShowMeshAfterDrop();
 
+	// 손님이 통로에 쓰레기를 흘렸을 때(런타임 스폰 직후) 호출
+	void PrepareForCustomerDrop();
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
