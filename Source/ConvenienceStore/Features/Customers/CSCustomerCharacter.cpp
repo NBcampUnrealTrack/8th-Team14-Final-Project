@@ -45,7 +45,7 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 360.0f, 0.0f); //방향 전환 속도
 	GetCharacterMovement()->MaxWalkSpeed = 300.0f; //기본 걷기 속도
 
-	//일단 서로 겹치게 테스트용으로 잘 굴러가는지 확인용 [나중에 처리 예정]
+	// 플레이어·손님·직원은 서로 통과하고, 월드 충돌은 유지합니다.
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
 	// 상품을 내려놓기 시작할 기준점. BP에서 메시에 맞게 조정한다.

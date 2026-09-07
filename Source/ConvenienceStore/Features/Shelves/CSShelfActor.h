@@ -14,6 +14,9 @@ class UPrimitiveComponent;
 class USceneComponent;
 class UStaticMeshComponent;
 class ACSProductPickupActor;
+class ACSDeliveryCrateActor;
+class UCShelfConfigurationWidget;
+class APlayerController;
 
 // 상품이 이 진열대의 슬롯에 실제로 배치되었을 때 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -62,6 +65,24 @@ struct FCSShelfSlot
 	TObjectPtr<AActor> OccupyingItem = nullptr;
 };
 
+// 한 진열 단의 품목 고정 여부를 저장합니다. 플레이어가 직접 지정한 단은 다른 단과 같은 상품도 허용합니다.
+USTRUCT(BlueprintType)
+struct FCSShelfLevelConfiguration
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Configuration")
+	ECSShelfSlotLevel SlotLevel = ECSShelfSlotLevel::Middle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Configuration",
+		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
+	FDataTableRowHandle ProductRow;
+
+	// 플레이어가 UI에서 지정한 단은 다른 단과 같은 품목을 명시적으로 설정할 수 있습니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Shelf|Configuration")
+	bool bIsPlayerConfigured = false;
+};
+
 // 설정된 슬롯 위치에 상품을 정확하게 배치하는 진열대 액터입니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSShelfActor : public AActor,
@@ -98,11 +119,21 @@ public:
 	virtual void PrepareForBuildPickup_Implementation() override;
 	virtual void FinalizeBuildPlacement_Implementation() override;
 
-	// 들고 있는 상품을 놓을 수 있을 때만 진열대 외곽선 상태를 갱신합니다.
+	// 들고 있는 상품의 현재 배치 상태를 진열대 외곽선으로 표시합니다.
 	void SetPlacementHighlight(ECSShelfPlacementPreviewState NewState);
+	// 배치 안내가 끝났을 때 기존 CustomDepth 상태로 되돌립니다.
+	void ClearPlacementHighlight();
+	// 플레이어가 조준한 단에 배치하지 못한 정확한 원인을 HUD에 표시합니다.
+	FText GetPlayerPlacementFailureText(
+		const ACSProductPickupActor* Product,
+		FVector PlacementHint) const;
 
 	// 조준 위치와 무관하게 진열대 전체에 배치 가능한 슬롯이 있는지 기준으로 외곽선 상태를 반환합니다.
 	ECSShelfPlacementPreviewState GetPlacementHighlightState(AActor* ItemActor) const;
+
+	// CustomerShoppingPoint를 NavMesh 바닥 높이에 맞춘 공통 접근 위치를 반환합니다.
+	// 손님과 진열 직원이 동일한 위치를 사용하므로, 건축 모드의 BrowseZoneBox 검증 범위를 벗어나지 않습니다.
+	bool TryGetCustomerShoppingPoint(FVector& OutLocation) const;
 
 	// 손님 접근 마커를 기준으로 만든 도착 판정 영역을 반환
 	bool TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const;
@@ -114,11 +145,98 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Shelf")
 	FCSOnItemPlaced OnItemPlaced;
 
+	// 현재 비어 있는 진열 슬롯 수를 반환하여 직원 업무 생성에 사용합니다.
+	UFUNCTION(BlueprintPure, Category = "Shelf|Employee")
+	int32 GetEmptySlotCount() const;
+
+	// 지정 상품을 현재 단별 구성 규칙에 따라 직원이 실제로 채울 수 있는 빈 슬롯 수입니다.
+	// 전체 빈 슬롯 수와 다를 수 있으므로, 상자 진열 업무의 요청 수량 계산에 사용합니다.
+	int32 GetEmployeeRestockableSlotCount(
+		const FDataTableRowHandle& ProductRow,
+		bool bAllowCrossTierDuplicateFallback) const;
+
+	// 계산대·장식 선반처럼 ACSShelfActor를 상속하지만 직원 자동 보충 대상이 아니어야 하는 시설을 구분합니다.
+	UFUNCTION(BlueprintPure, Category = "Shelf|Employee")
+	bool CanEmployeeRestock() const { return bAllowEmployeeRestock && bIsInstalled; }
+
+	// 시설 데이터 또는 진열대 설정으로 결정된 현재 보관 타입을 직원 업무 시스템에 제공합니다.
+	UFUNCTION(BlueprintPure, Category = "Shelf|Employee")
+	ECSProductShelfType GetShelfStorageType() const { return ShelfType; }
+
+	// 자동 진열과 진열 구성 UI가 공통으로 사용할 상품군 호환 규칙입니다. 수동 진열의 경고 여부와는 별도로 판단합니다.
+	UFUNCTION(BlueprintPure, Category = "Shelf|Configuration")
+	bool IsProductShelfTypeCompatible(ECSProductShelfType ProductShelfType) const;
+
+	// 기존 진열 상품 또는 초기 진열 설정을 기준으로, 직원이 채워야 할 상품 행을 반환합니다.
+	bool GetRestockProductRow(FDataTableRowHandle& OutProductRow) const;
+	// 지정 상품이 현재 진열대의 어느 단에 들어갈 수 있는지 직원 업무 생성 단계에서 확인합니다.
+	bool CanEmployeeRestockProduct(
+		const FDataTableRowHandle& ProductRow,
+		bool bAllowCrossTierDuplicateFallback) const;
+
+	// 배송 상자에서 실제 상품을 생성해 빈 슬롯에 배치하고, 성공한 수량만 상자에서 차감합니다.
+	int32 TryRestockFromCrate(ACSDeliveryCrateActor* SourceCrate, int32 RequestedQuantity);
+
+	// 직원이 손에 든 상품을 다음 빈 슬롯에 정확히 놓을 수 있도록 배치 기준 위치를 반환합니다.
+	bool GetNextEmployeeRestockSlotLocation(
+		const FDataTableRowHandle& ProductRow,
+		bool bAllowCrossTierDuplicateFallback,
+		FVector& OutSlotLocation) const;
+	// 직원이 선택된 규칙에 맞는 단의 빈 슬롯에 상품을 놓습니다.
+	bool TryPlaceEmployeeProduct(
+		ACSProductPickupActor* Product,
+		bool bAllowCrossTierDuplicateFallback);
+
+	// E 상품 상호작용과 분리해, 플레이어가 F 입력으로만 진열 구성 UI를 열 수 있도록 제공합니다.
+	bool OpenShelfConfiguration(AActor* Interactor);
+
+	UFUNCTION(BlueprintPure, Category = "Shelf|Configuration")
+	TArray<FCSShelfLevelConfiguration> GetLevelConfigurations() const { return LevelConfigurations; }
+
+	// 플레이어가 단을 지정하지 않은 상태에서 상품 보관 타입이 맞지 않아 직원 정리가 필요한지 확인합니다.
+	bool ShouldEmployeeReorganizeProduct(const ACSProductPickupActor* Product) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Shelf|Configuration")
+	bool SetLevelProductConfiguration(
+		ECSShelfSlotLevel SlotLevel,
+		FDataTableRowHandle ProductRow);
+
+	// 현재 단 설정과 다른 상품 수입니다. 설정 변경 뒤 UI가 직원 정리 대기 수를 안내할 때 사용합니다.
+	UFUNCTION(BlueprintPure, Category = "Shelf|Configuration")
+	int32 GetMismatchedProductCountOnLevel(ECSShelfSlotLevel SlotLevel) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Shelf|Configuration")
+	bool ClearLevelProductConfiguration(ECSShelfSlotLevel SlotLevel);
+
 protected:
 	// 조준 위치와 가장 가까운 상단·중단·하단을 반환합니다. 이미 찬 슬롯도 단 판정에는 사용합니다.
 	ECSShelfSlotLevel FindAimedSlotLevel(FVector PlacementHint) const;
 	// 조준한 단 안에서만 가장 가까운 빈 슬롯을 반환합니다.
 	int32 FindClosestEmptySlot(FVector PlacementHint) const;
+	// 빈칸이 없을 때에도 실패 프리뷰를 실제 조준 단의 슬롯에 고정하기 위한 공통 검색입니다.
+	int32 FindClosestSlotOnAimedLevel(FVector PlacementHint, bool bRequireEmptySlot) const;
+	int32 FindEmptySlotForProduct(
+		const FDataTableRowHandle& ProductRow,
+		bool bAllowCrossTierDuplicateFallback,
+		ECSShelfSlotLevel PreferredLevel,
+		bool bIgnoreStorageCompatibility = false,
+		bool bAllowOtherLevelFallback = true) const;
+	bool CanPlaceProductInLevel(
+		const FDataTableRowHandle& ProductRow,
+		ECSShelfSlotLevel SlotLevel,
+		bool bAllowCrossTierDuplicateFallback,
+		bool bIgnoreStorageCompatibility = false) const;
+	bool IsProductRowEqual(const FDataTableRowHandle& Left, const FDataTableRowHandle& Right) const;
+	bool GetProductRowOnLevel(ECSShelfSlotLevel SlotLevel, FDataTableRowHandle& OutProductRow) const;
+	const FCSShelfLevelConfiguration* FindLevelConfiguration(ECSShelfSlotLevel SlotLevel) const;
+	FCSShelfLevelConfiguration* FindLevelConfiguration(ECSShelfSlotLevel SlotLevel);
+	void EnsureLevelConfigurations();
+	bool IsProductCompatibleWithShelf(const FDataTableRowHandle& ProductRow) const;
+	// 실제 부착·충돌·점유 처리를 한곳에 모아 플레이어와 직원이 같은 배치 결과를 사용하게 합니다.
+	bool PlaceItemInSlot(AActor* ItemActor, int32 SlotIndex);
+	bool OpenShelfConfigurationWidget(AActor* Interactor);
+	UFUNCTION()
+	void HandleShelfConfigurationClosed();
 	// Arrow Component 이름에서 Slot_00 형식의 슬롯 번호를 읽어옵니다.
 	bool TryGetSlotMarkerIndex(const UArrowComponent* SlotMarker, int32& OutSlotIndex) const;
 	// 블루프린트에서 배치한 슬롯 마커를 현재 슬롯 배열에 반영합니다.
@@ -188,9 +306,27 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Facility")
 	ECSProductShelfType ShelfType = ECSProductShelfType::UtilityShelf;
 
+	// true인 진열대만 진열 직원이 빈 슬롯과 재고 상자를 검사하여 자동 보충합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Employee")
+	bool bAllowEmployeeRestock = true;
+
 	// 진열대 블루프린트에서 상품 위치마다 하나씩 추가합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf")
 	TArray<FCSShelfSlot> Slots;
+
+	// 상단·중단·하단의 플레이어 지정 품목을 따로 보관해 한 단 안에서는 서로 다른 상품이 섞이지 않게 합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Configuration")
+	TArray<FCSShelfLevelConfiguration> LevelConfigurations;
+
+	// 진열대를 조준하고 상호작용할 때 열 진열 구성 관리 UI입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Shelf|Configuration")
+	TSubclassOf<UCShelfConfigurationWidget> ShelfConfigurationWidgetClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCShelfConfigurationWidget> ActiveShelfConfigurationWidget;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<APlayerController> ShelfConfigurationPlayerController;
 
 	// 시작 진열 상품에 사용할 공통 상품 액터 클래스입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Shelf|Initial Products")
