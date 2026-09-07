@@ -482,6 +482,30 @@ bool ACSShelfActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 		return false;
 	}
 
+	// 플레이어 수동 진열의 기존 허용 정책은 유지하되, 도구와 ToolRack 조합만 서로 전용으로 제한합니다.
+	const FDataTableRowHandle ProductRow = Product->GetProductRow();
+	const FCSProductDataRow* ProductData = nullptr;
+	if (ProductRow.DataTable != nullptr && !ProductRow.RowName.IsNone())
+	{
+		ProductData = ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("ACSShelfActor::CanPlaceItem"));
+	}
+
+	const bool bIsToolRackShelf = ShelfType == ECSProductShelfType::ToolRack;
+	if (bIsToolRackShelf)
+	{
+		if (ProductData == nullptr ||
+			ProductData->ShelfType != ECSProductShelfType::ToolRack)
+		{
+			return false;
+		}
+	}
+	else if (ProductData != nullptr &&
+		ProductData->ShelfType == ECSProductShelfType::ToolRack)
+	{
+		return false;
+	}
+
 	// 플레이어 수동 진열은 단별 상품 지정·상품 중복·보관 타입 규칙을 적용하지 않습니다.
 	// 진열대 전체에 실제 빈 슬롯이 하나라도 있으면 배치 대상으로 표시합니다.
 	return GetEmptySlotCount() > 0;
