@@ -16,6 +16,7 @@ class ACSProductPickupActor;
 class UPrimitiveComponent;
 class UNiagaraComponent;
 class ACSStoreGameState;
+class ACSStoreEmployeeCharacter;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnCrateQuantityChanged,
@@ -36,6 +37,17 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Delivery")
 	bool InitializeCrate(FDataTableRowHandle InProductRow, int32 InQuantity);
+
+	// 발주 배송으로 막 도착한 상자인지 표시합니다. 입고 대기 상자는 직원이 다른 진열 업무보다 먼저 창고로 옮깁니다.
+	UFUNCTION(BlueprintCallable, Category = "Delivery|Intake")
+	void SetAwaitingStockroomIntake(bool bInAwaitingStockroomIntake);
+
+	// 입고 대기 여부를 블루프린트와 직원 업무 생성 로직에서 안전하게 확인할 수 있도록 제공합니다.
+	UFUNCTION(BlueprintPure, Category = "Delivery|Intake")
+	bool IsAwaitingStockroomIntake() const
+	{
+		return bAwaitingStockroomIntake;
+	}
 
 	UFUNCTION(BlueprintPure, Category = "Delivery")
 	FName GetProductId() const;
@@ -66,6 +78,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Delivery")
 	bool ConsumeOne();
+
+	// 직원 업무가 이 상자를 처리하는 동안 플레이어·다른 직원의 중복 집기를 막습니다.
+	bool TryReserveForEmployee(ACSStoreEmployeeCharacter* Employee, int32 TaskId);
+	bool CanBeReservedByEmployee(const ACSStoreEmployeeCharacter* Employee, int32 TaskId) const;
+	void ReleaseEmployeeReservation(const ACSStoreEmployeeCharacter* Employee, int32 TaskId);
+	bool IsReservedByEmployee() const;
 
 	ACSProductPickupActor* SpawnProductActor() const;
 
@@ -122,6 +140,10 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery")
 	int32 RemainingQuantity = 0;
 
+	// 레벨에 직접 둔 상자를 입고 상자처럼 시험할 수 있고, 실제 발주 상자는 배송 포털이 런타임에 true로 설정합니다.
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Delivery|Intake")
+	bool bAwaitingStockroomIntake = false;
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Product")
 	FCSProductRuntimeState ProductRuntimeState;
 
@@ -130,6 +152,15 @@ protected:
 
 	UPROPERTY(Transient)
 	bool bIsHeldByPlayerForFreshness = false;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Employee")
+	TObjectPtr<ACSStoreEmployeeCharacter> ReservedByEmployee = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Employee")
+	int32 ReservationTaskId = INDEX_NONE;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Employee")
+	float ReservationStartTimeSeconds = 0.0f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UNiagaraComponent> SpoiledVFXComponent;

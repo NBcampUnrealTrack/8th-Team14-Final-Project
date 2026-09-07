@@ -1,5 +1,7 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 
+#include "Features/Employees/CSStoreEmployeeCharacter.h"
+
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSFreshnessSettingsDataAsset.h"
@@ -47,6 +49,10 @@ ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 	CrateMesh->SetupAttachment(SceneRoot);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	// 상자는 Pawn을 막지 않고 겹침으로만 상호작용합니다.
+	// 따라서 이동 가능한 바닥을 NavMesh에서 제거할 이유가 없으며, 이 설정이 없으면
+	// 직원 캡슐 반경(75cm)까지 반영된 빈 공간 때문에 상자 중심에서 멀리 멈출 수 있습니다.
+	CrateMesh->SetCanEverAffectNavigation(false);
 	CrateMesh->SetGenerateOverlapEvents(true);
 	CrateMesh->OnComponentBeginOverlap.AddDynamic(
 		this,
@@ -124,6 +130,45 @@ FText ACSDeliveryCrateActor::GetInteractionText_Implementation() const
 		GetProductDisplayName());
 }
 
+bool ACSDeliveryCrateActor::TryReserveForEmployee(ACSStoreEmployeeCharacter* Employee, int32 TaskId)
+{
+	if (!CanBeReservedByEmployee(Employee, TaskId))
+	{
+		return false;
+	}
+
+	ReservedByEmployee = Employee;
+	ReservationTaskId = TaskId;
+	ReservationStartTimeSeconds = GetWorld() != nullptr ? GetWorld()->GetTimeSeconds() : 0.0f;
+	return true;
+}
+
+bool ACSDeliveryCrateActor::CanBeReservedByEmployee(
+	const ACSStoreEmployeeCharacter* Employee,
+	int32 TaskId) const
+{
+	return IsValid(Employee) &&
+		(!IsValid(ReservedByEmployee) ||
+			(ReservedByEmployee == Employee && ReservationTaskId == TaskId));
+}
+
+void ACSDeliveryCrateActor::ReleaseEmployeeReservation(
+	const ACSStoreEmployeeCharacter* Employee,
+	int32 TaskId)
+{
+	if (ReservedByEmployee == Employee && ReservationTaskId == TaskId)
+	{
+		ReservedByEmployee = nullptr;
+		ReservationTaskId = INDEX_NONE;
+		ReservationStartTimeSeconds = 0.0f;
+	}
+}
+
+bool ACSDeliveryCrateActor::IsReservedByEmployee() const
+{
+	return IsValid(ReservedByEmployee);
+}
+
 bool ACSDeliveryCrateActor::InitializeCrate(
 	FDataTableRowHandle InProductRow,
 	int32 InQuantity)
@@ -178,6 +223,12 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 	}
 	UpdateSpoiledVFX();
 	return true;
+}
+
+void ACSDeliveryCrateActor::SetAwaitingStockroomIntake(bool bInAwaitingStockroomIntake)
+{
+	// 창고 슬롯에 실제로 적재된 뒤에만 해제하도록 하여, 창고가 가득 찬 경우에는 입고 우선순위가 유지되게 합니다.
+	bAwaitingStockroomIntake = bInAwaitingStockroomIntake;
 }
 
 int32 ACSDeliveryCrateActor::GetCurrentFreshness() const

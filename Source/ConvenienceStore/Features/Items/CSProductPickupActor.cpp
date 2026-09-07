@@ -1,11 +1,14 @@
 #include "Features/Items/CSProductPickupActor.h"
 
+#include "Features/Employees/CSStoreEmployeeCharacter.h"
+
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
@@ -93,6 +96,45 @@ FText ACSProductPickupActor::GetInteractionText_Implementation() const
 	return FText::Format(
 		NSLOCTEXT("Interaction", "PickUp", "{0} 집기"),
 		ProductDisplayName);
+}
+
+bool ACSProductPickupActor::TryReserveForEmployee(ACSStoreEmployeeCharacter* Employee, int32 TaskId)
+{
+	if (!CanBeReservedByEmployee(Employee, TaskId))
+	{
+		return false;
+	}
+
+	ReservedByEmployee = Employee;
+	ReservationTaskId = TaskId;
+	ReservationStartTimeSeconds = GetWorld() != nullptr ? GetWorld()->GetTimeSeconds() : 0.0f;
+	return true;
+}
+
+bool ACSProductPickupActor::CanBeReservedByEmployee(
+	const ACSStoreEmployeeCharacter* Employee,
+	int32 TaskId) const
+{
+	return IsValid(Employee) &&
+		(!IsValid(ReservedByEmployee) ||
+			(ReservedByEmployee == Employee && ReservationTaskId == TaskId));
+}
+
+void ACSProductPickupActor::ReleaseEmployeeReservation(
+	const ACSStoreEmployeeCharacter* Employee,
+	int32 TaskId)
+{
+	if (ReservedByEmployee == Employee && ReservationTaskId == TaskId)
+	{
+		ReservedByEmployee = nullptr;
+		ReservationTaskId = INDEX_NONE;
+		ReservationStartTimeSeconds = 0.0f;
+	}
+}
+
+bool ACSProductPickupActor::IsReservedByEmployee() const
+{
+	return IsValid(ReservedByEmployee);
 }
 
 FText ACSProductPickupActor::GetProductDisplayName() const
@@ -205,6 +247,9 @@ void ACSProductPickupActor::PrepareForPickupPhysics()
 		return;
 	}
 
+	// 창고에서 꺼낸 상품은 다시 일반 상품의 충돌 설정으로 되돌린 뒤 손·진열대·바닥으로 이동합니다.
+	SetStoredForPlayerInteraction(false);
+
 	if (ProductMesh->IsSimulatingPhysics())
 	{
 		ProductMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
@@ -234,10 +279,29 @@ void ACSProductPickupActor::EnableWorldDropPhysics()
 		return;
 	}
 
+	SetStoredForPlayerInteraction(false);
 	ProductMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	ProductMesh->SetGenerateOverlapEvents(true);
 	ProductMesh->SetSimulatePhysics(true);
+}
+
+void ACSProductPickupActor::SetStoredForPlayerInteraction(bool bStoredForPlayerInteraction)
+{
+	if (!IsValid(ProductMesh))
+	{
+		return;
+	}
+
+	SetActorEnableCollision(true);
+	ProductMesh->SetSimulatePhysics(false);
+	ProductMesh->SetGenerateOverlapEvents(!bStoredForPlayerInteraction);
+	ProductMesh->SetCollisionResponseToAllChannels(
+		bStoredForPlayerInteraction ? ECR_Ignore : ECR_Block);
+	ProductMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ProductMesh->SetCollisionEnabled(
+		bStoredForPlayerInteraction ? ECollisionEnabled::QueryOnly : ECollisionEnabled::QueryAndPhysics);
 }
 
 void ACSProductPickupActor::SetStorageShelfType(ECSProductShelfType InStorageShelfType)

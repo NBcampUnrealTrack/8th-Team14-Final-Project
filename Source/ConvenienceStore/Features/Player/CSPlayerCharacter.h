@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
@@ -14,6 +14,7 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UPrimitiveComponent;
 class UAnimSequence;
 class ACSCartActor;
 class ACSDeliveryCartActor;
@@ -21,7 +22,9 @@ class ACSDeliveryCrateActor;
 class ACSMagicWandActor;
 class ACSProductPickupActor;
 class ACSProductPlacementPreviewActor;
+class ACSShelfActor;
 class ACSUsableToolActor;
+class ACSFreshnessSafeZoneActor;
 class UCSQuickbarInventoryComponent;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
@@ -52,8 +55,20 @@ public:
 	// 플레이어 캐릭터의 기본 컴포넌트와 이동 값을 설정합니다.
 	ACSPlayerCharacter();
 
+	// 직원 업무 시스템이 플레이어가 현재 소유한 물건을 안전하게 제외할 수 있도록 반환합니다.
+	UFUNCTION(BlueprintPure, Category = "Interaction")
+	AActor* GetHeldActor() const { return HeldActor; }
+
 	// 상호작용한 물체를 플레이어 손 위치에 부착합니다.
 	bool TryPickUp(AActor* PickupActor);
+	// 창고 상호작용에서 손에 든 상자 또는 낱개 상품의 소유권을 창고 슬롯으로 넘깁니다.
+	bool TryStoreHeldItem(
+		ACSFreshnessSafeZoneActor* StoragePoint,
+		const UPrimitiveComponent* TargetInteractionComponent = nullptr);
+	// 조준한 상자 슬롯에서 상자를 꺼내 플레이어 손에 부착합니다.
+	bool TryTakeStoredCrate(
+		ACSFreshnessSafeZoneActor* StoragePoint,
+		const UPrimitiveComponent* TargetInteractionComponent);
 
 	UFUNCTION(BlueprintPure, Category = "Player|Mode")
 	bool IsBuildMode() const
@@ -304,9 +319,17 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSProductPlacementPreviewActor> PlacementPreviewActor;
 
+	// 전체 진열대 안내 위에 단별 판정을 덮어쓰고 있는 현재 조준 진열대입니다.
+	TWeakObjectPtr<ACSShelfActor> AimedShelfPlacementHighlight;
+	uint8 AimedShelfPlacementPreviewState = 0;
+
 	// 현재 배송 상자 적재 프리뷰를 표시 중인 수레입니다.
 	UPROPERTY(Transient)
 	TObjectPtr<ACSCartActor> CartPlacementPreviewTarget;
+
+	// 현재 창고 상자 슬롯 프리뷰를 표시 중인 보관소입니다.
+	UPROPERTY(Transient)
+	TObjectPtr<ACSFreshnessSafeZoneActor> StorageCratePlacementPreviewTarget;
 
 	// 에디터에서 만든 입력 에셋을 연결합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -545,15 +568,23 @@ private:
 		const FDataTableRowHandle& ProductRow,
 		int32 CurrentFreshness) const;
 	void ShowStorageWarning(const FDataTableRowHandle& ProductRow) const;
+	void ShowEmployeeReservationWarning(const FText& Message) const;
 	void CreatePlacementPreview(ACSProductPickupActor* ProductActor);
 	void CreatePlacementPreviewFromCrate(const ACSDeliveryCrateActor* DeliveryCrate);
 	void DestroyPlacementPreview();
 	// 상품을 들거나 내려놓는 시점에만 배치 가능한 진열대 외곽선을 갱신합니다.
 	void RefreshShelfPlacementHighlights();
+	// 조준 진열대만 단별 상태로 덮어쓰며, 나머지는 전체 빈칸 기준 안내를 유지합니다.
+	void UpdateAimedShelfPlacementHighlight(
+		ACSShelfActor* ShelfActor,
+		uint8 PreviewStateValue);
+	// 진열대 조준을 벗어나면 단별 덮어쓰기를 해제하고 전체 안내를 복구합니다.
+	void RestoreGlobalShelfPlacementHighlights();
 	// 들고 있던 상품이 없어졌을 때 모든 진열대 외곽선을 해제합니다.
 	void ClearShelfPlacementHighlights();
 	void SetPlacementPreviewVisible(bool bIsVisible);
 	void ClearCartPlacementPreview();
+	void ClearStorageCratePlacementPreview();
 	bool TryPlaceProductFromCrate(
 		ACSDeliveryCrateActor* DeliveryCrate,
 		AActor* ShelfActor,

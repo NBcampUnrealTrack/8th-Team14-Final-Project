@@ -3,16 +3,19 @@
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Employees/CSStoreEmployeeCharacter.h"
 #include "Features/Delivery/CSDeliveryCartActor.h"
 #include "Features/Cart/CSCartActor.h"
 #include "Features/Inventory/CSQuickbarInventoryComponent.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Features/Tools/CSUsableTool.h"
 #include "Features/Tools/CSUsableToolActor.h"
 #include "Features/Tools/CSMagicWandActor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "Systems/Employees/CSStoreEmployeeSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -189,6 +192,9 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 
     // 기본 Character 웅크리기 기능이 충돌과 천장 공간을 안전하게 처리하도록 활성화합니다.
     GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
+
+    // 플레이어·손님·직원은 서로 통과하고, 벽·진열대 등 월드 충돌은 유지합니다.
+    GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 
     FirstPersonCamera = CreateDefaultSubobject<UCameraComponent>(
         TEXT("FirstPersonCamera"));
@@ -965,11 +971,62 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
         return false;
     }
 
+	// 직원이 아직 손에 들지 않은 예약 재고는 플레이어가 우선해서 집을 수 있습니다.
+	// 이 경우 예약과 업무를 함께 취소해야 직원이 같은 대상으로 이동을 계속하지 않습니다.
+	if (const ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(PickupActor);
+		IsValid(DeliveryCrate) && DeliveryCrate->IsReservedByEmployee())
+	{
+		if (Cast<ACSStoreEmployeeCharacter>(PickupActor->GetAttachParentActor()) != nullptr)
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 이미 상자를 운반 중입니다.")));
+			return false;
+		}
+
+		ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상자를 운반할 예정입니다. 직원 업무를 취소하고 집습니다.")));
+		UCSStoreEmployeeSubsystem* EmployeeSubsystem = GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>()
+			: nullptr;
+		if (!IsValid(EmployeeSubsystem) || !EmployeeSubsystem->CancelTaskForPlayerPickup(PickupActor))
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원 업무 취소에 실패했습니다. 잠시 후 다시 시도하세요.")));
+			return false;
+		}
+	}
+
+	if (const ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(PickupActor);
+		IsValid(ProductActor) && ProductActor->IsReservedByEmployee())
+	{
+		if (Cast<ACSStoreEmployeeCharacter>(PickupActor->GetAttachParentActor()) != nullptr)
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 이미 상품을 운반 중입니다.")));
+			return false;
+		}
+
+		ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상품을 운반할 예정입니다. 직원 업무를 취소하고 집습니다.")));
+		UCSStoreEmployeeSubsystem* EmployeeSubsystem = GetWorld() != nullptr
+			? GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>()
+			: nullptr;
+		if (!IsValid(EmployeeSubsystem) || !EmployeeSubsystem->CancelTaskForPlayerPickup(PickupActor))
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원 업무 취소에 실패했습니다. 잠시 후 다시 시도하세요.")));
+			return false;
+		}
+	}
+
     // 진열대에서 다시 집은 상품은 기존 슬롯 점유를 먼저 해제합니다.
 	if (AActor* PreviousParent = PickupActor->GetAttachParentActor();
 		IsValid(PreviousParent) && PreviousParent->Implements<UCSShelfPlaceable>())
 	{
 		ICSShelfPlaceable::Execute_RemovePlacedItem(PreviousParent, PickupActor);
+	}
+	else if (ACSFreshnessSafeZoneActor* StoragePoint =
+		Cast<ACSFreshnessSafeZoneActor>(PickupActor->GetAttachParentActor()))
+	{
+		// 창고 격자에 있던 낱개 상품을 집으면 점유 배열과 냉장·냉동 보호 등록을 함께 해제합니다.
+		if (ACSProductPickupActor* StoredProduct = Cast<ACSProductPickupActor>(PickupActor))
+		{
+			StoragePoint->RemoveStoredLooseProduct(StoredProduct);
+		}
 	}
 
 	// 물리로 분리된 메시를 먼저 복원한 뒤 Actor 자체를 손 위치에 부착합니다.
@@ -1042,6 +1099,66 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
     return true;
 }
 
+bool ACSPlayerCharacter::TryStoreHeldItem(
+	ACSFreshnessSafeZoneActor* StoragePoint,
+	const UPrimitiveComponent* TargetInteractionComponent)
+{
+	if (!IsValid(StoragePoint) || !IsValid(HeldActor))
+	{
+		return false;
+	}
+
+	bool bStored = false;
+	if (ACSDeliveryCrateActor* HeldCrate = Cast<ACSDeliveryCrateActor>(HeldActor))
+	{
+		// 상자는 조준한 Arrow 슬롯의 상호작용 박스가 있으면 그 위치에, 아니면 다음 빈 위치에 적재합니다.
+		bStored = TargetInteractionComponent != nullptr
+			? StoragePoint->TryStoreCrateInSlot(HeldCrate, TargetInteractionComponent)
+			: StoragePoint->TryStoreCrate(HeldCrate);
+	}
+	else if (ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor))
+	{
+		// 낱개 상품은 LooseProductStorageZone 내부의 다음 자동 격자 위치에 적재됩니다.
+		bStored = StoragePoint->TryStoreLooseProduct(HeldProduct);
+	}
+
+	if (!bStored)
+	{
+		return false;
+	}
+
+	// 창고가 액터를 부착하고 신선도 상태를 갱신한 뒤에만 플레이어 손과 진열 프리뷰 참조를 비웁니다.
+	HeldActor = nullptr;
+	DestroyPlacementPreview();
+	ClearShelfPlacementHighlights();
+	return true;
+}
+
+bool ACSPlayerCharacter::TryTakeStoredCrate(
+	ACSFreshnessSafeZoneActor* StoragePoint,
+	const UPrimitiveComponent* TargetInteractionComponent)
+{
+	if (!IsValid(StoragePoint) || IsValid(HeldActor))
+	{
+		return false;
+	}
+
+	ACSDeliveryCrateActor* StoredCrate = nullptr;
+	if (!StoragePoint->TryTakeCrateFromSlot(TargetInteractionComponent, StoredCrate))
+	{
+		return false;
+	}
+
+	if (TryPickUp(StoredCrate))
+	{
+		return true;
+	}
+
+	// 예외적으로 손 부착에 실패하면 같은 슬롯으로 되돌려 상자 유실을 막습니다.
+	StoragePoint->TryStoreCrateInSlot(StoredCrate, TargetInteractionComponent);
+	return false;
+}
+
 void ACSPlayerCharacter::UpdateInteractionHUD()
 {
 	ACSStorePlayerController* StorePlayerController =
@@ -1068,15 +1185,83 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	QueryParams.AddIgnoredActor(this);
 
 	if (!GetWorld()->LineTraceSingleByChannel(
-		HitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
-	{
-		return;
-	}
+        HitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+    {
+		RestoreGlobalShelfPlacementHighlights();
+        return;
+    }
 
 	AActor* TargetActor = HitResult.GetActor();
 	if (!IsValid(TargetActor))
 	{
 		return;
+	}
+	// 상품을 든 상태에서는 이미 진열된 상품을 조준해도, 그 상품이 속한 진열대를 계속 배치 대상으로 사용합니다.
+	// 이 처리가 없으면 상품 메시와 선반 메시 사이에서 Trace 대상이 바뀌며 안내와 프리뷰가 깜빡일 수 있습니다.
+	if (IsValid(HeldActor))
+	{
+		if (const ACSProductPickupActor* HitProduct = Cast<ACSProductPickupActor>(TargetActor))
+		{
+			if (AActor* ParentShelf = HitProduct->GetAttachParentActor();
+				IsValid(ParentShelf) && ParentShelf->Implements<UCSShelfPlaceable>())
+			{
+				TargetActor = ParentShelf;
+			}
+		}
+	}
+
+	if (const ACSFreshnessSafeZoneActor* StoragePoint = Cast<ACSFreshnessSafeZoneActor>(TargetActor))
+	{
+		int32 UnusedSlotIndex = INDEX_NONE;
+		if (StoragePoint->TryGetCrateStorageSlotIndex(HitResult.GetComponent(), UnusedSlotIndex))
+		{
+			const ACSDeliveryCrateActor* HeldCrate = Cast<ACSDeliveryCrateActor>(HeldActor);
+			const bool bCanStore = IsValid(HeldCrate) &&
+				StoragePoint->CanStoreCrateInSlot(HeldCrate, HitResult.GetComponent());
+			ACSDeliveryCrateActor* StoredCrate = nullptr;
+			StoragePoint->TryGetStoredCrateFromSlot(HitResult.GetComponent(), StoredCrate);
+			const FText Prompt = IsValid(HeldActor)
+				? (HeldCrate != nullptr
+					? (bCanStore
+						? FText::FromString(TEXT("[Q] 이 상자 슬롯에 보관"))
+						: FText::FromString(TEXT("이 상자는 이 창고에 보관할 수 없습니다.")))
+					: FText::FromString(TEXT("상자 슬롯에는 배송 상자만 보관할 수 있습니다.")))
+				: IsValid(StoredCrate)
+					? FText::Format(
+						NSLOCTEXT("Interaction", "TakeStoredCrate", "[E] {0} 상자 꺼내기"),
+						StoredCrate->GetProductDisplayName())
+					: FText::FromString(TEXT("[E] 상자 꺼내기"));
+			StorePlayerController->SetInteractionPrompt(
+				Prompt,
+				IsValid(HeldActor) && !bCanStore ? FLinearColor(1.0f, 0.25f, 0.25f, 1.0f) : FLinearColor::White);
+			if (!IsValid(HeldActor) && IsValid(StoredCrate))
+			{
+				// 슬롯 상자를 조준할 때는 실제 상자를 꺼내지 않고도 이름·가격·유통기한·신선도를 모두 확인할 수 있습니다.
+				ShowProductPrice(StoredCrate->GetProductRow(), StoredCrate->GetRemainingQuantity());
+				ShowProductShelfLife(StoredCrate->GetProductRuntimeState());
+				ShowProductFreshness(StoredCrate->GetProductRow(), StoredCrate->GetCurrentFreshness());
+				if (StoredCrate->IsReservedByEmployee())
+				{
+					ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상자를 운반할 예정입니다.")));
+				}
+			}
+			return;
+		}
+
+		if (StoragePoint->IsLooseProductDepositComponent(HitResult.GetComponent()))
+		{
+			const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
+			const bool bCanStore = IsValid(HeldProduct) && StoragePoint->CanStoreLooseProduct(HeldProduct);
+			const FText Prompt = HeldProduct != nullptr
+				? (bCanStore
+					? FText::FromString(TEXT("[Q] 낱개 상품 보관"))
+					: FText::FromString(TEXT("이 상품은 이 창고에 보관할 수 없습니다.")))
+				: FText::FromString(TEXT("낱개 상품을 든 상태에서 보관할 수 있습니다."));
+			StorePlayerController->SetInteractionPrompt(
+				Prompt,
+				HeldProduct != nullptr && !bCanStore ? FLinearColor(1.0f, 0.25f, 0.25f, 1.0f) : FLinearColor::White);
+			return;
+		}
 	}
 
 	if (const ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(TargetActor))
@@ -1102,9 +1287,32 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		return;
 	}
 
+	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(TargetActor))
+	{
+		// 진열대의 E는 상품 집기·배치에 남겨 두고, 구성 관리 화면은 F 입력으로만 열도록 구분합니다.
+		StorePlayerController->SetInteractionPrompt(
+			NSLOCTEXT("Interaction", "ShelfConfigurationPrompt", "[F] 진열 구성 관리"),
+			FLinearColor::White);
+		return;
+	}
+
 	if (!TargetActor->Implements<UCSInteractable>())
 	{
 		return;
+	}
+
+	if (!IsValid(HeldActor))
+	{
+		if (const ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(TargetActor);
+			IsValid(DeliveryCrate) && DeliveryCrate->IsReservedByEmployee())
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상자를 운반할 예정입니다.")));
+		}
+		else if (const ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(TargetActor);
+			IsValid(ProductActor) && ProductActor->IsReservedByEmployee())
+		{
+			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상품을 운반할 예정입니다.")));
+		}
 	}
 
 	// 계산대는 조준 상태를 유지한 채 직원 구역 안에 있는지도 함께 안내합니다.
@@ -2440,6 +2648,8 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 {
 	// 수레가 아닌 대상을 다시 조준하면 이전 수레의 상자 고스트를 먼저 제거합니다.
 	ClearCartPlacementPreview();
+	// 창고가 아닌 대상을 다시 조준하면 이전 창고 상자 고스트도 함께 제거합니다.
+	ClearStorageCratePlacementPreview();
 
 	ACSStorePlayerController* StorePlayerController =
 		Cast<ACSStorePlayerController>(GetController());
@@ -2491,11 +2701,109 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
     AActor* TargetActor = HitResult.GetActor();
     if (!IsValid(TargetActor))
     {
+		RestoreGlobalShelfPlacementHighlights();
         return;
     }
 
+	// 진열된 상품을 향한 Trace도 해당 상품의 부모 진열대로 해석하여 프리뷰가 안정적으로 유지되게 합니다.
+	if (const ACSProductPickupActor* HitProduct = Cast<ACSProductPickupActor>(TargetActor))
+	{
+		if (AActor* ParentShelf = HitProduct->GetAttachParentActor();
+			IsValid(ParentShelf) && ParentShelf->Implements<UCSShelfPlaceable>())
+		{
+			TargetActor = ParentShelf;
+		}
+	}
+	if (!TargetActor->Implements<UCSShelfPlaceable>())
+	{
+		// 첫 번째 Trace가 상품·장식 메시를 맞춘 경우에도, 뒤쪽의 실제 진열대를 찾아
+		// 빈 슬롯 경고와 빨간 프리뷰가 프레임마다 사라지지 않도록 합니다.
+		TArray<FHitResult> AllAimHits;
+		if (GetWorld()->LineTraceMultiByChannel(
+			AllAimHits, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+		{
+			for (const FHitResult& AimHit : AllAimHits)
+			{
+				AActor* CandidateActor = AimHit.GetActor();
+				if (const ACSProductPickupActor* CandidateProduct = Cast<ACSProductPickupActor>(CandidateActor))
+				{
+					CandidateActor = CandidateProduct->GetAttachParentActor();
+				}
+				if (IsValid(CandidateActor) && CandidateActor->Implements<UCSShelfPlaceable>())
+				{
+					TargetActor = CandidateActor;
+					break;
+				}
+			}
+		}
+	}
+
+	if (ACSFreshnessSafeZoneActor* StoragePoint = Cast<ACSFreshnessSafeZoneActor>(TargetActor))
+	{
+		RestoreGlobalShelfPlacementHighlights();
+		int32 UnusedSlotIndex = INDEX_NONE;
+		if (const ACSDeliveryCrateActor* HeldCrate = Cast<ACSDeliveryCrateActor>(HeldActor);
+			HeldCrate != nullptr &&
+			StoragePoint->TryGetCrateStorageSlotIndex(HitResult.GetComponent(), UnusedSlotIndex))
+		{
+			const bool bCanStore = StoragePoint->CanStoreCrateInSlot(HeldCrate, HitResult.GetComponent());
+			FTransform SlotWorldTransform;
+			if (StoragePoint->TryGetCrateStorageSlotWorldTransform(HitResult.GetComponent(), SlotWorldTransform))
+			{
+				// 배송 상자는 내부 상품이 아닌 상자 메시 자체를 실제 적재 위치에 고스트로 표시합니다.
+				// 타입이 맞지 않거나 슬롯이 사용 중이면 같은 위치에 빨간색으로 표시합니다.
+				StoragePoint->ShowCrateStoragePreview(HeldCrate, SlotWorldTransform, bCanStore);
+				StorageCratePlacementPreviewTarget = StoragePoint;
+			}
+
+			if (IsValid(StorePlayerController))
+			{
+				StorePlayerController->SetInteractionPrompt(
+					bCanStore
+						? FText::FromString(TEXT("[Q] 이 상자 슬롯에 보관"))
+						: FText::FromString(TEXT("이 상자는 이 창고에 보관할 수 없습니다.")),
+					bCanStore ? FLinearColor::White : FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+			}
+			return;
+		}
+
+		if (const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
+			HeldProduct != nullptr &&
+			StoragePoint->IsLooseProductDepositComponent(HitResult.GetComponent()))
+		{
+			const bool bCanStore = StoragePoint->CanStoreLooseProduct(HeldProduct);
+			FTransform SlotWorldTransform;
+			const bool bHasEmptySlot =
+				StoragePoint->TryGetNextLooseProductStorageSlotWorldTransform(SlotWorldTransform);
+			if (!bHasEmptySlot)
+			{
+				// 빈 칸이 없어도 플레이어가 조준한 위치에 빨간 프리뷰를 보여 배치 불가 상태를 명확히 알립니다.
+				SlotWorldTransform = FTransform(TargetActor->GetActorRotation(), HitResult.ImpactPoint);
+			}
+			if (IsValid(PlacementPreviewActor))
+			{
+				// 낱개 상품은 자동 격자의 다음 빈칸에 기존 상품 고스트를 표시합니다.
+				PlacementPreviewActor->SetActorTransform(SlotWorldTransform);
+				PlacementPreviewActor->SetPlacementPreviewState(
+					bCanStore ? ECSShelfPlacementPreviewState::Valid : ECSShelfPlacementPreviewState::Invalid);
+				SetPlacementPreviewVisible(true);
+			}
+
+			if (IsValid(StorePlayerController))
+			{
+				StorePlayerController->SetInteractionPrompt(
+					bCanStore
+						? FText::FromString(TEXT("[Q] 낱개 상품 보관"))
+						: FText::FromString(TEXT("이 상품은 이 창고에 보관할 수 없습니다.")),
+					bCanStore ? FLinearColor::White : FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+			}
+			return;
+		}
+	}
+
 	if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(TargetActor))
 	{
+		RestoreGlobalShelfPlacementHighlights();
 		if (TrashCan->CanDisposeItem(HeldActor) && IsValid(StorePlayerController))
 		{
 			const FText DisposePrompt = Cast<ACSTrashActor>(HeldActor) != nullptr
@@ -2511,11 +2819,13 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 	// 튜토리얼 쓰레기는 쓰레기통 외 일반 진열대에 배치하지 않습니다.
 	if (Cast<ACSTrashActor>(HeldActor) != nullptr)
 	{
+		RestoreGlobalShelfPlacementHighlights();
 		return;
 	}
 
 	if (ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(TargetActor))
 	{
+		RestoreGlobalShelfPlacementHighlights();
 		if ((Cast<ACSProductPickupActor>(HeldActor) != nullptr ||
 			Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr) &&
 			IsValid(PlacementPreviewActor))
@@ -2538,6 +2848,7 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 
 	if (!TargetActor->Implements<UCSShelfPlaceable>())
 	{
+		RestoreGlobalShelfPlacementHighlights();
 		return;
 	}
 
@@ -2553,16 +2864,49 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		return;
 	}
 
-	FTransform PreviewTransform;
+	// 실패 시에도 진열대가 실제 슬롯 좌표를 반환했는지 구분할 수 있도록 센티널로 초기화합니다.
+	const FVector NoSlotPreviewLocation(TNumericLimits<float>::Max());
+	FTransform PreviewTransform(FQuat::Identity, NoSlotPreviewLocation);
 	const ECSShelfPlacementPreviewState PreviewState =
 		ICSShelfPlaceable::Execute_GetPlacementPreviewState(
 			TargetActor, PlacementItem, HitResult.ImpactPoint, PreviewTransform);
 	if (PreviewState == ECSShelfPlacementPreviewState::Invalid)
     {
-		// 진열대는 조준했지만 빈 슬롯이 없을 때만 가격과 보관 경고 없이 빨간 안내를 표시합니다.
+		// 진열할 수 없는 경우에도 조준 지점에 빨간 고스트를 남겨,
+		// 빈 슬롯 부족이나 대상 불일치를 안내 문구뿐 아니라 시각적으로도 알립니다.
+		if (IsValid(PlacementPreviewActor))
+		{
+			// 가득 찬 단의 경우에는 선반 메시 표면이 아니라 해당 단의 실제 슬롯 위치에 고정합니다.
+			const FTransform InvalidPreviewTransform =
+				PreviewTransform.GetLocation().Equals(NoSlotPreviewLocation)
+					? FTransform(TargetActor->GetActorRotation(), HitResult.ImpactPoint)
+					: PreviewTransform;
+			PlacementPreviewActor->SetActorTransform(InvalidPreviewTransform);
+			PlacementPreviewActor->SetPlacementPreviewState(ECSShelfPlacementPreviewState::Invalid);
+			SetPlacementPreviewVisible(true);
+		}
+
+		// 진열대는 빈 슬롯 부족·다른 상품 점유·플레이어 지정 설정을 구분해 정확한 이유를 표시합니다.
 		if (IsValid(StorePlayerController))
 		{
-			StorePlayerController->ShowPlacementUnavailablePrompt();
+			if (const ACSShelfActor* ShelfActor = Cast<ACSShelfActor>(TargetActor))
+			{
+				StorePlayerController->SetInteractionPrompt(
+					ShelfActor->GetPlayerPlacementFailureText(
+						Cast<ACSProductPickupActor>(PlacementItem),
+						HitResult.ImpactPoint),
+					FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+			}
+			else
+			{
+				StorePlayerController->ShowPlacementUnavailablePrompt();
+			}
+		}
+
+		if (ACSShelfActor* ShelfActor = Cast<ACSShelfActor>(TargetActor))
+		{
+			UpdateAimedShelfPlacementHighlight(
+				ShelfActor, static_cast<uint8>(ECSShelfPlacementPreviewState::Invalid));
 		}
 		return;
 	}
@@ -2585,6 +2929,11 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 
     if (IsValid(PlacementPreviewActor))
     {
+		if (ACSShelfActor* ShelfActor = Cast<ACSShelfActor>(TargetActor))
+		{
+			UpdateAimedShelfPlacementHighlight(ShelfActor, static_cast<uint8>(PreviewState));
+		}
+
 		// 진열대가 반환한 슬롯 Transform을 그대로 적용하여 실제 배치 위치와 일치시킵니다.
 		PlacementPreviewActor->SetActorTransform(PreviewTransform);
 		PlacementPreviewActor->SetPlacementPreviewState(PreviewState);
@@ -2680,6 +3029,56 @@ void ACSPlayerCharacter::DropHeldItem()
 	if (bHitShelfTarget)
 	{
 		AActor* TargetActor = AimHitResult.GetActor();
+		if (ACSFreshnessSafeZoneActor* StoragePoint = Cast<ACSFreshnessSafeZoneActor>(TargetActor))
+		{
+			const UPrimitiveComponent* HitComponent = AimHitResult.GetComponent();
+			int32 UnusedSlotIndex = INDEX_NONE;
+			if (Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr &&
+				StoragePoint->TryGetCrateStorageSlotIndex(HitComponent, UnusedSlotIndex))
+			{
+				// 창고 적재는 E 상호작용과 분리하여, 손에 든 물건을 내려놓는 Q로만 실행합니다.
+				TryStoreHeldItem(StoragePoint, HitComponent);
+				return;
+			}
+			if (Cast<ACSProductPickupActor>(HeldActor) != nullptr &&
+				StoragePoint->IsLooseProductDepositComponent(HitComponent))
+			{
+				TryStoreHeldItem(StoragePoint, HitComponent);
+				return;
+			}
+		}
+
+		// 다른 상품이 선반 앞을 가리고 있어도 실제 배치는 그 상품의 부모 진열대에 시도합니다.
+		if (const ACSProductPickupActor* HitProduct = Cast<ACSProductPickupActor>(TargetActor))
+		{
+			if (AActor* ParentShelf = HitProduct->GetAttachParentActor();
+				IsValid(ParentShelf) && ParentShelf->Implements<UCSShelfPlaceable>())
+			{
+				TargetActor = ParentShelf;
+			}
+		}
+		if (!IsValid(TargetActor) || !TargetActor->Implements<UCSShelfPlaceable>())
+		{
+			// 프리뷰와 실제 Q 배치가 같은 대상을 사용하도록, 가려진 진열대도 다중 Trace에서 찾아냅니다.
+			TArray<FHitResult> AllAimHits;
+			if (GetWorld()->LineTraceMultiByChannel(
+				AllAimHits, AimStart, AimEnd, ECC_Visibility, AimQueryParams))
+			{
+				for (const FHitResult& AimHit : AllAimHits)
+				{
+					AActor* CandidateActor = AimHit.GetActor();
+					if (const ACSProductPickupActor* CandidateProduct = Cast<ACSProductPickupActor>(CandidateActor))
+					{
+						CandidateActor = CandidateProduct->GetAttachParentActor();
+					}
+					if (IsValid(CandidateActor) && CandidateActor->Implements<UCSShelfPlaceable>())
+					{
+						TargetActor = CandidateActor;
+						break;
+					}
+				}
+			}
+		}
 		if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(TargetActor);
 			IsValid(TrashCan) && TrashCan->TryDisposeItem(HeldActor))
 		{
@@ -3367,6 +3766,7 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 void ACSPlayerCharacter::DestroyPlacementPreview()
 {
 	ClearCartPlacementPreview();
+	ClearStorageCratePlacementPreview();
 	ClearShelfPlacementHighlights();
 
 	if (ACSStorePlayerController* StorePlayerController =
@@ -3631,17 +4031,53 @@ void ACSPlayerCharacter::RefreshShelfPlacementHighlights()
 	for (TActorIterator<ACSShelfActor> ShelfIterator(GetWorld()); ShelfIterator; ++ShelfIterator)
 	{
 		ACSShelfActor* ShelfActor = *ShelfIterator;
-		if (!IsValid(ShelfActor) ||
-			!ICSShelfPlaceable::Execute_CanPlaceItem(ShelfActor, PlacementItem))
+		if (!IsValid(ShelfActor) || !ShelfActor->IsFacilityInstalled_Implementation())
 		{
 			continue;
 		}
 
-		// 외곽선은 특정 단이 아니라 진열대 전체에 빈 슬롯이 있는지를 기준으로 유지합니다.
+		// 기본 안내는 진열대 전체의 빈칸 기준입니다.
+		// 가득 찬 진열대도 건너뛰지 않고 빨간 외곽선으로 알려 줍니다.
 		const ECSShelfPlacementPreviewState PreviewState =
-			ShelfActor->GetPlacementHighlightState(PlacementItem);
+			ICSShelfPlaceable::Execute_CanPlaceItem(ShelfActor, PlacementItem)
+				? ShelfActor->GetPlacementHighlightState(PlacementItem)
+				: ECSShelfPlacementPreviewState::Invalid;
 		ShelfActor->SetPlacementHighlight(PreviewState);
 	}
+}
+
+void ACSPlayerCharacter::UpdateAimedShelfPlacementHighlight(
+	ACSShelfActor* ShelfActor,
+	uint8 PreviewStateValue)
+{
+	if (!IsValid(ShelfActor))
+	{
+		RestoreGlobalShelfPlacementHighlights();
+		return;
+	}
+
+	if (AimedShelfPlacementHighlight.Get() == ShelfActor &&
+		AimedShelfPlacementPreviewState == PreviewStateValue)
+	{
+		return;
+	}
+
+	// 이전 조준 단은 전체 빈칸 기준으로 되돌리고 새 단만 단별 결과를 표시합니다.
+	RefreshShelfPlacementHighlights();
+	AimedShelfPlacementHighlight = ShelfActor;
+	AimedShelfPlacementPreviewState = PreviewStateValue;
+	ShelfActor->SetPlacementHighlight(
+		static_cast<ECSShelfPlacementPreviewState>(PreviewStateValue));
+}
+
+void ACSPlayerCharacter::RestoreGlobalShelfPlacementHighlights()
+{
+	if (!AimedShelfPlacementHighlight.IsValid())
+	{
+		return;
+	}
+
+	RefreshShelfPlacementHighlights();
 }
 
 void ACSPlayerCharacter::ClearShelfPlacementHighlights()
@@ -3655,9 +4091,12 @@ void ACSPlayerCharacter::ClearShelfPlacementHighlights()
 	{
 		if (ACSShelfActor* ShelfActor = *ShelfIterator; IsValid(ShelfActor))
 		{
-			ShelfActor->SetPlacementHighlight(ECSShelfPlacementPreviewState::Invalid);
+			ShelfActor->ClearPlacementHighlight();
 		}
 	}
+
+	AimedShelfPlacementHighlight = nullptr;
+	AimedShelfPlacementPreviewState = static_cast<uint8>(ECSShelfPlacementPreviewState::Invalid);
 }
 
 void ACSPlayerCharacter::SetPlacementPreviewVisible(bool bIsVisible)
@@ -3816,6 +4255,14 @@ void ACSPlayerCharacter::ShowStorageWarning(const FDataTableRowHandle& ProductRo
 	}
 }
 
+void ACSPlayerCharacter::ShowEmployeeReservationWarning(const FText& Message) const
+{
+	if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetController()))
+	{
+		StorePlayerController->SetStorageWarning(Message);
+	}
+}
+
 void ACSPlayerCharacter::TryInteract()
 {
 	// 수레를 잡은 상태에서는 E로 물건을 집거나 다른 상호작용을 실행하지 않습니다.
@@ -3869,6 +4316,25 @@ void ACSPlayerCharacter::TryInteract()
 		return;
 	}
 
+	if (ACSFreshnessSafeZoneActor* StoragePoint = Cast<ACSFreshnessSafeZoneActor>(HitActor))
+	{
+		const UPrimitiveComponent* HitComponent = HitResult.GetComponent();
+		int32 UnusedSlotIndex = INDEX_NONE;
+		if (StoragePoint->TryGetCrateStorageSlotIndex(HitComponent, UnusedSlotIndex))
+		{
+			if (!IsValid(HeldActor))
+			{
+				TryTakeStoredCrate(StoragePoint, HitComponent);
+			}
+			return;
+		}
+
+		if (StoragePoint->IsLooseProductDepositComponent(HitComponent))
+		{
+			return;
+		}
+	}
+
     if (IsValid(HitActor) && HitActor->Implements<UCSInteractable>())
     {
         ICSInteractable::Execute_Interact(HitActor, this);
@@ -3882,6 +4348,15 @@ void ACSPlayerCharacter::ClearCartPlacementPreview()
 		CartPlacementPreviewTarget->HideCratePlacementPreview();
 	}
 	CartPlacementPreviewTarget = nullptr;
+}
+
+void ACSPlayerCharacter::ClearStorageCratePlacementPreview()
+{
+	if (IsValid(StorageCratePlacementPreviewTarget))
+	{
+		StorageCratePlacementPreviewTarget->HideCrateStoragePreview();
+	}
+	StorageCratePlacementPreviewTarget = nullptr;
 }
 
 void ACSPlayerCharacter::ToggleCartPush()
@@ -3921,6 +4396,13 @@ void ACSPlayerCharacter::ToggleCartPush()
 		ECC_Visibility,
 		QueryParams))
 	{
+		return;
+	}
+
+	if (ACSShelfActor* Shelf = Cast<ACSShelfActor>(HitResult.GetActor()); IsValid(Shelf))
+	{
+		// F는 수레 조작을 우선 유지하되, 수레가 아닌 진열대를 조준한 경우에는 구성 관리 UI를 엽니다.
+		Shelf->OpenShelfConfiguration(this);
 		return;
 	}
 

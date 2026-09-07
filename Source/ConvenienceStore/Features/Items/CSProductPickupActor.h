@@ -15,6 +15,7 @@ class UCSProductVisualRegistry;
 class UPrimitiveComponent;
 class UNiagaraComponent;
 class ACSStoreGameState;
+class ACSStoreEmployeeCharacter;
 
 // 플레이어가 집어서 들 수 있는 월드 상품 액터입니다.
 UCLASS()
@@ -82,6 +83,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Product|Runtime")
 	void ApplyProductRuntimeState(const FCSProductRuntimeState& InProductRuntimeState);
 
+	// 직원 업무가 이 상품을 처리하는 동안 플레이어·다른 직원의 중복 집기를 막습니다.
+	bool TryReserveForEmployee(ACSStoreEmployeeCharacter* Employee, int32 TaskId);
+	bool CanBeReservedByEmployee(const ACSStoreEmployeeCharacter* Employee, int32 TaskId) const;
+	void ReleaseEmployeeReservation(const ACSStoreEmployeeCharacter* Employee, int32 TaskId);
+	bool IsReservedByEmployee() const;
+
 	UFUNCTION(BlueprintPure, Category = "Product|ShelfLife")
 	bool IsExpired() const;
 
@@ -96,6 +103,8 @@ public:
 
 	// 플레이어가 월드 바닥에 내려놓은 상품 메시의 물리를 활성화합니다.
 	void EnableWorldDropPhysics();
+	// 창고에 보관된 낱개 상품을 물리 충돌 없이 조준해서 꺼낼 수 있도록 선택용 충돌만 전환합니다.
+	void SetStoredForPlayerInteraction(bool bStoredForPlayerInteraction);
 
 	// 진열대 호환성을 위해 보관 환경을 기록하지만 유통기한에는 영향을 주지 않습니다.
 	void SetStorageShelfType(ECSProductShelfType InStorageShelfType);
@@ -146,6 +155,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Product|Physics",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float PawnPushImpulseStrength = 75.0f;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|Employee")
+	TObjectPtr<ACSStoreEmployeeCharacter> ReservedByEmployee = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|Employee")
+	int32 ReservationTaskId = INDEX_NONE;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Product|Employee")
+	float ReservationStartTimeSeconds = 0.0f;
 
 	// 런타임 연출용 상품은 월드에 존재해도 실제 재고 수량에 포함하지 않습니다.
 	UPROPERTY(Transient)

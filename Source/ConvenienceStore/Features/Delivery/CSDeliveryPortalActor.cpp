@@ -1,9 +1,11 @@
 #include "Features/Delivery/CSDeliveryPortalActor.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/ArrowComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Engine/World.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "NavigationSystem.h"
 #include "Systems/Ordering/CSOrderSubsystem.h"
 
 ACSDeliveryPortalActor::ACSDeliveryPortalActor()
@@ -15,6 +17,12 @@ ACSDeliveryPortalActor::ACSDeliveryPortalActor()
 
 	DeliverySpawnOrigin = CreateDefaultSubobject<USceneComponent>(TEXT("DeliverySpawnOrigin"));
 	DeliverySpawnOrigin->SetupAttachment(SceneRoot);
+
+	DeliveryApproachPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("DeliveryApproachPoint"));
+	DeliveryApproachPoint->SetupAttachment(DeliverySpawnOrigin);
+	// 기본값은 배송 상자 더미 뒤쪽입니다. 레벨에서 초록색 NavMesh 위의 빈 통로로 옮겨 사용하시면 됩니다.
+	DeliveryApproachPoint->SetRelativeLocation(FVector(-220.0f, 180.0f, 0.0f));
+	DeliveryApproachPoint->SetHiddenInGame(true);
 }
 
 void ACSDeliveryPortalActor::BeginPlay()
@@ -49,6 +57,29 @@ bool ACSDeliveryPortalActor::IsDeliveryConfigured() const
 		DeliveryCrateClass != nullptr &&
 		GetWorld() != nullptr &&
 		CratesPerRow >= 1;
+}
+
+bool ACSDeliveryPortalActor::TryGetEmployeeDeliveryApproachPoint(FVector& OutLocation) const
+{
+	OutLocation = FVector::ZeroVector;
+	UWorld* World = GetWorld();
+	if (!IsValid(World) || !IsValid(DeliveryApproachPoint))
+	{
+		return false;
+	}
+
+	const UNavigationSystemV1* NavigationSystem = UNavigationSystemV1::GetCurrent(World);
+	FNavLocation ProjectedLocation;
+	if (NavigationSystem == nullptr || !NavigationSystem->ProjectPointToNavigation(
+		DeliveryApproachPoint->GetComponentLocation(),
+		ProjectedLocation,
+		FVector(120.0f, 120.0f, 300.0f)))
+	{
+		return false;
+	}
+
+	OutLocation = ProjectedLocation.Location;
+	return true;
 }
 
 bool ACSDeliveryPortalActor::SpawnOrderCrates(
@@ -142,6 +173,9 @@ bool ACSDeliveryPortalActor::SpawnOrderCrates(
 				OutSpawnedCrates.Reset();
 				return false;
 			}
+
+			// 실제 발주로 배송된 상자는 입고 대기로 표시해, 진열보다 창고 보관 업무를 먼저 만들도록 합니다.
+			SpawnedCrate->SetAwaitingStockroomIntake(true);
 
 			SpawnedCrate->FinishSpawning(SpawnTransform);
 			if (!IsValid(SpawnedCrate))
