@@ -34,6 +34,7 @@ public:
 	ACSCheckoutCounterActor();
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 	// 대기열 순서에 맞는 손님의 월드 좌표를 반환합니다.
 	virtual FVector GetQueueSlotLocation(const int32 Index) const override;
@@ -56,6 +57,16 @@ public:
 	bool BuildFrontCustomerOrder(
 		TArray<FCSCheckoutLineItem>& OutLineItems,
 		int32& OutTotalSalePrice) const;
+
+	// 직원 시스템이 현재 계산대를 처리 대상으로 삼아도 되는지 확인합니다.
+	UFUNCTION(BlueprintPure, Category = "Checkout|Employee")
+	bool CanEmployeeProcessCheckout() const;
+
+	// 계산 직원이 UI를 열지 않고, 계산대 상품 연출을 시작합니다.
+	UFUNCTION(BlueprintCallable, Category = "Checkout|Employee")
+	bool TryProcessEmployeeCheckout();
+	bool IsEmployeeCheckoutInProgress() const { return bIsEmployeeCheckoutPresenting; }
+	bool DidLastEmployeeCheckoutSucceed() const { return bLastEmployeeCheckoutSucceeded; }
 
 protected:
 	// 현재 매장 단계에서 계산 처리가 허용되는지 확인합니다.
@@ -107,6 +118,13 @@ protected:
 	void ClearCheckoutDisplayProducts();
 	// 계산 중인 고객의 장바구니 표시를 숨기거나 복원합니다.
 	void SetCheckoutCustomerBasketVisible(bool bShouldBeVisible);
+	bool BeginEmployeeCheckoutPresentation();
+	void UpdateEmployeeCheckoutPresentation(float DeltaSeconds);
+	bool CompleteEmployeeCheckoutPresentation();
+	void CancelEmployeeCheckoutPresentation();
+	bool IsCustomerOrderCheckoutEligible(
+		const ACSCustomerCharacter* Customer,
+		const ACSStoreGameState* CurrentStoreGameState) const;
 
 	// 계산대 메시와 대기열 안내 요소를 부착하기 위한 루트 컴포넌트입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -164,6 +182,11 @@ protected:
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float CheckoutDisplayForwardSpacing = 45.0f;
 
+	// 직원 자동 계산에서 다음 상품을 스캔하기까지의 간격입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout|Employee",
+		meta = (ClampMin = "0.1", UIMin = "0.1"))
+	float EmployeeScanIntervalSeconds = 0.6f;
+
 	// 현재 화면에 열려 있는 계산 UI를 저장합니다.
 	UPROPERTY(Transient)
 	TObjectPtr<UCSCheckoutWidget> ActiveCheckoutWidget;
@@ -204,6 +227,12 @@ protected:
 
 	// 결제 확정부터 영수증 퇴장 완료까지 중복 결제와 취소 요청을 차단합니다.
 	bool bIsCheckoutTransitioning = false;
+
+	// 직원 계산은 플레이어 UI와 달리 Tick 기반의 자동 스캔 연출로 진행됩니다.
+	bool bIsEmployeeCheckoutPresenting = false;
+	bool bLastEmployeeCheckoutSucceeded = false;
+	float EmployeeScanElapsedSeconds = 0.0f;
+	TArray<FCSCheckoutLineItem> ActiveEmployeeCheckoutOrder;
 
 	// 영업 단계 변경을 감지하기 위해 현재 매장 GameState를 저장합니다.
 	UPROPERTY(Transient)

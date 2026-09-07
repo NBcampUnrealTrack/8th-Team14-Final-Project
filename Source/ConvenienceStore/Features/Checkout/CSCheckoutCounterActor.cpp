@@ -44,7 +44,8 @@ void PlayCheckoutGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent Audi
 
 ACSCheckoutCounterActor::ACSCheckoutCounterActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 플레이어 계산 UI와 달리 직원 계산은 계산대 위 상품을 시간차로 자동 스캔하므로 Tick을 사용합니다.
+	PrimaryActorTick.bCanEverTick = true;
 
 	// 계산대의 모든 구성 요소가 공유할 루트 컴포넌트를 생성합니다.
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
@@ -118,9 +119,16 @@ void ACSCheckoutCounterActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	// 레벨 종료나 계산대 제거 시 UI와 입력 상태가 남지 않도록 정리합니다.
+	CancelEmployeeCheckoutPresentation();
 	CloseCheckoutWidget(true);
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACSCheckoutCounterActor::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateEmployeeCheckoutPresentation(DeltaSeconds);
 }
 
 FVector ACSCheckoutCounterActor::GetQueueSlotLocation(const int32 Index) const
@@ -147,6 +155,190 @@ bool ACSCheckoutCounterActor::CanProcessCheckout() const
 	// 매장 단계 규칙은 GameState가 관리하므로, 계산대는 결제 허용 여부만 조회합니다.
 	const ACSStoreGameState* CurrentStoreGameState = World->GetGameState<ACSStoreGameState>();
 	return IsValid(CurrentStoreGameState) && CurrentStoreGameState->bCanCheckout;
+}
+
+bool ACSCheckoutCounterActor::CanEmployeeProcessCheckout() const
+{
+	const UWorld* World = GetWorld();
+	const UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+
+	// 직원 계산은 플레이어 UI 계산과 동시에 실행되면 안 되므로, UI 전환 중인 경우도 명시적으로 제외합니다.
+	return CanProcessCheckout() && !IsValid(ActiveCheckoutWidget) && !bIsCheckoutTransitioning &&
+		!bIsEmployeeCheckoutPresenting &&
+		IsValid(CustomerSubsystem) && IsValid(CustomerSubsystem->GetFrontCustomer());
+}
+
+bool ACSCheckoutCounterActor::TryProcessEmployeeCheckout()
+{
+	// 계산 연출은 Tick에서 한 품목씩 진행한다. 진행 중인 계산을 다시 호출해
+	// 즉시 완료시키지 않도록 새 계산 시작 요청만 허용한다.
+	return !bIsEmployeeCheckoutPresenting && BeginEmployeeCheckoutPresentation();
+}
+
+bool ACSCheckoutCounterActor::BeginEmployeeCheckoutPresentation()
+{
+	if (!CanEmployeeProcessCheckout())
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	ACSCustomerCharacter* FrontCustomer =
+		IsValid(CustomerSubsystem) ? CustomerSubsystem->GetFrontCustomer() : nullptr;
+	if (!IsValid(FrontCustomer) || !IsValid(CurrentStoreGameState) ||
+		!IsCustomerOrderCheckoutEligible(FrontCustomer, CurrentStoreGameState))
+	{
+		return false;
+	}
+
+	int32 TotalSalePrice = 0;
+	if (!BuildFrontCustomerOrder(ActiveEmployeeCheckoutOrder, TotalSalePrice) ||
+		ActiveEmployeeCheckoutOrder.IsEmpty())
+	{
+		ActiveEmployeeCheckoutOrder.Reset();
+		return false;
+	}
+
+	ActiveCheckoutCustomer = FrontCustomer;
+	bCheckoutPaymentCompleted = false;
+	bLastEmployeeCheckoutSucceeded = false;
+	bIsEmployeeCheckoutPresenting = true;
+	EmployeeScanElapsedSeconds = 0.0f;
+	SetCheckoutCustomerBasketVisible(false);
+	SpawnCheckoutDisplayProducts();
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CheckoutCounter] 직원 계산 연출을 시작했습니다: 손님=%s, 표시 상품=%d개"),
+		*FrontCustomer->GetName(), CheckoutDisplayProducts.Num());
+	return true;
+}
+
+void ACSCheckoutCounterActor::UpdateEmployeeCheckoutPresentation(float DeltaSeconds)
+{
+	if (!bIsEmployeeCheckoutPresenting)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	if (!CanProcessCheckout() || !IsValid(CustomerSubsystem) ||
+		CustomerSubsystem->GetFrontCustomer() != ActiveCheckoutCustomer)
+	{
+		// 매장 단계 변경, 손님 이탈 등으로 연출을 끝낼 수 없으면 장바구니를 복원하고 거래를 남기지 않습니다.
+		CancelEmployeeCheckoutPresentation();
+		return;
+	}
+
+	EmployeeScanElapsedSeconds += DeltaSeconds;
+	if (EmployeeScanElapsedSeconds < EmployeeScanIntervalSeconds)
+	{
+		return;
+	}
+	EmployeeScanElapsedSeconds = 0.0f;
+
+	if (!CheckoutDisplayProductIds.IsEmpty())
+	{
+		UE_LOG(LogTemp, Log, TEXT("[CheckoutCounter] 직원 계산 스캔: 고객=%s, 상품=%s, 남은 표시 상품=%d개"),
+			*GetNameSafe(ActiveCheckoutCustomer.Get()),
+			*CheckoutDisplayProductIds[0].ToString(),
+			CheckoutDisplayProductIds.Num() - 1);
+		HandleCheckoutItemScanned(CheckoutDisplayProductIds[0]);
+		return;
+	}
+
+	CompleteEmployeeCheckoutPresentation();
+}
+
+bool ACSCheckoutCounterActor::CompleteEmployeeCheckoutPresentation()
+{
+	if (!bIsEmployeeCheckoutPresenting)
+	{
+		return bLastEmployeeCheckoutSucceeded;
+	}
+
+	UWorld* World = GetWorld();
+	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
+		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	ACSStoreGameState* CurrentStoreGameState =
+		IsValid(World) ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	ACSCustomerCharacter* FrontCustomer =
+		IsValid(CustomerSubsystem) ? CustomerSubsystem->GetFrontCustomer() : nullptr;
+	if (!CanProcessCheckout() || !IsValid(CurrentStoreGameState) ||
+		!IsValid(FrontCustomer) || FrontCustomer != ActiveCheckoutCustomer ||
+		ActiveEmployeeCheckoutOrder.IsEmpty() ||
+		!IsCustomerOrderCheckoutEligible(FrontCustomer, CurrentStoreGameState) ||
+		!CurrentStoreGameState->RecordCheckoutTransaction(ActiveEmployeeCheckoutOrder))
+	{
+		CancelEmployeeCheckoutPresentation();
+		return false;
+	}
+
+	ClearCheckoutDisplayProducts();
+	FrontCustomer->ShowShoppingBag();
+	bCheckoutPaymentCompleted = true;
+	bLastEmployeeCheckoutSucceeded = true;
+	bIsEmployeeCheckoutPresenting = false;
+	EmployeeScanElapsedSeconds = 0.0f;
+	ActiveEmployeeCheckoutOrder.Reset();
+	CustomerSubsystem->CompleteFrontCheckout();
+	ActiveCheckoutCustomer = nullptr;
+	PlayCheckoutGameplaySFX(this, ECSAudioEvent::CheckoutComplete);
+
+	UE_LOG(LogTemp, Log, TEXT("[CheckoutCounter] 직원 계산 연출과 결제를 완료했습니다."));
+	return true;
+}
+
+void ACSCheckoutCounterActor::CancelEmployeeCheckoutPresentation()
+{
+	ClearCheckoutDisplayProducts();
+	if (!bCheckoutPaymentCompleted)
+	{
+		SetCheckoutCustomerBasketVisible(true);
+	}
+
+	ActiveCheckoutCustomer = nullptr;
+	bCheckoutPaymentCompleted = false;
+	bIsEmployeeCheckoutPresenting = false;
+	bLastEmployeeCheckoutSucceeded = false;
+	EmployeeScanElapsedSeconds = 0.0f;
+	ActiveEmployeeCheckoutOrder.Reset();
+}
+
+bool ACSCheckoutCounterActor::IsCustomerOrderCheckoutEligible(
+	const ACSCustomerCharacter* Customer,
+	const ACSStoreGameState* CurrentStoreGameState) const
+{
+	const UWorld* World = GetWorld();
+	const UCSCustomerStateComponent* CustomerState =
+		IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
+	if (!IsValid(World) || !IsValid(CustomerState) || !IsValid(CurrentStoreGameState))
+	{
+		return false;
+	}
+
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings =
+		CurrentStoreGameState->GetFreshnessSettings();
+	for (const FCSSelectProduct& SelectedProduct : CustomerState->SelectProducts)
+	{
+		if (SelectedProduct.ProductRuntimeState.IsExpired(CurrentStoreGameState->CurrentBusinessDay) ||
+			(IsValid(FreshnessSettings) &&
+				!SelectedProduct.ProductRuntimeState.HasFreshnessRemaining(
+					World->GetTimeSeconds(),
+					FreshnessSettings->DecayIntervalSeconds,
+					FreshnessSettings->DecayAmountPerInterval)))
+		{
+			return false;
+		}
+	}
+
+	return !CustomerState->SelectProducts.IsEmpty();
 }
 
 bool ACSCheckoutCounterActor::IsInCashierInteractionZone(const AActor* Actor) const
@@ -178,6 +370,11 @@ void ACSCheckoutCounterActor::Interact_Implementation(AActor* Interactor)
 	{
 		UE_LOG(LogTemp, Log,
 			TEXT("[CheckoutCounter] 현재 매장 단계에서는 계산을 진행할 수 없습니다."));
+		return;
+	}
+	if (bIsEmployeeCheckoutPresenting)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[CheckoutCounter] 직원이 계산 중이어서 플레이어 계산을 시작할 수 없습니다."));
 		return;
 	}
 
@@ -213,6 +410,10 @@ FText ACSCheckoutCounterActor::GetInteractionText_Implementation() const
 	{
 		return NSLOCTEXT("CheckoutCounter", "CheckoutUnavailable", "현재는 계산할 수 없습니다.");
 	}
+	if (bIsEmployeeCheckoutPresenting)
+	{
+		return NSLOCTEXT("CheckoutCounter", "EmployeeCheckoutInProgress", "직원이 계산 중입니다.");
+	}
 
 	const UCSCustomerRuntimeSubsystem* CustomerSubsystem =
 		World->GetSubsystem<UCSCustomerRuntimeSubsystem>();
@@ -228,6 +429,11 @@ FText ACSCheckoutCounterActor::GetInteractionTextForPlayer(const AActor* PlayerA
 {
 	// 계산 불가 단계와 손님 부재 안내는 위치와 관계없이 기존 우선순위를 유지합니다.
 	const FText DefaultText = GetInteractionText_Implementation();
+	if (bIsEmployeeCheckoutPresenting)
+	{
+		return DefaultText;
+	}
+
 	if (!CanProcessCheckout())
 	{
 		return DefaultText;
@@ -349,6 +555,10 @@ bool ACSCheckoutCounterActor::OpenCheckoutWidget(AActor* Interactor)
 	{
 		return true;
 	}
+	if (bIsEmployeeCheckoutPresenting)
+	{
+		return false;
+	}
 
 	if (CheckoutWidgetClass == nullptr)
 	{
@@ -436,6 +646,10 @@ void ACSCheckoutCounterActor::HandleCheckoutPaymentRequested()
 
 	if (!CanProcessCheckout())
 	{
+		if (bIsEmployeeCheckoutPresenting)
+		{
+			CancelEmployeeCheckoutPresentation();
+		}
 		UE_LOG(LogTemp, Warning,
 			TEXT("[CheckoutCounter] 결제 도중 매장 단계가 변경되어 계산을 완료할 수 없습니다."));
 		return;
@@ -617,7 +831,8 @@ void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 			return;
 		}
 
-		// 결제 완료 전 강제 마감이라면 거래를 기록하지 않고 계산 UI를 즉시 닫습니다.
+		// 결제 완료 전 강제 마감이라면 거래를 기록하지 않고 장바구니·표시 상품을 복원합니다.
+		CancelEmployeeCheckoutPresentation();
 		CloseCheckoutWidget();
 	}
 }

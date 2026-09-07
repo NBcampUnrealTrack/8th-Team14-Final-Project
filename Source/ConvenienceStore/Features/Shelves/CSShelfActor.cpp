@@ -6,9 +6,16 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
+#include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "NavigationSystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/Employees/CSStoreEmployeeSubsystem.h"
+#include "UI/Shelf/CSShelfConfigurationWidget.h"
 
 ACSShelfActor::ACSShelfActor()
 {
@@ -70,6 +77,8 @@ void ACSShelfActor::OnConstruction(const FTransform& Transform)
 	SyncFacilityData();
 	// 블루프린트에서 배치한 슬롯 마커의 위치를 슬롯 데이터에 반영합니다.
 	SyncSlotsFromMarkers();
+	// 기존 진열대에도 상단·중단·하단 설정 데이터를 자동으로 마련합니다.
+	EnsureLevelConfigurations();
 	// 손님 도착 반경이 바뀌면 건축 판정용 영역 박스도 같이 따라갑니다.
 	SyncBrowseZoneBox();
 }
@@ -77,6 +86,7 @@ void ACSShelfActor::OnConstruction(const FTransform& Transform)
 void ACSShelfActor::BeginPlay()
 {
 	Super::BeginPlay();
+	EnsureLevelConfigurations();
 
 	// 에디터가 아닌 실제 게임 시작 시에만 상품을 생성하여 중복 배치되지 않도록 합니다.
 	SpawnInitialProducts();
@@ -280,11 +290,9 @@ void ACSShelfActor::SyncBrowseZoneBox()
 		FVector(BrowseZoneRadius, BrowseZoneRadius, BrowseZoneHeight * 0.5f));
 }
 
-bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const
+bool ACSShelfActor::TryGetCustomerShoppingPoint(FVector& OutLocation) const
 {
-	OutCenter = FVector::ZeroVector;
-	OutFacing = FRotator::ZeroRotator;
-	OutRadius = 0.0f;
+	OutLocation = FVector::ZeroVector;
 
 	UWorld* World = GetWorld();
 	if (World == nullptr || !IsValid(CustomerShoppingPoint))
@@ -305,11 +313,26 @@ bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, fl
 	FNavLocation Projected;
 	if (!NavSys->ProjectPointToNavigation(MarkerLocation, Projected, QueryExtent))
 	{
-		// 마커 자리에 걸을 수 있는 바닥이 없음 → 갈 수 없는 진열대
+		// 마커 자리에 걸을 수 있는 바닥이 없음 → 손님과 직원 모두 접근할 수 없는 진열대입니다.
 		return false;
 	}
 
-	OutCenter = FVector(MarkerLocation.X, MarkerLocation.Y, Projected.Location.Z);
+	OutLocation = FVector(MarkerLocation.X, MarkerLocation.Y, Projected.Location.Z);
+	return true;
+}
+
+bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const
+{
+	OutCenter = FVector::ZeroVector;
+	OutFacing = FRotator::ZeroRotator;
+	OutRadius = 0.0f;
+
+	if (!TryGetCustomerShoppingPoint(OutCenter))
+	{
+		return false;
+	}
+
+	check(IsValid(CustomerShoppingPoint));
 	// 캡슐이 기울지 않도록 Yaw만 남김
 	OutFacing = FRotator(0.0f, CustomerShoppingPoint->GetComponentRotation().Yaw, 0.0f);
 	OutRadius = BrowseZoneRadius;
@@ -410,39 +433,407 @@ void ACSShelfActor::SyncSlotsFromMarkers()
 	}
 
 	Slots.SetNum(SlotMarkers.Num());
-	// 이름순으로 정렬된 마커의 상대 위치와 회전을 기존 슬롯 데이터에 복사합니다.
+	// 이름순으로 정렬된 마커의 상대 위치와 회전을 슬롯 데이터에 복사합니다.
+	float LowestSlotHeight = TNumericLimits<float>::Max();
+	float HighestSlotHeight = TNumericLimits<float>::Lowest();
 	for (int32 SlotIndex = 0; SlotIndex < SlotMarkers.Num(); ++SlotIndex)
 	{
 		UArrowComponent* SlotMarker = SlotMarkers[SlotIndex].Value;
 		Slots[SlotIndex].LocalTransform = SlotMarker->GetRelativeTransform();
+		const float SlotHeight = Slots[SlotIndex].LocalTransform.GetLocation().Z;
+		LowestSlotHeight = FMath::Min(LowestSlotHeight, SlotHeight);
+		HighestSlotHeight = FMath::Max(HighestSlotHeight, SlotHeight);
 		// 마커는 블루프린트 편집 전용이므로 게임 화면에서는 보이지 않게 설정합니다.
 		SlotMarker->SetHiddenInGame(true);
+	}
+
+	// Slot Arrow의 높이를 세 구간으로 나누어 하단·중단·상단을 자동으로 지정합니다.
+	// 따라서 에디터에서 Arrow를 다른 단으로 옮기면 SlotLevel도 같은 단으로 갱신됩니다.
+	const float HeightRange = HighestSlotHeight - LowestSlotHeight;
+	if (HeightRange > KINDA_SMALL_NUMBER)
+	{
+		const float LowerToMiddleBoundary = LowestSlotHeight + HeightRange / 3.0f;
+		const float MiddleToUpperBoundary = LowestSlotHeight + HeightRange * 2.0f / 3.0f;
+		for (FCSShelfSlot& Slot : Slots)
+		{
+			const float SlotHeight = Slot.LocalTransform.GetLocation().Z;
+			Slot.SlotLevel = SlotHeight <= LowerToMiddleBoundary
+				? ECSShelfSlotLevel::Lower
+				: SlotHeight >= MiddleToUpperBoundary
+					? ECSShelfSlotLevel::Upper
+					: ECSShelfSlotLevel::Middle;
+		}
+	}
+	else
+	{
+		// 모든 Arrow 높이가 같으면 단을 구분할 수 없으므로 기존 기본값인 중단으로 안전하게 통일합니다.
+		for (FCSShelfSlot& Slot : Slots)
+		{
+			Slot.SlotLevel = ECSShelfSlotLevel::Middle;
+		}
 	}
 }
 
 bool ACSShelfActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 {
-	return bIsInstalled &&
-		IsValid(ItemActor) &&
-		Slots.ContainsByPredicate([](const FCSShelfSlot& Slot)
+	const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ItemActor);
+	if (!bIsInstalled || !IsValid(Product))
+	{
+		return false;
+	}
+
+	// 플레이어 수동 진열은 단별 상품 지정·상품 중복·보관 타입 규칙을 적용하지 않습니다.
+	// 진열대 전체에 실제 빈 슬롯이 하나라도 있으면 배치 대상으로 표시합니다.
+	return GetEmptySlotCount() > 0;
+}
+
+FText ACSShelfActor::GetPlayerPlacementFailureText(
+	const ACSProductPickupActor* Product,
+	FVector PlacementHint) const
+{
+	if (!bIsInstalled || !IsValid(Product))
+	{
+		return NSLOCTEXT("Interaction", "ShelfPlacementUnavailable", "이 진열대에는 진열할 수 없습니다.");
+	}
+
+	const ECSShelfSlotLevel AimedLevel = FindAimedSlotLevel(PlacementHint);
+	bool bHasEmptySlot = false;
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (Slot.SlotLevel == AimedLevel && !IsValid(Slot.OccupyingItem))
 		{
-			return !IsValid(Slot.OccupyingItem);
-		});
+			bHasEmptySlot = true;
+			break;
+		}
+	}
+	if (!bHasEmptySlot)
+	{
+		// 선반 메시의 빈 공간이 아니라 Slot_XX Arrow가 만든 실제 슬롯만 수용량으로 계산합니다.
+		return NSLOCTEXT("Interaction", "ShelfLevelFull", "조준한 단에 빈 슬롯이 없습니다.");
+	}
+
+	return NSLOCTEXT("Interaction", "ShelfLevelPlacementUnavailable",
+		"이 상품은 조준한 단에 진열할 수 없습니다.");
+}
+
+int32 ACSShelfActor::GetEmptySlotCount() const
+{
+	int32 EmptySlotCount = 0;
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (!IsValid(Slot.OccupyingItem))
+		{
+			++EmptySlotCount;
+		}
+	}
+
+	return EmptySlotCount;
+}
+
+int32 ACSShelfActor::GetEmployeeRestockableSlotCount(
+	const FDataTableRowHandle& ProductRow,
+	bool bAllowCrossTierDuplicateFallback) const
+{
+	if (!bIsInstalled || ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+	{
+		return 0;
+	}
+
+	int32 RestockableSlotCount = 0;
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (IsValid(Slot.OccupyingItem) || !CanPlaceProductInLevel(
+			ProductRow, Slot.SlotLevel, bAllowCrossTierDuplicateFallback, false))
+		{
+			continue;
+		}
+
+		++RestockableSlotCount;
+	}
+
+	return RestockableSlotCount;
+}
+
+bool ACSShelfActor::GetRestockProductRow(FDataTableRowHandle& OutProductRow) const
+{
+	OutProductRow = FDataTableRowHandle();
+
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Slot.OccupyingItem);
+		if (IsValid(Product))
+		{
+			// 이미 진열된 상품을 우선 기준으로 삼아, 초기 진열 설정을 나중에 바꿔도 현재 진열대 품목을 유지합니다.
+			OutProductRow = Product->GetProductRow();
+			return OutProductRow.DataTable != nullptr && !OutProductRow.RowName.IsNone();
+		}
+	}
+
+	for (const FCSInitialShelfProduct& InitialProduct : InitialProducts)
+	{
+		if (InitialProduct.ProductRow.DataTable != nullptr && !InitialProduct.ProductRow.RowName.IsNone())
+		{
+			// 아직 한 번도 채워지지 않은 진열대는 레벨에 설정한 첫 초기 상품을 보충 기준으로 사용합니다.
+			OutProductRow = InitialProduct.ProductRow;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int32 ACSShelfActor::TryRestockFromCrate(
+	ACSDeliveryCrateActor* SourceCrate,
+	int32 RequestedQuantity)
+{
+	if (!IsValid(SourceCrate) || RequestedQuantity <= 0 || !bIsInstalled)
+	{
+		return 0;
+	}
+
+	int32 RestockedQuantity = 0;
+	for (int32 Index = 0; Index < RequestedQuantity && SourceCrate->GetRemainingQuantity() > 0; ++Index)
+	{
+		const int32 EmptySlotIndex = FindEmptySlotForProduct(
+			SourceCrate->GetProductRow(), false, ECSShelfSlotLevel::Lower);
+		if (EmptySlotIndex == INDEX_NONE)
+		{
+			break;
+		}
+
+		ACSProductPickupActor* ProductActor = SourceCrate->SpawnProductActor();
+		if (!IsValid(ProductActor))
+		{
+			break;
+		}
+
+		if (!PlaceItemInSlot(ProductActor, EmptySlotIndex))
+		{
+			ProductActor->Destroy();
+			break;
+		}
+
+		if (!SourceCrate->ConsumeOne())
+		{
+			// 차감에 실패한 경우 무료 상품이 남지 않도록 방금 배치한 상품을 다시 제거합니다.
+			RemovePlacedItem_Implementation(ProductActor);
+			ProductActor->Destroy();
+			break;
+		}
+
+		++RestockedQuantity;
+	}
+
+	return RestockedQuantity;
+}
+
+bool ACSShelfActor::CanEmployeeRestockProduct(
+	const FDataTableRowHandle& ProductRow,
+	bool bAllowCrossTierDuplicateFallback) const
+{
+	return bIsInstalled && ProductRow.DataTable != nullptr && !ProductRow.RowName.IsNone() &&
+		FindEmptySlotForProduct(ProductRow, bAllowCrossTierDuplicateFallback,
+			ECSShelfSlotLevel::Lower) != INDEX_NONE;
+}
+
+bool ACSShelfActor::OpenShelfConfiguration(AActor* Interactor)
+{
+	return OpenShelfConfigurationWidget(Interactor);
+}
+
+bool ACSShelfActor::GetNextEmployeeRestockSlotLocation(
+	const FDataTableRowHandle& ProductRow,
+	bool bAllowCrossTierDuplicateFallback,
+	FVector& OutSlotLocation) const
+{
+	OutSlotLocation = FVector::ZeroVector;
+	const int32 SlotIndex = FindEmptySlotForProduct(
+		ProductRow, bAllowCrossTierDuplicateFallback, ECSShelfSlotLevel::Lower);
+	if (SlotIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	OutSlotLocation = (Slots[SlotIndex].LocalTransform * GetActorTransform()).GetLocation();
+	return true;
+}
+
+bool ACSShelfActor::TryPlaceEmployeeProduct(
+	ACSProductPickupActor* Product,
+	bool bAllowCrossTierDuplicateFallback)
+{
+	if (!IsValid(Product))
+	{
+		return false;
+	}
+
+	return PlaceItemInSlot(Product, FindEmptySlotForProduct(
+		Product->GetProductRow(), bAllowCrossTierDuplicateFallback, ECSShelfSlotLevel::Lower));
+}
+
+bool ACSShelfActor::ShouldEmployeeReorganizeProduct(const ACSProductPickupActor* Product) const
+{
+	if (!bIsInstalled || !bAllowEmployeeRestock || !IsValid(Product))
+	{
+		return false;
+	}
+
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (Slot.OccupyingItem != Product)
+		{
+			continue;
+		}
+
+		if (const FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(Slot.SlotLevel);
+			Configuration != nullptr && Configuration->bIsPlayerConfigured)
+		{
+			// 플레이어가 새 상품으로 단을 변경한 순간부터, 이전 상품은 해당 단의 설정과 다르므로
+			// 직원이 다른 진열대 또는 창고로 정리해야 합니다. 설정과 같은 상품은 보호합니다.
+			return Configuration->ProductRow.DataTable != nullptr &&
+				!Configuration->ProductRow.RowName.IsNone() &&
+				!IsProductRowEqual(Configuration->ProductRow, Product->GetProductRow());
+		}
+
+		// 자동 배치 단에 들어간 상품만 직원 공통 호환 규칙으로 검사해, 실제로 잘못 배치된 경우에만 정리합니다.
+		return !IsProductCompatibleWithShelf(Product->GetProductRow());
+	}
+
+	return false;
+}
+
+bool ACSShelfActor::SetLevelProductConfiguration(
+	ECSShelfSlotLevel SlotLevel,
+	FDataTableRowHandle ProductRow)
+{
+	if (ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone() ||
+		!IsProductCompatibleWithShelf(ProductRow))
+	{
+		return false;
+	}
+
+	EnsureLevelConfigurations();
+	if (FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(SlotLevel))
+	{
+		Configuration->ProductRow = ProductRow;
+		Configuration->bIsPlayerConfigured = true;
+
+		if (UWorld* World = GetWorld())
+		{
+			if (UCSStoreEmployeeSubsystem* EmployeeSubsystem =
+				World->GetSubsystem<UCSStoreEmployeeSubsystem>())
+			{
+				// 새 설정과 다른 기존 상품을 즉시 정리 업무로 등록합니다.
+				EmployeeSubsystem->RefreshTasksImmediately();
+			}
+		}
+		return true;
+	}
+
+	return false;
+}
+
+int32 ACSShelfActor::GetMismatchedProductCountOnLevel(ECSShelfSlotLevel SlotLevel) const
+{
+	const FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(SlotLevel);
+	if (Configuration == nullptr || !Configuration->bIsPlayerConfigured ||
+		Configuration->ProductRow.DataTable == nullptr || Configuration->ProductRow.RowName.IsNone())
+	{
+		return 0;
+	}
+
+	int32 MismatchedCount = 0;
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Slot.OccupyingItem);
+		if (Slot.SlotLevel == SlotLevel && IsValid(Product) &&
+			!IsProductRowEqual(Configuration->ProductRow, Product->GetProductRow()))
+		{
+			++MismatchedCount;
+		}
+	}
+
+	return MismatchedCount;
+}
+
+bool ACSShelfActor::ClearLevelProductConfiguration(ECSShelfSlotLevel SlotLevel)
+{
+	EnsureLevelConfigurations();
+	if (FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(SlotLevel))
+	{
+		Configuration->ProductRow = FDataTableRowHandle();
+		Configuration->bIsPlayerConfigured = false;
+		return true;
+	}
+
+	return false;
+}
+
+bool ACSShelfActor::OpenShelfConfigurationWidget(AActor* Interactor)
+{
+	if (IsValid(ActiveShelfConfigurationWidget))
+	{
+		return true;
+	}
+
+	APawn* InteractingPawn = Cast<APawn>(Interactor);
+	APlayerController* PlayerController = IsValid(InteractingPawn)
+		? Cast<APlayerController>(InteractingPawn->GetController())
+		: nullptr;
+	if (!IsValid(PlayerController) || ShelfConfigurationWidgetClass == nullptr)
+	{
+		return false;
+	}
+
+	ActiveShelfConfigurationWidget = CreateWidget<UCShelfConfigurationWidget>(
+		PlayerController, ShelfConfigurationWidgetClass);
+	if (!IsValid(ActiveShelfConfigurationWidget))
+	{
+		return false;
+	}
+
+	ActiveShelfConfigurationWidget->SetShelfTarget(this);
+	ActiveShelfConfigurationWidget->OnConfigurationClosed.AddDynamic(
+		this, &ACSShelfActor::HandleShelfConfigurationClosed);
+	ActiveShelfConfigurationWidget->AddToViewport();
+	ShelfConfigurationPlayerController = PlayerController;
+
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(ActiveShelfConfigurationWidget->TakeWidget());
+	PlayerController->SetInputMode(InputMode);
+	// UI를 열기 직전에 누르고 있던 이동 키로 캐릭터가 계속 움직이지 않도록 입력과 현재 속도를 함께 멈춥니다.
+	PlayerController->SetIgnoreMoveInput(true);
+	if (ACharacter* InteractingCharacter = Cast<ACharacter>(InteractingPawn))
+	{
+		InteractingCharacter->GetCharacterMovement()->StopMovementImmediately();
+	}
+	PlayerController->SetShowMouseCursor(true);
+	return true;
+}
+
+void ACSShelfActor::HandleShelfConfigurationClosed()
+{
+	if (APlayerController* PlayerController = ShelfConfigurationPlayerController.Get())
+	{
+		FInputModeGameOnly InputMode;
+		PlayerController->SetInputMode(InputMode);
+		// 진열 구성 관리 화면을 닫으면 화면을 열면서 잠가 둔 플레이어 이동 입력을 다시 허용합니다.
+		PlayerController->SetIgnoreMoveInput(false);
+		PlayerController->SetShowMouseCursor(false);
+	}
+
+	ActiveShelfConfigurationWidget = nullptr;
+	ShelfConfigurationPlayerController = nullptr;
 }
 
 void ACSShelfActor::SetPlacementHighlight(
 	ECSShelfPlacementPreviewState NewState)
 {
-	if (NewState == ECSShelfPlacementPreviewState::Invalid)
-	{
-		RestorePlacementHighlight();
-		return;
-	}
-
-	// Post Process 외곽선 머티리얼에서 1은 초록, 2는 노랑으로 설정하여 사용합니다.
-	const int32 StencilValue = NewState == ECSShelfPlacementPreviewState::Warning
-		? 2
-		: 1;
+	// M_PP_ShelfOutline은 1=초록, 2=노랑, 4=빨강을 사용합니다.
+	// 4는 이미 손님 위험 표시에서 빨강으로 사용 중인 공통 스텐실 값입니다.
+	const int32 StencilValue = NewState == ECSShelfPlacementPreviewState::Invalid
+		? 4
+		: NewState == ECSShelfPlacementPreviewState::Warning ? 2 : 1;
 
 	TArray<UPrimitiveComponent*> PrimitiveComponents;
 	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
@@ -469,6 +860,11 @@ void ACSShelfActor::SetPlacementHighlight(
 	}
 }
 
+void ACSShelfActor::ClearPlacementHighlight()
+{
+	RestorePlacementHighlight();
+}
+
 void ACSShelfActor::RestorePlacementHighlight()
 {
 	for (const TPair<TObjectPtr<UPrimitiveComponent>, bool>& Pair : OriginalCustomDepthStates)
@@ -491,6 +887,214 @@ void ACSShelfActor::RestorePlacementHighlight()
 	OriginalCustomStencilValues.Empty();
 }
 
+bool ACSShelfActor::IsProductRowEqual(
+	const FDataTableRowHandle& Left,
+	const FDataTableRowHandle& Right) const
+{
+	return Left.DataTable == Right.DataTable && Left.RowName == Right.RowName &&
+		Left.DataTable != nullptr && !Left.RowName.IsNone();
+}
+
+const FCSShelfLevelConfiguration* ACSShelfActor::FindLevelConfiguration(
+	ECSShelfSlotLevel SlotLevel) const
+{
+	return LevelConfigurations.FindByPredicate([SlotLevel](const FCSShelfLevelConfiguration& Configuration)
+	{
+		return Configuration.SlotLevel == SlotLevel;
+	});
+}
+
+FCSShelfLevelConfiguration* ACSShelfActor::FindLevelConfiguration(ECSShelfSlotLevel SlotLevel)
+{
+	return LevelConfigurations.FindByPredicate([SlotLevel](const FCSShelfLevelConfiguration& Configuration)
+	{
+		return Configuration.SlotLevel == SlotLevel;
+	});
+}
+
+void ACSShelfActor::EnsureLevelConfigurations()
+{
+	const ECSShelfSlotLevel Levels[] = {
+		ECSShelfSlotLevel::Lower,
+		ECSShelfSlotLevel::Middle,
+		ECSShelfSlotLevel::Upper,
+	};
+	for (const ECSShelfSlotLevel Level : Levels)
+	{
+		if (FindLevelConfiguration(Level) == nullptr)
+		{
+			FCSShelfLevelConfiguration& Configuration = LevelConfigurations.AddDefaulted_GetRef();
+			Configuration.SlotLevel = Level;
+		}
+	}
+}
+
+bool ACSShelfActor::GetProductRowOnLevel(
+	ECSShelfSlotLevel SlotLevel,
+	FDataTableRowHandle& OutProductRow) const
+{
+	OutProductRow = FDataTableRowHandle();
+	for (const FCSShelfSlot& Slot : Slots)
+	{
+		if (Slot.SlotLevel != SlotLevel)
+		{
+			continue;
+		}
+
+		if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Slot.OccupyingItem))
+		{
+			OutProductRow = Product->GetProductRow();
+			return OutProductRow.DataTable != nullptr && !OutProductRow.RowName.IsNone();
+		}
+	}
+
+	return false;
+}
+
+bool ACSShelfActor::IsProductCompatibleWithShelf(const FDataTableRowHandle& ProductRow) const
+{
+	const FCSProductDataRow* ProductData = ProductRow.GetRow<FCSProductDataRow>(
+		TEXT("ACSShelfActor::IsProductCompatibleWithShelf"));
+	if (ProductData == nullptr)
+	{
+		return false;
+	}
+
+	return IsProductShelfTypeCompatible(ProductData->ShelfType);
+}
+
+bool ACSShelfActor::IsProductShelfTypeCompatible(ECSProductShelfType ProductShelfType) const
+{
+	switch (ShelfType)
+	{
+	case ECSProductShelfType::ChilledShelf:
+		// 냉장 상품은 신선도 규칙을 지키기 위해 냉장 진열대에서만 자동 진열·지정할 수 있습니다.
+		return ProductShelfType == ECSProductShelfType::ChilledShelf;
+
+	case ECSProductShelfType::FreezerShelf:
+		// 냉동 상품은 신선도 규칙을 지키기 위해 냉동 진열대에서만 자동 진열·지정할 수 있습니다.
+		return ProductShelfType == ECSProductShelfType::FreezerShelf;
+
+	case ECSProductShelfType::SnackShelf:
+	case ECSProductShelfType::PotionShelf:
+		// 과자·포션 진열대는 같은 상온 상품군으로 취급하여 서로의 상품을 자동 진열할 수 있습니다.
+		return ProductShelfType == ECSProductShelfType::SnackShelf ||
+			ProductShelfType == ECSProductShelfType::PotionShelf;
+
+	case ECSProductShelfType::UtilityShelf:
+	case ECSProductShelfType::ScrollRack:
+		// 일반 진열대·스크롤 거치대는 공용 상온 상품군으로 취급하여 서로의 상품을 자동 진열할 수 있습니다.
+		return ProductShelfType == ECSProductShelfType::UtilityShelf ||
+			ProductShelfType == ECSProductShelfType::ScrollRack;
+
+	case ECSProductShelfType::ToolRack:
+		// 도구는 형태와 진열 방식이 달라 도구 거치대에서만 자동 진열·지정할 수 있습니다.
+		return ProductShelfType == ECSProductShelfType::ToolRack;
+
+	default:
+		return false;
+	}
+}
+
+bool ACSShelfActor::CanPlaceProductInLevel(
+	const FDataTableRowHandle& ProductRow,
+	ECSShelfSlotLevel SlotLevel,
+	bool bAllowCrossTierDuplicateFallback,
+	bool bIgnoreStorageCompatibility) const
+{
+	if (!bIgnoreStorageCompatibility && !IsProductCompatibleWithShelf(ProductRow))
+	{
+		return false;
+	}
+
+	if (const FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(SlotLevel);
+		Configuration != nullptr && Configuration->bIsPlayerConfigured)
+	{
+		// 플레이어가 지정한 단은 같은 상품을 다른 단에도 배치할 수 있는 명시적인 중복 허용 상태입니다.
+		return IsProductRowEqual(Configuration->ProductRow, ProductRow);
+	}
+
+	FDataTableRowHandle ExistingProductRow;
+	if (GetProductRowOnLevel(SlotLevel, ExistingProductRow))
+	{
+		return IsProductRowEqual(ExistingProductRow, ProductRow);
+	}
+
+	for (const FCSShelfSlot& OtherSlot : Slots)
+	{
+		if (OtherSlot.SlotLevel == SlotLevel)
+		{
+			continue;
+		}
+
+		if (const ACSProductPickupActor* OtherProduct = Cast<ACSProductPickupActor>(OtherSlot.OccupyingItem);
+			IsValid(OtherProduct) && IsProductRowEqual(OtherProduct->GetProductRow(), ProductRow))
+		{
+			return bAllowCrossTierDuplicateFallback;
+		}
+	}
+
+	return true;
+}
+
+int32 ACSShelfActor::FindEmptySlotForProduct(
+	const FDataTableRowHandle& ProductRow,
+	bool bAllowCrossTierDuplicateFallback,
+	ECSShelfSlotLevel PreferredLevel,
+	bool bIgnoreStorageCompatibility,
+	bool bAllowOtherLevelFallback) const
+{
+	TArray<ECSShelfSlotLevel> Levels;
+	Levels.Add(PreferredLevel);
+	if (bAllowOtherLevelFallback && PreferredLevel == ECSShelfSlotLevel::Lower)
+	{
+		// 직원 자동 보충은 하단부터 고유 품목을 찾되, 하단이 맞지 않으면 중단·상단까지 순서대로 검사합니다.
+		Levels.Add(ECSShelfSlotLevel::Middle);
+		Levels.Add(ECSShelfSlotLevel::Upper);
+	}
+	for (const ECSShelfSlotLevel Level : Levels)
+	{
+		if (!CanPlaceProductInLevel(
+			ProductRow, Level, bAllowCrossTierDuplicateFallback, bIgnoreStorageCompatibility))
+		{
+			continue;
+		}
+
+		for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
+		{
+			if (Slots[SlotIndex].SlotLevel == Level && !IsValid(Slots[SlotIndex].OccupyingItem))
+			{
+				return SlotIndex;
+			}
+		}
+	}
+
+	return INDEX_NONE;
+}
+
+bool ACSShelfActor::PlaceItemInSlot(AActor* ItemActor, int32 SlotIndex)
+{
+	if (!IsValid(ItemActor) || !Slots.IsValidIndex(SlotIndex) || IsValid(Slots[SlotIndex].OccupyingItem))
+	{
+		return false;
+	}
+
+	FCSShelfSlot& SelectedSlot = Slots[SlotIndex];
+	const FTransform SlotWorldTransform = SelectedSlot.LocalTransform * GetActorTransform();
+	ItemActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	ItemActor->SetActorLocationAndRotation(SlotWorldTransform.GetLocation(), SlotWorldTransform.GetRotation());
+	ItemActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+	ItemActor->SetActorEnableCollision(true);
+	if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ItemActor))
+	{
+		Product->SetStorageShelfType(ShelfType);
+	}
+
+	SelectedSlot.OccupyingItem = ItemActor;
+	OnItemPlaced.Broadcast(ItemActor, SlotIndex);
+	return true;
+}
+
 ECSShelfPlacementPreviewState ACSShelfActor::GetPlacementHighlightState(
 	AActor* ItemActor) const
 {
@@ -508,20 +1112,20 @@ ECSShelfPlacementPreviewState ACSShelfActor::GetPlacementHighlightState(
 ECSShelfSlotLevel ACSShelfActor::FindAimedSlotLevel(FVector PlacementHint) const
 {
 	ECSShelfSlotLevel AimedSlotLevel = ECSShelfSlotLevel::Middle;
-	float ClosestDistanceSquared = TNumericLimits<float>::Max();
+	float ClosestHeightDifference = TNumericLimits<float>::Max();
 
 	for (const FCSShelfSlot& Slot : Slots)
 	{
-		// 이미 찬 슬롯도 조준한 단을 판정하는 기준점으로 유지합니다.
+		// 단 선택은 선반 앞·뒤 깊이와 무관하게 조준한 높이만으로 판정해야 합니다.
+		// 이미 찬 슬롯도 각 단의 높이를 알 수 있도록 판정 기준에 그대로 사용합니다.
 		const FTransform SlotWorldTransform =
 			Slot.LocalTransform * GetActorTransform();
-		const float DistanceSquared = FVector::DistSquared(
-			SlotWorldTransform.GetLocation(),
-			PlacementHint);
+		const float HeightDifference = FMath::Abs(
+			SlotWorldTransform.GetLocation().Z - PlacementHint.Z);
 
-		if (DistanceSquared < ClosestDistanceSquared)
+		if (HeightDifference < ClosestHeightDifference)
 		{
-			ClosestDistanceSquared = DistanceSquared;
+			ClosestHeightDifference = HeightDifference;
 			AimedSlotLevel = Slot.SlotLevel;
 		}
 	}
@@ -531,6 +1135,13 @@ ECSShelfSlotLevel ACSShelfActor::FindAimedSlotLevel(FVector PlacementHint) const
 
 int32 ACSShelfActor::FindClosestEmptySlot(FVector PlacementHint) const
 {
+	return FindClosestSlotOnAimedLevel(PlacementHint, true);
+}
+
+int32 ACSShelfActor::FindClosestSlotOnAimedLevel(
+	FVector PlacementHint,
+	bool bRequireEmptySlot) const
+{
 	int32 ClosestSlotIndex = INDEX_NONE;
 	float ClosestDistanceSquared = TNumericLimits<float>::Max();
 	const ECSShelfSlotLevel AimedSlotLevel = FindAimedSlotLevel(PlacementHint);
@@ -539,7 +1150,8 @@ int32 ACSShelfActor::FindClosestEmptySlot(FVector PlacementHint) const
 	{
 		const FCSShelfSlot& Slot = Slots[SlotIndex];
 		// 다른 단은 비어 있어도 선택하지 않아 플레이어가 조준한 단만 채워집니다.
-		if (Slot.SlotLevel != AimedSlotLevel || IsValid(Slot.OccupyingItem))
+		if (Slot.SlotLevel != AimedSlotLevel ||
+			(bRequireEmptySlot && IsValid(Slot.OccupyingItem)))
 		{
 			continue;
 		}
@@ -565,13 +1177,20 @@ bool ACSShelfActor::GetPlacementPreview_Implementation(
 	FVector PlacementHint,
 	FTransform& OutSlotWorldTransform) const
 {
-	if (!CanPlaceItem_Implementation(ItemActor))
+	const int32 SlotIndex = FindClosestEmptySlot(PlacementHint);
+	if (SlotIndex == INDEX_NONE)
 	{
+		// 가득 찬 단도 충돌 지점이 아닌 실제 슬롯에서 빨간 프리뷰를 보여 줍니다.
+		const int32 OccupiedSlotIndex = FindClosestSlotOnAimedLevel(PlacementHint, false);
+		if (OccupiedSlotIndex != INDEX_NONE)
+		{
+			OutSlotWorldTransform =
+				Slots[OccupiedSlotIndex].LocalTransform * GetActorTransform();
+		}
 		return false;
 	}
 
-	const int32 SlotIndex = FindClosestEmptySlot(PlacementHint);
-	if (SlotIndex == INDEX_NONE)
+	if (!CanPlaceItem_Implementation(ItemActor))
 	{
 		return false;
 	}
@@ -612,31 +1231,7 @@ bool ACSShelfActor::TryPlaceItem_Implementation(
 		return false;
 	}
 
-	FCSShelfSlot& SelectedSlot = Slots[SlotIndex];
-	const FTransform SlotWorldTransform =
-		SelectedSlot.LocalTransform * GetActorTransform();
-
-	ItemActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	ItemActor->SetActorLocationAndRotation(
-		SlotWorldTransform.GetLocation(),
-		SlotWorldTransform.GetRotation());
-	ItemActor->AttachToActor(
-		this,
-		FAttachmentTransformRules::KeepWorldTransform);
-	ItemActor->SetActorEnableCollision(true);
-
-	if (ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(ItemActor))
-	{
-		// 배치된 시설의 보관 환경을 상품에 기록하여 날짜가 바뀔 때 변질 속도를 계산합니다.
-		ProductActor->SetStorageShelfType(ShelfType);
-	}
-
-	SelectedSlot.OccupyingItem = ItemActor;
-
-	// 슬롯에 배치가 완료된 시점에만 방송
-	OnItemPlaced.Broadcast(ItemActor, SlotIndex);
-
-	return true;
+	return PlaceItemInSlot(ItemActor, SlotIndex);
 }
 
 void ACSShelfActor::RemovePlacedItem_Implementation(AActor* ItemActor)
