@@ -1,4 +1,5 @@
 ﻿#include "Features/Player/CSPlayerCharacter.h"
+#include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
@@ -2008,24 +2009,85 @@ void ACSPlayerCharacter::CollectBuildPlacementBoxesByTag(
 		return;
 	}
 
+	// 시설 본체뿐 아니라 부착된 자식 액터의 박스까지 봅니다.
+	// 계산대처럼 시설 BP가 BeginPlay에서 스폰해 소켓에 붙이는 부속 액터는
+	// GetComponents로는 절대 잡히지 않아서, 태그를 달아도 판정에 걸리지 않습니다.
+	TArray<AActor*> SearchActors;
+	SearchActors.Add(FacilityActor);
+	FacilityActor->GetAttachedActors(SearchActors, false, true);
+
 	TArray<UBoxComponent*> BoxComponents;
-	FacilityActor->GetComponents<UBoxComponent>(BoxComponents);
-	for (UBoxComponent* BoxComponent : BoxComponents)
+	for (AActor* SearchActor : SearchActors)
 	{
-		if (IsValid(BoxComponent) &&
-			BoxComponent->ComponentHasTag(BoxTag))
+		if (!IsValid(SearchActor))
 		{
-			OutBoxes.Add(BoxComponent);
+			continue;
+		}
+
+		SearchActor->GetComponents<UBoxComponent>(BoxComponents);
+		for (UBoxComponent* BoxComponent : BoxComponents)
+		{
+			if (IsValid(BoxComponent) &&
+				BoxComponent->ComponentHasTag(BoxTag))
+			{
+				OutBoxes.Add(BoxComponent);
+			}
 		}
 	}
 }
 
+bool ACSPlayerCharacter::HasUnusableQueueSlotPlacement(
+	AActor* FacilityActor,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation) const
+{
+	if (!IsValid(FacilityActor) ||
+		FacilityLocation.ContainsNaN() ||
+		FacilityRotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	// 규칙 A·B는 상대가 시설일 때만 돌기 때문에 벽·기둥·계단은 검사하지 않습니다.
+	// 그래서 대기줄이 벽을 향해 뻗는 배치도 그냥 통과합니다.
+	// 규칙 D: 대기줄 슬롯이 전부 설 수 있는 자리일 때만 배치를 허용합니다.
+	TArray<AActor*> SearchActors;
+	SearchActors.Add(FacilityActor);
+	FacilityActor->GetAttachedActors(SearchActors, false, true);
+
+	const FTransform ProspectiveFacilityTransform(
+		FacilityRotation,
+		FacilityLocation,
+		FacilityActor->GetActorScale3D());
+
+	for (const AActor* SearchActor : SearchActors)
+	{
+		const ACSCheckoutCounterActor* Counter = Cast<ACSCheckoutCounterActor>(SearchActor);
+		if (!IsValid(Counter))
+		{
+			continue;
+		}
+
+		// 계산대는 시설에 붙어 있으므로, 시설이 배치될 자리 기준으로 계산대 트랜스폼을 다시 풀어 줍니다.
+		const FTransform RelativeCounterTransform =
+			Counter->GetActorTransform().GetRelativeTransform(FacilityActor->GetActorTransform());
+		if (!Counter->AreQueueSlotsUsableAt(
+			RelativeCounterTransform * ProspectiveFacilityTransform))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool ACSPlayerCharacter::IsBuildPlacementInsideCachedAreas(
+	AActor* FacilityActor,
 	const TArray<UBoxComponent*>& CollisionBoxes,
 	const FVector& FacilityLocation,
 	const FRotator& FacilityRotation) const
 {
-	if (CollisionBoxes.IsEmpty())
+	if (!IsValid(FacilityActor) || CollisionBoxes.IsEmpty())
 	{
 		return true;
 	}
@@ -2074,9 +2136,11 @@ bool ACSPlayerCharacter::IsBuildPlacementInsideCachedAreas(
 	{
 		FTransform ProspectiveBoxTransform;
 		FVector ScaledExtent;
+		// 기준은 반드시 시설입니다. 박스 주인을 기준으로 삼으면 부속 액터가 들고 있는 박스가
+		// 시설 원점으로 끌려와, 실제 위치와 다른 자리를 검사하게 됩니다.
 		if (!TryCalculateProspectiveBox(
 				CollisionBox,
-				CollisionBox->GetOwner(),
+				FacilityActor,
 				FacilityLocation,
 				FacilityRotation,
 				ProspectiveBoxTransform,
@@ -2603,6 +2667,7 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 		BuildPlacementAccessZoneBoxes);
 	const bool bIsInsideBuildPlacementArea =
 		IsBuildPlacementInsideCachedAreas(
+			HeldActor,
 			BuildPlacementCollisionBoxes,
 			CachedBuildPlacementLocation,
 			CachedBuildPlacementRotation);
@@ -2624,17 +2689,25 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 	// 규칙 C. 몸통과 같은 함수를 배열만 바꿔 호출합니다.
 	const bool bIsZoneInsideArea =
 		IsBuildPlacementInsideCachedAreas(
+			HeldActor,
 			BuildPlacementAccessZoneBoxes,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation);
+	// 규칙 D. 대기줄이 벽이나 다른 시설 쪽으로 뻗는 배치를 막습니다.
+	const bool bHasUnusableQueueSlots =
+		HasUnusableQueueSlotPlacement(
+			HeldActor,
 			CachedBuildPlacementLocation,
 			CachedBuildPlacementRotation);
 	bIsHeldBuildableInsidePlacementArea = bIsInsideBuildPlacementArea;
 	bHasHeldBuildablePlacementOverlap = bHasFacilityOverlap;
 	bHasHeldBuildableAccessZoneConflict = bHasZoneConflict;
 	bIsHeldBuildableAccessZoneInsideArea = bIsZoneInsideArea;
-	// 신규 두 조건만 롤아웃 스위치로 묶습니다. 기존 조건은 검증된 동작이라 넣지 않습니다.
+	bHasHeldBuildableUnusableQueueSlots = bHasUnusableQueueSlots;
+	// 신규 세 조건만 롤아웃 스위치로 묶습니다. 기존 조건은 검증된 동작이라 넣지 않습니다.
 	const bool bPassesAccessZoneRules =
 		!bBlockPlacementOnAccessZoneRules ||
-		(!bHasZoneConflict && bIsZoneInsideArea);
+		(!bHasZoneConflict && bIsZoneInsideArea && !bHasUnusableQueueSlots);
 	bCanPlaceHeldBuildableFacility =
 		bIsSurfaceValid &&
 		bIsInsideBuildPlacementArea &&

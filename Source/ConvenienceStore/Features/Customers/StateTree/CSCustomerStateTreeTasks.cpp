@@ -684,6 +684,33 @@ void FCSTask_BrowseShelf::ExitState(FStateTreeExecutionContext& Context,
 // WaitInQueue
 // =====================================================================
 
+// 대기줄 슬롯으로 이동시킵니다
+void FCSTask_WaitInQueue::MoveToQueueSlot(
+	AAIController& Controller,
+	const UCSCustomerRuntimeSubsystem& Subsystem,
+	const int32 Index)
+{
+	// 정지 반경을 알려주지 않는 계산대를 위한 방어값 (나중 체크)
+	constexpr float LegacyStopRadius = 30.0f;
+
+	// 계산대에게 직접 "몇 거리에서 멈춰야 손님끼리 안 겹치는지" 확인
+	const float CounterStopRadius = Subsystem.GetQueueSlotStopRadius();
+	const float StopRadius = CounterStopRadius > 0.0f ? CounterStopRadius : LegacyStopRadius;
+
+	FVector SlotCenter;
+	float SlotRadius = 0.0f;
+	if (Subsystem.TryGetQueueSlotZone(Index, SlotCenter, SlotRadius) && SlotRadius > 0.0f)
+	{
+		// 계산대가 이미 판정 반경 이하로 잘라서 주지만, 불변식을 어기는 구현체가 새로 생겨도
+		// 위의 정지 버그가 돌아오지 않도록 호출부에서도 한 번 더 막습니다.
+		Controller.MoveToLocation(SlotCenter, FMath::Min(StopRadius, SlotRadius), false);
+		return;
+	}
+
+	// 영역 정보를 주지 않는 계산대는 기존 동작을 유지합니다.
+	Controller.MoveToLocation(Subsystem.GetQueueSlotLocation(Index), StopRadius);
+}
+
 EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
@@ -700,16 +727,31 @@ EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& 
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 정원이 찬 줄에는 서지 않습니다. 줄이 길어 보이면 그냥 포기하고 나가는 손님입니다.
+	// JoinQueue보다 반드시 먼저 와야 합니다.
+	// 아직 줄에 들어가지 않았으므로 AbandonCheckout 내부의 LeaveQueue는 무동작입니다.
+	if (Subsystem->IsQueueFull())
+	{
+		// 기다린 시간이 0초인 포기입니다. 인내심 만료와 같은 채널로 방송되어 같은 집계에 들어갑니다.
+		Subsystem->AbandonCheckout(Data.Actor, 0.0f);
+		return EStateTreeRunStatus::Failed;
+	}
+
 	// 대기열 등록 후 내 순번 위치로 이동
 	const int32 MyIndex = Subsystem->JoinQueue(Data.Actor);
 	if (MyIndex < 0)
 	{
+		// 등록 실패는 정원 초과가 유일한 정상 원인입니다.
+		// 포기 처리를 하지 않으면 bCheckoutAbandoned가 false로 남아
+		// HasAbandonedCheckout(Invert) 조건이 계속 통과해 Checkout 상태로 매 틱 재진입합니다.
+		Subsystem->AbandonCheckout(Data.Actor, 0.0f);
 		return EStateTreeRunStatus::Failed;
 	}
 
 	Data.CachedQueueIndex = MyIndex;
 	Data.ElapsedWaitTime = 0.0f; //손님이 대기열 상태에 새로 진입할 때마다 타이머를 0초부터 다시 시작하도록 초기화하는 역할 (혹시 모를 재진입시)
-	Data.AIController->MoveToLocation(Subsystem->GetQueueSlotLocation(MyIndex), 30.0f);
+	Data.ElapsedApproachTime = 0.0f;
+	MoveToQueueSlot(*Data.AIController, *Subsystem, MyIndex);
 
 	return EStateTreeRunStatus::Running;
 }
@@ -738,26 +780,49 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// 인내심 판정 (시간 오버되면 포기하고 Leave)
-	Data.ElapsedWaitTime += DeltaTime;
+	// 자기 자리에 도착했는지가 인내심과 접근 타임아웃을 가르는 기준입니다.
+	const bool bArrivedAtSlot = Subsystem->IsCustomerAtQueueSlot(Data.Actor);
 
-	float Patience = Data.PatienceOverride;
-	if (Patience <= 0.0f)
+	if (!bArrivedAtSlot)
 	{
-		// 태스크에서 따로 지정하지 않았으면 Subsystem이 주는 값을 쓴다.
-		// 소비심리 파트가 붙으면 그 함수 내부만 바뀌므로 여기는 그대로 둔다.
-		Patience = Subsystem->GetPatienceSeconds(Data.Actor);
-	}
+		// 아직 걸어오는 중입니다. 인내심은 흐르지 않습니다.
+		// 매장 끝에서 계산대까지 걸어오는 시간은 플레이어 책임이 아니기 때문입니다.
+		Data.ElapsedApproachTime += DeltaTime;
 
-	if (Patience > 0.0f && Data.ElapsedWaitTime >= Patience)
+		// 다만 인내심이 안 흐른다는 이유로 못 가는 손님이 줄 맨 앞에 영구히 박히면
+		// 줄 전체가 정지하므로, 접근 자체에 별도 상한을 둡니다.
+		if (Data.MaxApproachSeconds > 0.0f &&
+			Data.ElapsedApproachTime >= Data.MaxApproachSeconds)
+		{
+			// 경로 실패로 못 온 손님을 "오래 기다려서 화난 손님"으로 집계하지 않도록
+			// 방송에는 실제로 줄에서 기다린 시간(0초)을 넘깁니다.
+			Subsystem->AbandonCheckout(Data.Actor, Data.ElapsedWaitTime);
+			return EStateTreeRunStatus::Failed;
+		}
+	}
+	else if (State->bIsBeingServed == false)
 	{
-		// 대기열 이탈, 상품 반환, 방송까지 Subsystem이 한 번에 처리한다.
-		Subsystem->AbandonCheckout(Data.Actor, Data.ElapsedWaitTime);
+		// 인내심 판정 (시간 오버되면 포기하고 Leave)
+		// 응대 중인 손님은 제외합니다. 서비스를 받는 중에 "기다리다 지쳐" 나가면 안 됩니다.
+		Data.ElapsedWaitTime += DeltaTime;
 
-		// 실패로 종료 → Checkout 상태의 On Failed 전이가 Leave로 보낸다.
-		return EStateTreeRunStatus::Failed;
+		float Patience = Data.PatienceOverride;
+		if (Patience <= 0.0f)
+		{
+			// 태스크에서 따로 지정하지 않았으면 Subsystem이 주는 값을 쓴다.
+			// 소비심리 파트가 붙으면 그 함수 내부만 바뀌므로 여기는 그대로 둔다.
+			Patience = Subsystem->GetPatienceSeconds(Data.Actor);
+		}
+
+		if (Patience > 0.0f && Data.ElapsedWaitTime >= Patience)
+		{
+			// 대기열 이탈, 상품 반환, 방송까지 Subsystem이 한 번에 처리한다.
+			Subsystem->AbandonCheckout(Data.Actor, Data.ElapsedWaitTime);
+
+			// 실패로 종료 → Checkout 상태의 On Failed 전이가 Leave로 보낸다.
+			return EStateTreeRunStatus::Failed;
+		}
 	}
-	//
 
 	// 줄이 줄어들어 내 순번이 바뀌었으면 앞자리로 이동
 	const int32 CurrentIndex = Subsystem->GetQueueIndex(Data.Actor);
@@ -765,7 +830,22 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 	{
 		// 순번 인덱스 캐시와 다를 때만 갱신 후 이동합니다
 		Data.CachedQueueIndex = CurrentIndex;
-		Data.AIController->MoveToLocation(Subsystem->GetQueueSlotLocation(CurrentIndex), 30.0f);
+		Data.ElapsedApproachTime = 0.0f;
+		MoveToQueueSlot(*Data.AIController, *Subsystem, CurrentIndex);
+	}
+
+	// 자리에 도착한 손님은 계산대가 지정한 방향으로 돌아섭니다.
+	// MoveToLocation은 목표 회전을 받지 않아서, 지금까지는 마지막으로 걸어온 방향 그대로 서 있었습니다.
+	// 회전은 계산 가능 여부와 무관하므로 도착 게이트 조건에는 넣지 않습니다.
+	FRotator TargetFacing;
+	if (bArrivedAtSlot && CurrentIndex >= 0 &&
+		Subsystem->TryGetQueueSlotFacing(CurrentIndex, TargetFacing))
+	{
+		const FRotator CurrentRotation = Data.Actor->GetActorRotation();
+		Data.Actor->SetActorRotation(FRotator(
+			CurrentRotation.Pitch,
+			FMath::RInterpTo(CurrentRotation, TargetFacing, DeltaTime, Data.QueueFacingInterpSpeed).Yaw,
+			CurrentRotation.Roll));
 	}
 
 	return EStateTreeRunStatus::Running;
@@ -790,6 +870,12 @@ void FCSTask_WaitInQueue::ExitState(FStateTreeExecutionContext& Context,
 		{
 			Subsystem->LeaveQueue(Data.Actor);
 		}
+	}
+
+	// 강제 퇴장·제압처럼 계산대를 거치지 않고 상태를 떠나는 경로에서도 응대 플래그가 남지 않게 합니다.
+	if (State != nullptr)
+	{
+		State->bIsBeingServed = false;
 	}
 
 	if (Data.AIController != nullptr)
