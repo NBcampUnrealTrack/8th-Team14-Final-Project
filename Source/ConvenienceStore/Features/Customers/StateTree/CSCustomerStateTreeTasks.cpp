@@ -690,12 +690,17 @@ void FCSTask_WaitInQueue::MoveToQueueSlot(
 	const UCSCustomerRuntimeSubsystem& Subsystem,
 	const int32 Index)
 {
-	// 정지 반경을 알려주지 않는 계산대를 위한 방어값 (나중 체크)
-	constexpr float LegacyStopRadius = 30.0f;
-
 	// 계산대에게 직접 "몇 거리에서 멈춰야 손님끼리 안 겹치는지" 확인
 	const float CounterStopRadius = Subsystem.GetQueueSlotStopRadius();
-	const float StopRadius = CounterStopRadius > 0.0f ? CounterStopRadius : LegacyStopRadius;
+
+	// 0 이하는 정상 값이 아니라서 방어 코드
+	if (CounterStopRadius <= 0.0f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[대기줄] 계산대가 정지 반경을 주지 않았습니다(%.1f). ")
+			TEXT("ICSCustomerCounterInterface::GetQueueSlotStopRadius 구현이 필요합니다. 슬롯=%d | 손님=%s"),
+			CounterStopRadius, Index, *GetNameSafe(Controller.GetPawn()));
+	}
 
 	FVector SlotCenter;
 	float SlotRadius = 0.0f;
@@ -703,12 +708,26 @@ void FCSTask_WaitInQueue::MoveToQueueSlot(
 	{
 		// 계산대가 이미 판정 반경 이하로 잘라서 주지만, 불변식을 어기는 구현체가 새로 생겨도
 		// 위의 정지 버그가 돌아오지 않도록 호출부에서도 한 번 더 막습니다.
-		Controller.MoveToLocation(SlotCenter, FMath::Min(StopRadius, SlotRadius), false);
+		// 정지 반경을 못 받았으면 판정 반경을 사용
+		float AcceptanceRadius = SlotRadius;
+		if (CounterStopRadius > 0.0f)
+		{
+			AcceptanceRadius = FMath::Min(CounterStopRadius, SlotRadius);
+		}
+
+		Controller.MoveToLocation(SlotCenter, AcceptanceRadius, false);
 		return;
 	}
 
 	// 영역 정보를 주지 않는 계산대는 기존 동작을 유지합니다.
-	Controller.MoveToLocation(Subsystem.GetQueueSlotLocation(Index), StopRadius);
+	// 정지 반경이 없으면 엔진 기본값을 넘겨 손님 NavAgent 반지름에서 유도되게 합니다.
+	float FinalStopRadius = UPathFollowingComponent::DefaultAcceptanceRadius;
+	if (CounterStopRadius > 0.0f)
+	{
+		FinalStopRadius = CounterStopRadius;
+	}
+
+	Controller.MoveToLocation(Subsystem.GetQueueSlotLocation(Index), FinalStopRadius);
 }
 
 EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& Context,
