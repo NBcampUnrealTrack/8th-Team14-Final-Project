@@ -20,6 +20,7 @@
 
 class AAIController;
 class ACSCustomerCharacter;
+class UCSCustomerRuntimeSubsystem;
 
 // =====================================================================
 //  PickNextShelf : 아직 안 본 진열대를 랜덤으로 골라 Output으로 내보냄
@@ -259,9 +260,23 @@ struct FCSTask_WaitInQueueInstanceData
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
 	float PatienceOverride = 0.0f;
 
-	// 줄에 선 뒤 경과 시간
+	// 자기 자리에 도착한 뒤의 경과 시간. 걸어오는 시간은 여기에 들어가지 않습니다.
 	UPROPERTY()
 	float ElapsedWaitTime = 0.0f;
+
+	// 자리에 도착하기까지 허용하는 시간입니다. 초과하면 경로 실패로 보고 포기
+	// 인내심과 별개, 인내심은 "줄이 안 줄어드는 불만"
+	// 이거는 "못 가는 상황"입니다, 이 안전장치가 없으면 경로가 막힌 손님이 Queue[0]에 영구히 박혀 줄 전체가 정지합니다.
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float MaxApproachSeconds = 30.0f;
+
+	// 자리에 도착하기 전까지 걸어온 시간
+	UPROPERTY()
+	float ElapsedApproachTime = 0.0f;
+
+	// 자리에 도착한 뒤 목표 방향으로 돌아서는 속도입니다.
+	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
+	float QueueFacingInterpSpeed = 6.0f;
 };
 
 USTRUCT(meta = (DisplayName = "Customer: Wait In Queue"))
@@ -284,6 +299,11 @@ struct FCSTask_WaitInQueue : public FStateTreeTaskCommonBase
 
 	virtual void ExitState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
+
+private:
+	// 대기줄 슬롯으로 이동 명령을 내립니다.
+	// EnterState(줄 서기)와 Tick(앞자리로 당기기)이 완전히 같은 인자로 호출해야 하므로 한 곳에 모음
+	static void MoveToQueueSlot(AAIController& Controller,const UCSCustomerRuntimeSubsystem& Subsystem, const int32 Index);
 };
 
 // =====================================================================

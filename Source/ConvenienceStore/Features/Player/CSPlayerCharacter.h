@@ -204,6 +204,12 @@ protected:
 	bool bIsHeldBuildableAccessZoneInsideArea = true;
 
 
+	// 계산대 대기줄 슬롯 중 설 수 없는 자리(NavMesh 없음 / 다른 시설 몸통에 막힘)가 있는지 판단하는 bool 변수
+	// 대기줄이 벽을 향해 뻗는 배치를 차단하기 위해 사용
+	UPROPERTY(Transient)
+	bool bHasHeldBuildableUnusableQueueSlots = false;
+
+
     // 현재 선택한 진열대 몸통이 어느 진열대의 손님 쇼핑 영역에 침범 했는지 찾기 위한 배열
     // AccessZoneQueryRange 범위내에 있는 진열대를 Tick마다 주기적으로 배열에 추가/삭제해서 어느 진열대 손님 쇼핑영역에 침범했는지 찾아냄
 	// 빨간색으로 시각화하기 위해 그래픽 렌더링 측에 전달하는 용도로 사용됨
@@ -502,7 +508,18 @@ private:
 		AActor* FacilityActor,
 		const FName& BoxTag,
 		TArray<UBoxComponent*>& OutBoxes) const;
+
+	// 규칙 D. 배치 예정 위치에서 계산대 대기줄 슬롯이 하나라도 설 수 없는 자리면 배치를 거부합니다.
+	// 규칙 A·B가 시설만 검사해서 벽으로 뻗는 대기줄을 잡지 못하는 구멍을 메웁니다.
+	bool HasUnusableQueueSlotPlacement(
+		AActor* FacilityActor,
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation) const;
+	// 박스는 시설 기준 상대 트랜스폼으로 풀어야 하므로 시설 액터를 함께 받습니다.
+	// 계산대처럼 시설이 스폰해 소켓에 붙인 부속 액터가 태그 박스를 들고 있으면,
+	// 박스 주인(부속 액터)을 기준으로 삼는 순간 시설과의 오프셋이 통째로 사라집니다.
 	bool IsBuildPlacementInsideCachedAreas(
+		AActor* FacilityActor,
 		const TArray<UBoxComponent*>& CollisionBoxes,
 		const FVector& FacilityLocation,
 		const FRotator& FacilityRotation) const;

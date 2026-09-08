@@ -574,7 +574,9 @@ void UCSStoreEmployeeSubsystem::RefreshCheckoutTasks()
 	UWorld* World = GetWorld();
 	UCSCustomerRuntimeSubsystem* CustomerSubsystem =
 		IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
-	if (!IsValid(CustomerSubsystem) || !IsValid(CustomerSubsystem->GetFrontCustomer()))
+	// 손님이 0번 자리에 도착하기 전에는 계산 업무를 만들지 않습니다.
+	// 계산대의 CanEmployeeProcessCheckout도 같은 게이트를 보므로 여기서 미리 걸러 순회를 아낍니다.
+	if (!IsValid(CustomerSubsystem) || !IsValid(CustomerSubsystem->GetCheckoutReadyCustomer()))
 	{
 		return;
 	}

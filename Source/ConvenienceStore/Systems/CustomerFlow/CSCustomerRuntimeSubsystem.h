@@ -9,24 +9,6 @@
 //   - 플레이어 파트    → 계산 상호작용에서 CompleteFrontCheckout() 호출
 //                        + 실제 계산대에 ICSCustomerCounterInterface 구현 후 RegisterCounter()
 //   - 편의점/통계 파트 → OnCheckoutCompleted / OnItemTaken 델리게이트 구독
-//
-// TODO:
-//   [완료] 1. 계산대 액터에 ICSCustomerCounterInterface 상속
-//      (Features/Customers/Interface/CSCustomerCounterInterface.h)
-//      - 구현할 함수는 GetQueueSlotLocation(int32 Index) 하나뿐
-//      - Index번째 손님이 설 월드 좌표 반환. 줄의 시작점/방향/간격은 계산대가 자유롭게 결정
-//   [완료] 2. 계산대 BeginPlay에서 Subsystem->RegisterCounter(this) 호출
-//      (이거 없으면 GetQueueSlotLocation이 ZeroVector 반환 → 손님이 원점으로 감)
-//   [완료] 3. 플레이어 계산 상호작용에서 Subsystem->CompleteFrontCheckout() 호출
-//      (호출하면 줄 전진 + 손님 퇴장 + OnCheckoutCompleted 방송까지 자동)
-//   4. 진열대 슬롯 높이(상/중/하) 제공 방식 확정 필요
-//      → 제공 측(ACSShelfActor::GetItemSlotLevel)은 완성. 소비 측에서 처리 예정
-//
-// TODO:
-//   1. "어디 갈지"는 현재 PickRandomUnvisitedShelf(랜덤)로 임시 구현되어 있음 → 교체 예정
-//   [완료] 2. "뭘 살지"도 현재 태스크에서 확률로 처리 중 → TakeProduct()에 결정된 상품을 넘기는 방식으로 교체
-//   3. 진열 높이(상/중/하) 등 상세 진열 정보 제공은 요청 확정 후 추가 예정
-//   [완료] 4. 판단 결과("어느 진열대로 가라", "이 상품 사라")를 손님 AI가 어떻게 전달받을지 미정 — 컴포넌트 함수 호출 / 인터페이스 중 협의 필요
 
 #pragma once
 
@@ -208,12 +190,40 @@ public:
 	// 순번에 해당하는 월드 위치 (계산대가 알려주는 좌표)
 	FVector GetQueueSlotLocation(const int32 Index) const;
 
+	// 계산대의 순번에 해당하는 도착 판정 영역 (중심 + 반경).
+	// 손님 AI는 이 중심으로 이동하고 이 반경 안에서 멈춥니다.
+	bool TryGetQueueSlotZone(const int32 Index, FVector& OutCenter, float& OutRadius) const;
+
+	// 계산대의 순번 자리로 이동할 때 AI가 멈춰도 되는 반경
+	float GetQueueSlotStopRadius() const;
+
 	// 진열대 선택/반환 굴림용 스트림. 여러 함수가 const라서 mutable 필요
 	mutable FRandomStream ShelfRandomStream;
 
 	//지금 줄 맨 앞 손님 (없으면 nullptr)
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
 	ACSCustomerCharacter* GetFrontCustomer() const;
+
+	// 맨 앞 손님이 0번 자리에 실제로 도착했을 때만 반환
+	// 계산대의 결제 관련 호출부는 GetFrontCustomer가 아니라 이 함수를 써야 함
+	// GetFrontCustomer는 "줄 순번상 맨 앞"이고, 이 함수는 "지금 계산 가능"입니다.
+	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
+	ACSCustomerCharacter* GetCheckoutReadyCustomer() const;
+
+	// 이 손님이 자기 순번 자리에 도착했는지 확인, 인내심을 "자리에 도착한 뒤부터" 흐르게 하는 데 사용
+	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
+	bool IsCustomerAtQueueSlot(const ACSCustomerCharacter* Customer) const;
+
+	// 순번 자리에 선 손님이 바라볼 방향입니다. 계산대가 방향을 지정하지 않으면 false입니다.
+	bool TryGetQueueSlotFacing(const int32 Index, FRotator& OutFacing) const;
+
+	// 지금 이 계산대에 실제로 설 수 있는 사람 수. 계산대가 없거나 정원 개념이 없으면 0
+	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
+	int32 GetEffectiveMaxQueueLength() const;
+
+	// 대기줄이 정원까지 찼는지. 정원을 구할 수 없으면 예전처럼 무제한 설정
+	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
+	bool IsQueueFull() const;
 
 	// 맨 앞 손님의 계산을 완료 처리. 플레이어 파트가 계산 상호작용에서 호출.
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
