@@ -550,6 +550,14 @@ int32 UCSCustomerRuntimeSubsystem::JoinQueue(ACSCustomerCharacter* Customer)
 		return ExistingIndex;
 	}
 
+	// 안전망. 정상 흐름은 WaitInQueue::EnterState의 IsQueueFull()에서 이미 걸러집니다.
+	// 여기서 -1을 받은 호출부는 반드시 AbandonCheckout으로 포기 처리를 해야 합니다.
+	// 안 그러면 bCheckoutAbandoned가 false로 남아 Checkout 상태로 매 틱 재진입합니다.
+	if (IsQueueFull())
+	{
+		return -1;
+	}
+
 	// 대기열 맨 끝에 손님을 추가하고, 해당 인덱스를 반환합니다.
 	Queue.Add(Customer);
 	return Queue.Num() - 1;
@@ -586,6 +594,34 @@ FVector UCSCustomerRuntimeSubsystem::GetQueueSlotLocation(const int32 Index) con
 	return CounterInterface->GetQueueSlotLocation(Index);
 }
 
+bool UCSCustomerRuntimeSubsystem::TryGetQueueSlotZone(const int32 Index,FVector& OutCenter,float& OutRadius) const
+{
+	OutCenter = FVector::ZeroVector;
+	OutRadius = 0.0f;
+
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr || Index < 0)
+	{
+		return false;
+	}
+
+	// 진열대의 TryGetShelfBrowsePoint와 같은 역할입니다.
+	// 이동 목표(중심)와 정지·도착 반경을 한 번에 받아, 두 값이 어긋날 여지를 없앱니다.
+	return CounterInterface->TryGetQueueSlotZone(Index, OutCenter, OutRadius);
+}
+
+float UCSCustomerRuntimeSubsystem::GetQueueSlotStopRadius() const
+{
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr)
+	{
+		return 0.0f;
+	}
+
+	// 손님 AI는 이 값을 그대로 정지 반경으로 씁니다. 불변식 계산은 계산대가 책임집니다.
+	return CounterInterface->GetQueueSlotStopRadius();
+}
+
 ACSCustomerCharacter* UCSCustomerRuntimeSubsystem::GetFrontCustomer() const
 {
 	// 대기열의 가장 첫 번째(계산 차례인) 손님을 반환
@@ -594,6 +630,86 @@ ACSCustomerCharacter* UCSCustomerRuntimeSubsystem::GetFrontCustomer() const
 		return nullptr;
 	}
 	return Queue[0];
+}
+
+ACSCustomerCharacter* UCSCustomerRuntimeSubsystem::GetCheckoutReadyCustomer() const
+{
+	ACSCustomerCharacter* Front = GetFrontCustomer();
+	if (!IsValid(Front))
+	{
+		return nullptr;
+	}
+
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr)
+	{
+		return nullptr;
+	}
+
+	// 0번 자리에 도착하지 않은 손님은 아직 계산 대상이 아닙니다.
+	// "줄 순번 확정"은 결심 시점, "계산 가능"은 도착 시점으로 두 시점을 나누는 지점입니다.
+	if (!CounterInterface->IsPointInsideQueueSlotZone(0, Front->GetActorLocation()))
+	{
+		return nullptr;
+	}
+
+	return Front;
+}
+
+bool UCSCustomerRuntimeSubsystem::IsCustomerAtQueueSlot(const ACSCustomerCharacter* Customer) const
+{
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr || !IsValid(Customer))
+	{
+		return false;
+	}
+
+	const int32 Index = GetQueueIndex(Customer);
+	if (Index < 0)
+	{
+		return false;
+	}
+	// 해당 순번의 영역 안에 손님이 들어가 있는지 계산대에게 판정 요청
+	return CounterInterface->IsPointInsideQueueSlotZone(Index, Customer->GetActorLocation());
+}
+
+bool UCSCustomerRuntimeSubsystem::TryGetQueueSlotFacing(const int32 Index, FRotator& OutFacing) const
+{
+	OutFacing = FRotator::ZeroRotator;
+
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr || Index < 0)
+	{
+		return false;
+	}
+
+	return CounterInterface->TryGetQueueSlotFacing(Index, OutFacing);
+}
+
+int32 UCSCustomerRuntimeSubsystem::GetEffectiveMaxQueueLength() const
+{
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr)
+	{
+		// 계산대가 없으면 정원 개념이 없습니다. IsQueueFull이 무제한으로 처리
+		return 0;
+	}
+	// NavMesh나 벽에 막힌 슬롯을 제외한 '실제 설 수 있는 정원 수'를 가져옴
+	return CounterInterface->GetEffectiveMaxQueueLength();
+}
+
+bool UCSCustomerRuntimeSubsystem::IsQueueFull() const
+{
+	const int32 Limit = GetEffectiveMaxQueueLength();
+
+	// 정원을 못 구했으면(계산대 없음 등) 예전처럼 무제한으로 둡니다.
+	// 여기서 true를 반환하면 계산대가 없는 맵에서 모든 손님이 포기
+	if (Limit <= 0)
+	{
+		return false;
+	}
+	// 현재 줄을 서 있는 인원이 실제 정원 한계치에 도달했는지 확인
+	return Queue.Num() >= Limit;
 }
 
 void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()

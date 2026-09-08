@@ -58,6 +58,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	bool bCheckoutAbandoned = false;
 
+	// 계산대가 이 손님을 응대하는 동안 인내심을 멈추기 위한 플래그입니다.
+	// 서비스를 받고 있는 손님이 "기다리다 지쳐" 나가는 것은 게임 규칙으로도 틀렸습니다.
+	// 계산 UI를 열 때 켜고, UI를 닫거나 결제가 끝나면 끕니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
+	bool bIsBeingServed = false;
+
 	// 손님이 나갈 때 걸어갈 목표 좌표
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector ExitLocation = FVector::ZeroVector;

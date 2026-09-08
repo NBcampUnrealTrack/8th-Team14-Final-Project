@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
@@ -32,12 +32,41 @@ class CONVENIENCESTORE_API ACSCheckoutCounterActor
 
 public:
 	ACSCheckoutCounterActor();
+	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
-	// 대기열 순서에 맞는 손님의 월드 좌표를 반환합니다.
+	// 대기열 순서에 맞는 손님의 월드 좌표를 반환
 	virtual FVector GetQueueSlotLocation(const int32 Index) const override;
+
+	// 계산대가 지정한 트랜스폼에 놓였다고 가정했을 때의 Index번째 슬롯 좌표
+	// 건축 배치 미리보기처럼 액터를 실제로 옮기지 않고 판정만 해야 하는 곳에서 사용
+	FVector GetQueueSlotLocationForTransform(const int32 Index,const FTransform& CounterTransform) const;
+
+	// Index번째 슬롯의 도착 판정 영역을 NavMesh 높이에 맞춰 반환
+	virtual bool TryGetQueueSlotZone(const int32 Index, FVector& OutCenter, float& OutRadius) const override;
+
+	// 주어진 월드 좌표가 Index번째 슬롯 영역 안인지 확인
+	// "줄 순번상 맨 앞"과 "지금 계산 가능"을 가르는 판정
+	virtual bool IsPointInsideQueueSlotZone(const int32 Index, const FVector& WorldPoint) const override;
+
+	// Index번째 슬롯에 선 손님이 바라볼 방향
+	virtual bool TryGetQueueSlotFacing(const int32 Index, FRotator& OutFacing) const override;
+
+	// 손님이 슬롯으로 이동할 때 멈춰도 되는 반경
+	// QueueSlotStopRadius를 QueueSlotSpacing·QueueSlotRadius가 정하는 상한으로 잘라서 반환
+	virtual float GetQueueSlotStopRadius() const override;
+
+	// 데이터가 요구하는 정원과 실제로 설 자리가 있는 슬롯 수 중 작은 쪽
+	virtual int32 GetEffectiveMaxQueueLength() const override;
+
+	// 나중에 아이템·업그레이드·기획이 대기줄 정원을 늘리거나 줄일 때 호출할 자리
+	UFUNCTION(BlueprintCallable, Category = "Queue")
+	void AddBonusQueueSlots(int32 Delta);
+
+	// 계산대가 지정한 트랜스폼에 있다고 가정하고, 대기줄 슬롯이 전부 설 수 있는 자리인지 확인
+	bool AreQueueSlotsUsableAt(const FTransform& CounterTransform) const;
 
 	// 플레이어가 계산대와 상호작용했을 때 맨 앞 손님의 계산 완료를 처리합니다.
 	virtual void Interact_Implementation(AActor* Interactor) override;
@@ -93,6 +122,39 @@ protected:
 
 	// 대기열의 다음 손님 주문과 월드 표시 상품을 현재 계산 세션에 준비합니다.
 	bool PrepareNextCustomerCheckout();
+
+	// 다음 손님이 0번 자리에 도착할 때까지 카메라와 UI를 유지하며 대기
+	void BeginWaitForNextCustomer();
+	void TickWaitForNextCustomer();
+
+	// 대기 상태를 해제하고 폴링 타이머를 정리
+	void EndWaitForNextCustomer();
+
+	// 계산대가 응대 중인 손님의 인내심을 멈추기 위해 상태 갱신
+	void SetCustomerBeingServed(ACSCustomerCharacter* Customer, bool bIsServed);
+
+	// 대기줄 영역 박스를 QueueStartPoint / QueueSlotSpacing / MaxQueueSlots 로부터 다시 계산
+	void SyncQueueZoneBox();
+
+	// QueueStartPoint와 손님이 서는 바닥의 높이 차이를 상대 좌표 길이로 반환
+	// 영역 박스 밑면을 바닥에 맞추는 데만 사용
+	float GetQueueZoneFloorDropLocal(const float ParentScaleZ) const;
+
+	// NavMesh를 판정 근거로 믿을 수 있는 상태인지 확인
+	bool IsQueueNavigationTrustworthy() const;
+
+	// 슬롯 XY 자리의 바닥 높이를 찾습니다.
+	bool TryProjectQueueSlotToFloor(const FVector& SlotLocation, float& OutFloorZ) const;
+
+	// 대기줄 정원이 되어야 할 데이터상의 값, NavMesh 상한을 적용하기 전 값
+	int32 GetConfiguredQueueSlotCount() const;
+
+	// 슬롯 좌표가 NavMesh에 올라오고 다른 시설 몸통에 막히지 않은 개수를 세어 물리적 상한을 구함
+	// 0번부터 순서대로 검사하고 처음 실패한 지점에서 멈춤
+	int32 CountUsableQueueSlots(const int32 SearchLimit, const FTransform& CounterTransform) const;
+
+	// 슬롯 자리가 다른 건축 시설 몸통에 막혀 있는지 확인
+	bool IsQueueSlotBlockedByFacility(const FVector& SlotCenter) const;
 
 	// 매장 단계가 계산 불가 상태로 바뀌면 진행 중인 계산 UI를 안전하게 닫습니다.
 	UFUNCTION()
@@ -150,9 +212,53 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Checkout|Display")
 	TObjectPtr<UArrowComponent> CheckoutDisplayOrigin;
 
-	// 대기열에서 손님과 손님 사이에 유지할 거리입니다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue", meta = (ClampMin = "0.0"))
-	float QueueSlotSpacing = 120.0f;
+	// 건축 모드에서 대기줄 자리를 보호하는 영역, 판정 시 태그만 쓰이고 충돌은 꺼 둠
+	// 진열대의 BrowseZoneBox와 같은 방식이며, 크기는 QueueStartPoint에서 파생됩니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Queue")
+	TObjectPtr<UBoxComponent> QueueZoneBox;
+
+	// 대기열에서 손님과 손님 사이에 유지할 거리
+	// 겹침을 막는 장치는 이 값 하나뿐입니다. 제일 큰 손님(오크) 지름 150이 하한입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "150.0", UIMin = "150.0"))
+	float QueueSlotSpacing = 280.0f;
+
+	// 각 대기열 슬롯의 도착 판정 반경
+	// MoveToLocation 허용 반경(30)보다 커야 손님이 멈춘 자리가 영역 안이고,
+	// QueueSlotSpacing의 절반보다 작아야 인접 슬롯 영역이 겹치지 않습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "31.0", UIMin = "31.0"))
+	float QueueSlotRadius = 80.0f;
+
+	// 손님이 "내 자리에 섰다"고 보고 멈춰도 되는 반경
+	// 도착 판정 반경(QueueSlotRadius)보다 좁아야 앞뒤 손님이 서로에게 치우쳐 멈춰도 몸이 겹치지 않습니다.
+	// 여기 적은 값이 그대로 쓰이지는 않고 GetQueueSlotStopRadius가 간격 기준 상한으로 자릅니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "10.0", UIMin = "10.0"))
+	float QueueSlotStopRadius = 30.0f;
+
+	// 이 계산대에 기본으로 설 수 있는 사람 수
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue", meta = (ClampMin = "1"))
+	int32 MaxQueueSlots = 6;
+
+	// 나중에 아이템·업그레이드가 더해 줄 추가 정원
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Queue")
+	int32 BonusQueueSlots = 0;
+
+	// 대기줄 영역의 반폭입니다. 제일 큰 손님 반지름(75)보다 커야 몸이 영역 안에 들어옴
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "75.0", UIMin = "75.0"))
+	float QueueZoneHalfWidth = 80.0f;
+
+	// 대기줄 영역의 높이입니다. 진열대 BrowseZoneHeight와 같은 값으로 맞춥니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float QueueZoneHeight = 200.0f;
+
+	// 0번 손님만 예외적으로 계산대 정면을 보게 할지 여부
+	// 켜면 계산 카메라에 손님의 정면이 잡히고, 끄면 그림처럼 전원이 전진 방향을 봅니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue")
+	bool bFrontCustomerFacesCounter = true;
 
 	// 손님의 상품 RowName으로 이름과 가격을 조회할 상품 마스터 데이터 테이블입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Checkout")
@@ -186,6 +292,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout|Employee",
 		meta = (ClampMin = "0.1", UIMin = "0.1"))
 	float EmployeeScanIntervalSeconds = 0.6f;
+
+	// 다음 손님 도착을 확인하는 폴링 간격
+	// 액터 Tick을 늘리지 않도록 기존 CheckoutPlayerVisibilityRestoreTimer와 같은 타이머 방식 사용
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout",
+		meta = (ClampMin = "0.05", UIMin = "0.05"))
+	float NextCustomerPollInterval = 0.2f;
+
+	// 이 시간 안에 다음 손님이 도착하지 않으면 계산 세션을 닫습니다.
+	// 경로가 막혀 손님이 영원히 못 오는 경우에 플레이어가 갇히지 않게 하는 안전장치
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Checkout",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float NextCustomerWaitTimeout = 8.0f;
 
 	// 현재 화면에 열려 있는 계산 UI를 저장합니다.
 	UPROPERTY(Transient)
@@ -227,6 +345,11 @@ protected:
 
 	// 결제 확정부터 영수증 퇴장 완료까지 중복 결제와 취소 요청을 차단합니다.
 	bool bIsCheckoutTransitioning = false;
+
+	// 영수증 퇴장이 끝났지만 다음 손님이 아직 0번 자리로 걸어오는 중인 상태
+	bool bIsWaitingForNextCustomer = false;
+	FTimerHandle NextCustomerPollTimer;
+	float NextCustomerWaitElapsed = 0.0f;
 
 	// 직원 계산은 플레이어 UI와 달리 Tick 기반의 자동 스캔 연출로 진행됩니다.
 	bool bIsEmployeeCheckoutPresenting = false;
