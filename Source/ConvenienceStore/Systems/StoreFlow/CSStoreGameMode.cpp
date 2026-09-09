@@ -4,6 +4,7 @@
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSStoreEconomyDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
+#include "Data/CSWeatherSettingsDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Engine/GameInstance.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
@@ -463,4 +464,9 @@ TSubclassOf<UCSTutorialObjectiveWidgetBase> ACSStoreGameMode::GetTutorialObjecti
 TSubclassOf<AActor> ACSStoreGameMode::GetTutorialShelfFacilityClass() const
 {
 	return TutorialShelfFacilityClass;
+}
+
+UCSWeatherSettingsDataAsset* ACSStoreGameMode::GetWeatherSettings() const
+{
+	return WeatherSettingsDataAsset;
 }

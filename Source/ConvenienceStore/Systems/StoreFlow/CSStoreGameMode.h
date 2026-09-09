@@ -11,6 +11,7 @@ class UCSAudioConfigDataAsset;
 class UCSStoreEconomyDataAsset;
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
+class UCSWeatherSettingsDataAsset;
 class UCSTutorialBannerWidgetBase;
 class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
@@ -69,6 +70,10 @@ public:
 	// ICSBuildableFacility를 구현하는 클래스여야 함 (그렇지 않으면 스폰은 되지만 경고 로그만 남고 무시됨)
 	UFUNCTION(BlueprintPure, Category = "Store|Tutorial")
 	TSubclassOf<AActor> GetTutorialShelfFacilityClass() const;
+
+	// 날씨 서브시스템이 시작 시점에 이 값을 가져감
+	UFUNCTION(BlueprintPure, Category = "Store|Weather")
+	UCSWeatherSettingsDataAsset* GetWeatherSettings() const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -146,6 +151,11 @@ protected:
 	// 튜토리얼 전용: DeliveryArrived 스텝에서 스폰할 선반 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
 	TSubclassOf<AActor> TutorialShelfFacilityClass;
+
+	// 날씨 종류 테이블과 예보 공개 범위를 제공하는 설정입니다.
+	// 지정하지 않으면 경고 로그를 남기고 날씨가 항상 맑음으로 유지됩니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Weather")
+	TObjectPtr<UCSWeatherSettingsDataAsset> WeatherSettingsDataAsset;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;
