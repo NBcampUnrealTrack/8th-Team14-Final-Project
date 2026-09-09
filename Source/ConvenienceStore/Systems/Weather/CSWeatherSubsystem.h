@@ -69,21 +69,70 @@ public:
 	FCSOnWeatherForecastUpdated OnWeatherForecastUpdated;
 
 	// -----------------------------------------------------------------------
-	// 확률 배율 (계절, 이벤트 등이 개입하는 통로)
+	// 확률 조정 - 영구
 	// -----------------------------------------------------------------------
 
-	// 계절이나 이벤트가 날씨 확률을 조작할 때 배율을 등록하는 함수
-	// 이미 보여준 예보(약속)는 뒤집지 않고, 아직 안 보여준 미래의 날씨 확률만 바꿉니다[cite: 8].
-	UFUNCTION(BlueprintCallable, Category = "Weather")
-	void AddWeightModifier(const FCSWeatherWeightModifier& Modifier);
+	// 영구층에서 특정 날씨의 가중치를 확률(0~1)로 환산해 반환
+	UFUNCTION(BlueprintPure, Category = "Weather|Roll")
+	float GetWeatherChance(ECSWeatherType Type) const;
 
-	// 등록했던 배율을 이름표(SourceId)로 찾아 제거
-	UFUNCTION(BlueprintCallable, Category = "Weather")
-	void RemoveWeightModifier(FName SourceId);
+	// 영구층에서 특정 날씨의 확률을 조정합니다. 기간제와 동일한 연산을 사용
+	// 이미 확정된 날씨는 바뀌지 않으며, 이후 확률 계산부터 반영
+	//
+	// Op별 Value의 의미:
+	//   Set      - 목표 확률(0~1)을 지정합니다. 확률이 0이던 날씨도 등장시킬 수 있습니다.
+	//   Multiply - 현재 확률에 배수를 곱하고, 결과를 0~1로 제한합니다.
+	//              100%에 도달하면 다른 날씨의 확률은 모두 0이 됩니다.
+	//   Weight   - 해당 가중치에 배수를 곱한 뒤 표 전체를 정규화합니다.
+	//              예를 들어 2를 넣어도 최종 확률이 정확히 2배가 되지는 않습니다.
+	//
+	// Mode는 Set·Multiply에서 나머지 날씨의 확률을 재분배하는 방식입니다.
+	// Weight는 전체 정규화를 사용하므로 Mode를 사용하지 않습니다.
+	// 현재 확률이 0이면 Multiply·Weight 요청은 경고를 남기고 거부합니다.
+	UFUNCTION(BlueprintCallable, Category = "Weather|Roll")
+	void ApplyWeatherChance(ECSWeatherType Type, ECSChanceOpType Op, float Value,
+		ECSChanceRebalanceMode Mode = ECSChanceRebalanceMode::Proportional);
 
-	// 배율이 등록/해제되었을 때, 대중에게 공개되지 않은 먼 미래의 날씨 기록을 버리고 새 확률로 다시 뽑음
-	UFUNCTION(BlueprintCallable, Category = "Weather")
-	void InvalidateUnpublishedTail();
+	// 영구층의 가중치 표 전체를 복사해서 반환
+	// 기간제 레이어는 포함X
+	UFUNCTION(BlueprintPure, Category = "Weather|Roll")
+	FCSWeatherWeightSet GetRuntimeWeights() const { return RuntimeWeights; }
+
+	// 영구층의 가중치 표 전체를 교체하고 정규화
+	// 챕터 전환처럼 기본 확률 구성을 통째로 바꿀 때 사용
+	// 이미 확정된 날씨는 바뀌지 않으며, 등록된 기간제 레이어는 유지
+	UFUNCTION(BlueprintCallable, Category = "Weather|Roll")
+	void SetRuntimeWeights(const FCSWeatherWeightSet& NewWeights);
+
+	// -----------------------------------------------------------------------
+	// 확률 조정 - 기간제
+	// 영구층을 직접 바꾸지 않고, 지정한 기간의 확률 계산에만 반영합니다.
+	// 기간이 지나면 계산에서 제외되므로 별도의 원상 복구가 필요 없습니다.
+	// -----------------------------------------------------------------------
+
+
+	// 기간제 확률 조정을 등록합니다. 같은 SourceId가 있으면 교체
+	// 이미 확정된 날씨는 바뀌지 않으므로, 기간 안에서 새로 추첨하는 날짜에만 영향을 줌
+	UFUNCTION(BlueprintCallable, Category = "Weather|Roll")
+	void AddChanceLayer(const FCSWeatherChanceLayer& Layer);
+
+	// SourceId가 일치하는 기간제 레이어를 제거합니다. 없으면 아무 작업도 하지 않습니다.
+	// 이후 확률 계산에서 해당 효과가 빠지며, 이미 확정된 날씨는 바뀌지 않습니다.
+	UFUNCTION(BlueprintCallable, Category = "Weather|Roll")
+	void RemoveChanceLayer(FName SourceId);
+
+	// 지정한 영업 일차의 영구층 + 활성 기간제 레이어를 합산한 확률을 반환
+	UFUNCTION(BlueprintPure, Category = "Weather|Roll")
+	float GetEffectiveChance(ECSWeatherType Type, int32 BusinessDay) const;
+
+	// -----------------------------------------------------------------------
+	// 이벤트 개입 - 확정된 날씨 변경
+	// -----------------------------------------------------------------------
+
+	// 오늘 또는 공개된 미래 예보의 날씨를 직접 변경
+	// DayOffset은 오늘 기준입니다. (0 = 오늘, 1 = 내일)
+	UFUNCTION(BlueprintCallable, Category = "Weather|Event")
+	bool SetForecastWeather(int32 DayOffset, ECSWeatherType NewWeather);
 
 	// ----- 디버그 (임시) 여기부터 -----
 	// 구현은 전부 Systems/Weather/CSWeatherDebug.cpp에 있습니다.
@@ -131,9 +180,15 @@ protected:
 	UPROPERTY(Transient)
 	TMap<ECSWeatherType, FCSWeatherRow> WeatherRowCache;
 
-	// 현재 적용 중인 확률 배율들을 모아두는 맵
+	// 저장할 날씨 확률표입니다. 시작 시 Settings->BaseWeights를 복사해옵니다.
+	// 영구 이벤트는 이 표를 직접 고칩니다. 되돌리지 않습니다.
 	UPROPERTY(Transient)
-	TMap<FName, FCSWeatherWeightModifier> WeightModifiers;
+	FCSWeatherWeightSet RuntimeWeights;
+
+	// 기간제 확률 지정 목록입니다. 매 계산마다 영구층 사본 위에 다시 적용됩니다.
+	// 영구층 자체는 절대 건드리지 않으므로, 만료되면 별도 복원 없이 원래대로 돌아옵니다.
+	UPROPERTY(Transient)
+	TArray<FCSWeatherChanceLayer> ChanceLayers;
 
 	// GameState와 동일하게 맞추고 있는 오늘 일차
 	int32 CurrentBusinessDay = 1;
@@ -149,6 +204,34 @@ private:
 
 	// 배율 등을 모두 합쳐서 "그날 하루의 최종 확률표"를 계산 (합계 1.0)
 	void BuildDayWeights(int32 BusinessDay,TArray<ECSWeatherType>& OutTypes,TArray<float>& OutNormalizedWeights) const;
+
+	// 특정 일차 하루치의 확률표를 계산해서 돌려줍니다.
+	FCSWeatherWeightSet BuildEffectiveWeights(int32 BusinessDay) const;
+
+	// -----------------------------------------------------------------------
+	// 확률표 연산
+	// -----------------------------------------------------------------------
+
+	// 확률 변경 요청을 실제 확률표에 적용하는 공통 진입점
+	// Op에 따라 처리 방식이 달라집니다.(Set, Multiply, Weight)
+	static void ApplyOpTo(FCSWeatherWeightSet& Weights, ECSWeatherType Type,ECSChanceOpType Op, float Value, ECSChanceRebalanceMode Mode);
+
+	// 확률표에서 특정 날씨가 현재 차지하는 "실제 확률"을 구합니다.
+	static float GetChanceIn(const FCSWeatherWeightSet& Weights, ECSWeatherType Type);
+
+	// 특정 날씨의 확률을 NewChance로 변경하고, 그 변화량만큼 나머지 날씨의 확률을 다시 배분
+	static void ApplyChanceTo(FCSWeatherWeightSet& Weights, ECSWeatherType Type,float NewChance, ECSChanceRebalanceMode Mode);
+
+	// 확률표의 모든 값을 합쳐서 1.0이 되도록 다시 맞춥니다.
+	static void NormalizeSet(FCSWeatherWeightSet& Weights);
+
+	// 대상 날씨의 확률을 변경한 뒤,"나머지 날씨끼리의 기존 비율"을 유지하면서 재분배
+	static void RebalanceProportionalIn(FCSWeatherWeightSet& Weights,ECSWeatherType Type, float NewChance);
+	// 대상 날씨의 확률 변화량을 나머지 날씨들에게 가능한 한 같은 양씩 나누어 반영
+	static void RebalanceEvenIn(FCSWeatherWeightSet& Weights,ECSWeatherType Type, float Delta);
+
+	// -----------------------------------------------------------------------
+
 
 	// 확정 배열에서 특정 일차의 날씨를 꺼내옴
 	ECSWeatherType RollWeather(int32 BusinessDay) const;

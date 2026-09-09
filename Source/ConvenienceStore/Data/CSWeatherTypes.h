@@ -7,10 +7,11 @@
 class ACSWeatherEffectActor;
 
 // 날씨 종류
-// 새 날씨를 추가할 때는 Max 앞에 값을 넣고 DT_Weather에 같은 이름의 행을 추가
+// 새 날씨는 Max 앞에 추가하고, DT_Weather에 같은 이름의 행을 등록
 UENUM(BlueprintType)
 enum class ECSWeatherType : uint8
 {
+    // 날씨가 없거나 유효하지 않은 조회 결과를 나타내는 값
 	None    UMETA(Hidden),
 
 	// VFX 보유. 1차 구현 대상
@@ -18,7 +19,8 @@ enum class ECSWeatherType : uint8
 	Rain    UMETA(DisplayName = "비"),     // NS_Rain
 	Snow    UMETA(DisplayName = "눈"),     // NS_Snow
 
-	// 아래는 자리만 확보. DT_Weather 행이 준비되면 순차 활성화
+	// 추후 사용할 날씨 종류
+	// 실제 등장하려면 날씨 데이터 행과 양수 가중치가 필요
 	Cloudy  UMETA(DisplayName = "흐림"),
 	Heat    UMETA(DisplayName = "폭염"),
 	Cold    UMETA(DisplayName = "한파"),
@@ -26,14 +28,15 @@ enum class ECSWeatherType : uint8
 	Max     UMETA(Hidden)
 };
 
-// DT_Weather의 한 행입니다.
-// 행 이름은 ECSWeatherType의 값 이름과 같아야 합니다.
-// 이 행은 표시와 연출만 갖습니다. 확률은 DA_WeatherSettings.BaseWeights가 단독으로 소유합니다.
+// DT_Weather에 저장할 날씨 데이터 행
+// 행 이름은 ECSWeatherType의 값 이름과 동일하게 지정
+// 날씨 종류와 표시 이름, 이펙트를 보관하며 기본 가중치는 날씨 설정에서 관리
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSWeatherRow : public FTableRowBase
 {
 	GENERATED_BODY()
 
+    // 이 행이 나타내는 날씨 종류
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather")
 	ECSWeatherType WeatherType = ECSWeatherType::Clear;
 
@@ -41,96 +44,150 @@ struct CONVENIENCESTORE_API FCSWeatherRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Display")
 	FText DisplayName;
 
-	// 비워두면 이펙트 없는 날씨입니다. 비어 있어도 시스템은 정상 동작합니다.
+	// 해당 날씨에서 생성할 이펙트 액터 클래스
+	// 비어 있으면 이펙트 없이 날씨를 적용
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Effect")
 	TSoftClassPtr<ACSWeatherEffectActor> EffectActorClass;
 };
 
-// 날씨 종류별 확률입니다. (총합 1.0이 규칙)
+// 날씨 종류별 가중치를 보관하는 표
+// 저장된 값의 합이 반드시 1일 필요는 없으며, 확률 계산 시 전체 합으로 나누어 사용
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSWeatherWeightSet
 {
 	GENERATED_BODY()
 
+	// 날씨 종류를 키로 사용하고 해당 날씨의 가중치를 값으로 저장
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Roll")
 	TMap<ECSWeatherType, float> Weights;
 
-	// 적히지 않은 종류는 확률 0입니다. 즉 DT_Weather에 행이 있어도 등장 X
-	// 새 날씨를 자리만 잡아두고 아직 안 내보낼 때 이 성질을 이용
+	// 특정 날씨의 가중치를 반환
+	// 등록되지 않은 날씨나 음수 가중치는 0을 반환하며, 저장된 값은 변경하지 않음
 	float GetWeight(ECSWeatherType Type) const
 	{
 		const float* Found = Weights.Find(Type);
 		if (Found != nullptr)
 		{
-			// 값을 찾았다면, 그 값(*Found)과 0.0f 중 더 큰 값을 반환
-			// (음수 값이 들어오는 것을 방지하기 위함)
+			// 저장된 값이 음수이면 반환값만 0으로 보정
 			return FMath::Max(0.0f, *Found);
 		}
 		else
 		{
-			// 값을 찾지 못했다면 기본값인 0.0f를 반환합니다.
+			// 등록되지 않은 날씨는 가중치 0으로 처리
 			return 0.0f;
 		}
 	}
 };
 
-// 다른 시스템이 날씨 확률에 개입하는 통로
+// 대상 날씨의 확률을 변경한 뒤 나머지 날씨를 재분배하는 방식
+UENUM(BlueprintType)
+enum class ECSChanceRebalanceMode : uint8
+{
+	// 다른 날씨에 같은 배율을 적용해 서로의 기존 비율을 유지
+	Proportional UMETA(DisplayName = "비례 배분"),
+
+	// 다른 날씨에 같은 양을 더하거나 빼서 재분배
+	// 회수 시 보유한 값까지만 차감하고 부족한 몫은 나머지 날씨가 부담
+	Even         UMETA(DisplayName = "균등 배분"),
+};
+
+// 날씨의 확률 또는 가중치를 조정하는 연산 종류
+UENUM(BlueprintType)
+enum class ECSChanceOpType : uint8
+{
+	// Value를 목표 확률로 지정하고 나머지 날씨를 재분배
+	// 확률이 0이던 날씨도 양수 값으로 설정 가능
+	Set      UMETA(DisplayName = "확률 지정"),
+
+	// 현재 확률에 Value를 곱한 값을 목표로 삼고 나머지 날씨를 재분배
+	// 목표 확률은 0~1로 제한하며, 현재 확률이 0이면 곱해도 0
+	Multiply UMETA(DisplayName = "확률 배수"),
+
+	// 대상 가중치에 Value를 곱한 뒤 표 전체를 정규화
+	// 최종 확률이 정확히 Value배가 되지는 않으며, 재분배 Mode는 사용하지 않음
+	Weight   UMETA(DisplayName = "가중치 배율"),
+};
+
+// 지정한 기간에 적용할 확률 조정 한 건
+// 영구층 사본에 적용하며, 기간이 지나면 계산에서 제외
+// 이미 확정된 날씨는 변경하지 않음
 USTRUCT(BlueprintType)
-struct CONVENIENCESTORE_API FCSWeatherWeightModifier
+struct CONVENIENCESTORE_API FCSWeatherChanceLayer
 {
 	GENERATED_BODY()
 
-
-	//외부에서 누가 확률에 영향을 주는지 나타내는 이름표
+	// 레이어를 구분하는 식별자이며, 등록 시 빈 값은 허용하지 않음
+	// 같은 식별자로 등록하면 교체하며, 제거할 때도 이 값을 사용
+	// 여러 레이어를 계산할 때는 이 값의 사전순으로 적용
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll")
 	FName SourceId;
 
-	// 특정 날씨의 상대 가중치를 몇 배로 만들지 정하는 목록입니다.
-	// 최종 확률 배율이 아닙니다. 정규화를 거치므로 배율을 2로 줘도 확률이 2배가 되지는 않습니다.
-	//   예) 0.3 / 0.3 / 0.4 에서 첫 번째만 2배 -> 0.6 / 0.3 / 0.4 -> 46.2% / 23.1% / 30.8%
-	// 배율 없는 날씨도 정규화에 휩쓸려 함께 깎입니다. 희귀한 날씨일수록 배율이 의도대로 먹습니다.
+	// 확률을 조정할 날씨 종류
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll")
-	TMap<ECSWeatherType, float> Multipliers;
+	ECSWeatherType WeatherType = ECSWeatherType::Clear;
 
-	// 확률 수정 적용 시작 영업일차입니다.
+	// 확률 또는 가중치를 조정할 연산 방식
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll")
+	ECSChanceOpType Op = ECSChanceOpType::Set;
+
+	// Set이면 목표 확률(0~1), Multiply와 Weight이면 배수
+	// 계산 결과 대신 연산에 사용할 값을 저장
+	// 확률 계산마다 영구층과 앞선 레이어가 반영된 표에 적용
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll",
+		meta = (ClampMin = "0.0"))
+	float Value = 0.0f;
+
+	// Set과 Multiply에서 나머지 날씨의 확률을 재분배하는 방식
+	// Weight는 전체 정규화를 사용하므로 이 값을 사용하지 않음
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll")
+	ECSChanceRebalanceMode Mode = ECSChanceRebalanceMode::Proportional;
+
+	// 적용을 시작할 영업 일차이며, 해당 일차부터 포함
+	// 오늘 기준 오프셋이 아닌 실제 영업 일차로 지정
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll",
 		meta = (ClampMin = "1", UIMin = "1"))
 	int32 StartBusinessDay = 1;
 
-	// 확률 수정 적용 종료 영업일차(포함)입니다. 0이면 무기한입니다.
+	// 적용을 종료할 영업 일차이며, 해당 일차까지 포함
+	// 0이면 시작일 이후 직접 제거할 때까지 무기한 적용
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Weather|Roll",
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 EndBusinessDay = 0;
 
+	// 지정한 영업 일차가 레이어의 적용 기간에 포함되는지 반환
 	bool IsActiveOn(int32 BusinessDay) const
 	{
+		// 시작일 이전이면 적용하지 않음
 		if (BusinessDay < StartBusinessDay)
 		{
 			return false;
 		}
+		// 종료일이 0 이하이면 무기한, 양수이면 종료일까지만 적용
 		return EndBusinessDay <= 0 || BusinessDay <= EndBusinessDay;
 	}
 };
 
-// 게시판·HUD 전달용
+// 게시판과 HUD에 전달할 확정 날씨 정보
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSWeatherForecastEntry
 {
 	GENERATED_BODY()
 
-	// 0 = 오늘, 1 = 내일. 게시판이 "내일", "3일 뒤" 문구를 만들 때 씁니다.
+	// 오늘 기준 날짜 차이이며, 0 = 오늘, 1 = 내일
+	// UI에서 내일 또는 며칠 뒤인지 표시할 때 사용
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	int32 DayOffset = 0;
 
-	// 실제 영업일차입니다. ACSStoreGameState::CurrentBusinessDay와 같은 기준(1부터)입니다.
+	// 해당 예보의 실제 영업 일차이며, 1일부터 시작
+	// 게임 상태의 CurrentBusinessDay와 같은 기준을 사용
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	int32 BusinessDay = 1;
 
-	// 어떤 날씨인지 나타내는 값
+	// 해당 일차에 확정된 날씨 종류
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	ECSWeatherType WeatherType = ECSWeatherType::Clear;
 
-	// UI 화면에 보여줄 이름
+	// UI에 표시할 날씨 이름
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	FText DisplayName;
 };

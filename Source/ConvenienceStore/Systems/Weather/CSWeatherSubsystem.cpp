@@ -37,6 +37,10 @@ void UCSWeatherSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// DT_Weather 테이블을 캐싱해서 미리 읽어둡니다
 	BuildWeatherRowCache();
 
+	// 확률표는 사본으로 들고 갑니다. 원본 데이터 에셋을 런타임에 고치면
+	// 로드된 인스턴스가 변조되어 PIE를 껐다 켜기 전까지 값이 남습니다.
+	RuntimeWeights = Settings->BaseWeights;
+
 	// 마감종 → 정산 확인으로 하루가 넘어가는 지점입니다.
 	// 이 델리게이트 하나만 구독하면 되므로 StoreFlow 쪽 코드는 수정하지 않습니다.
 	StoreGameState->OnBusinessDayStarted.AddDynamic(
@@ -115,14 +119,26 @@ void UCSWeatherSubsystem::EnsureDecidedThrough(int32 BusinessDay)
 	while (DecidedWeather.Num() < TargetCount)
 	{
 		const int32 TargetDay = DecidedWeather.Num() + 1;
-		DecidedWeather.Add(bCanRoll ? RollWeather(TargetDay) : ECSWeatherType::Clear);
+		if (bCanRoll)
+		{
+			DecidedWeather.Add(RollWeather(TargetDay));
+		}
+		else
+		{
+			DecidedWeather.Add(ECSWeatherType::Clear);
+		}
 	}
 }
 
 ECSWeatherType UCSWeatherSubsystem::GetDecidedWeather(int32 BusinessDay) const
 {
 	const int32 Index = BusinessDay - 1;
-	return DecidedWeather.IsValidIndex(Index) ? DecidedWeather[Index] : ECSWeatherType::Clear;
+	if (DecidedWeather.IsValidIndex(Index))
+	{
+		return DecidedWeather[Index];
+	}
+
+	return ECSWeatherType::Clear;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +155,9 @@ void UCSWeatherSubsystem::BuildDayWeights(int32 BusinessDay,TArray<ECSWeatherTyp
 		return;   // 호출한 쪽이 빈 결과를 맑음으로 처리합니다.
 	}
 
+	// 그날의 유효 확률표를 먼저 만듭니다. 영구층 + 기간제 레이어가 여기서 합쳐집니다.
+	const FCSWeatherWeightSet Effective = BuildEffectiveWeights(BusinessDay);
+
 	// 열거형 값 순서로 순회합니다. TMap의 내부 순서에 결과가 의존하면 결정론이 깨집니다.
 	float Total = 0.0f;
 	for (int32 TypeIndex = static_cast<int32>(ECSWeatherType::Clear);
@@ -147,32 +166,13 @@ void UCSWeatherSubsystem::BuildDayWeights(int32 BusinessDay,TArray<ECSWeatherTyp
 	{
 		const ECSWeatherType Type = static_cast<ECSWeatherType>(TypeIndex);
 
-		// 확률표에서 값을 가져옴
-		float Weight = Settings->BaseWeights.GetWeight(Type);
+		const float Weight = Effective.GetWeight(Type);
 		if (Weight <= 0.0f)
 		{
 			continue;
 		}
 
-		// 다른 시스템(계절 등)이 개입한 배율이 있다면 찾아서 곱해줍니다
-		for (const TPair<FName, FCSWeatherWeightModifier>& Pair : WeightModifiers)
-		{
-			if (!Pair.Value.IsActiveOn(BusinessDay))
-			{
-				continue;
-			}
-			if (const float* Mul = Pair.Value.Multipliers.Find(Type))
-			{
-				Weight *= FMath::Max(0.0f, *Mul);
-			}
-		}
-
-		if (Weight <= 0.0f)
-		{
-			continue;   // 배율 0으로 제외된 종류입니다.
-		}
-
-
+		// 행이 없으면 표시 이름도 이펙트도 찾지 못하므로 후보에서 뺍니다.
 		if (FindWeatherRow(Type) == nullptr)
 		{
 			continue;
@@ -228,46 +228,438 @@ ECSWeatherType UCSWeatherSubsystem::RollWeather(int32 BusinessDay) const
 }
 
 // ---------------------------------------------------------------------------
-// 확률 배율
+// 유효 확률표 (영구층 + 기간제 레이어)
 // ---------------------------------------------------------------------------
 
-void UCSWeatherSubsystem::AddWeightModifier(const FCSWeatherWeightModifier& Modifier)
+FCSWeatherWeightSet UCSWeatherSubsystem::BuildEffectiveWeights(int32 BusinessDay) const
 {
-	if (Modifier.SourceId.IsNone())
+	// 기간제 계산이 영구층에 남지 않도록 사본을 생성
+	FCSWeatherWeightSet Effective = RuntimeWeights;
+
+	// 지정한 일차에 활성인 레이어만 수집
+	TArray<FCSWeatherChanceLayer> Actives;
+	for (const FCSWeatherChanceLayer& Layer : ChanceLayers)
+	{
+		if (Layer.IsActiveOn(BusinessDay))
+		{
+			Actives.Add(Layer);
+		}
+	}
+	// 활성 레이어가 없으면 영구층 사본을 그대로 반환
+	if (Actives.Num() == 0)
+	{
+		return Effective;
+	}
+
+	// 적용 순서에 따라 결과가 달라질 수 있으므로 SourceId 사전순으로 정렬
+	Actives.Sort([](const FCSWeatherChanceLayer& A, const FCSWeatherChanceLayer& B)
+	{
+		return A.SourceId.LexicalLess(B.SourceId);
+	});
+
+	for (const FCSWeatherChanceLayer& Layer : Actives)
+	{
+		// 앞선 레이어까지 반영된 표에 현재 레이어의 연산을 적용
+		ApplyOpTo(Effective, Layer.WeatherType, Layer.Op, Layer.Value, Layer.Mode);
+	}
+
+	return Effective;
+}
+
+void UCSWeatherSubsystem::AddChanceLayer(const FCSWeatherChanceLayer& Layer)
+{
+	// 교체와 제거에 사용할 식별자가 없으면 등록을 거부
+	if (Layer.SourceId.IsNone())
 	{
 		UE_LOG(LogTemp, Warning,
-			TEXT("[Weather] SourceId가 비어 있어 확률 배율을 등록하지 않았습니다. "
-			     "해제할 수 없는 배율이 남으면 확률이 왜 그런지 추적할 수 없습니다."));
+			TEXT("[Weather] AddChanceLayer: SourceId가 비어 있어 등록하지 않았습니다. "
+			     "해제할 수 없는 지정이 남으면 확률이 왜 그런지 추적할 수 없습니다."));
 		return;
 	}
 
-	WeightModifiers.Add(Modifier.SourceId, Modifier);
-	InvalidateUnpublishedTail();
-}
-
-void UCSWeatherSubsystem::RemoveWeightModifier(FName SourceId)
-{
-	if (WeightModifiers.Remove(SourceId) > 0)
+	// 날씨 데이터 행이 없으면 실제 추첨 후보에 포함되지 않으므로 등록을 거부
+	if (FindWeatherRow(Layer.WeatherType) == nullptr)
 	{
-		InvalidateUnpublishedTail();
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] AddChanceLayer: DT_Weather에 행이 없는 날씨입니다. "
+			     "행을 먼저 추가해야 확률이 의미를 갖습니다."));
+		return;
 	}
+
+	// Set은 목표 확률이므로 1을 넘는 값을 거부
+	// 음수 값은 실제 연산을 적용할 때 0으로 보정
+	if (Layer.Op == ECSChanceOpType::Set && Layer.Value > 1.0f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] AddChanceLayer: Set의 Value는 0~1이어야 합니다. (%.2f)"),
+			Layer.Value);
+		return;
+	}
+
+	// 같은 SourceId의 기존 레이어를 제거한 뒤 새 설정을 등록
+	RemoveChanceLayer(Layer.SourceId);
+	ChanceLayers.Add(Layer);
 }
 
-void UCSWeatherSubsystem::InvalidateUnpublishedTail()
+// SourceId가 일치하는 기간제 레이어를 모두 제거
+void UCSWeatherSubsystem::RemoveChanceLayer(FName SourceId)
 {
-	// 공개 예보로 이미 보여준 범위는 남깁니다. 그 날짜를 다시 굴리면 예보가 틀려집니다.
-	const int32 KeepCount = CurrentBusinessDay + GetPublicForecastDays();
-	if (DecidedWeather.Num() <= KeepCount)
+	// 전달받은 SourceId와 일치하는 항목만 제거
+	ChanceLayers.RemoveAll([SourceId](const FCSWeatherChanceLayer& Layer)
+	{
+		return Layer.SourceId == SourceId;
+	});
+}
+
+float UCSWeatherSubsystem::GetEffectiveChance(ECSWeatherType Type, int32 BusinessDay) const
+{
+	return GetChanceIn(BuildEffectiveWeights(BusinessDay), Type);
+}
+
+// ---------------------------------------------------------------------------
+// 확률 조정 - 영구
+// ---------------------------------------------------------------------------
+
+float UCSWeatherSubsystem::GetWeatherChance(ECSWeatherType Type) const
+{
+	return GetChanceIn(RuntimeWeights, Type);
+}
+
+void UCSWeatherSubsystem::ApplyWeatherChance(ECSWeatherType Type, ECSChanceOpType Op, float Value,ECSChanceRebalanceMode Mode)
+{
+	// 실제 날씨로 사용할 수 없는 열거형 값은 제외
+	if (Type == ECSWeatherType::None || Type == ECSWeatherType::Max)
 	{
 		return;
 	}
 
-	DecidedWeather.SetNum(KeepCount);
-	EnsureDecidedThrough(KeepCount);
+	// 날씨 데이터 행이 없으면 실제 추첨 후보에 포함되지 않으므로 변경을 거부
+	if (FindWeatherRow(Type) == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] ApplyWeatherChance: DT_Weather에 행이 없는 날씨입니다. "
+			     "행을 먼저 추가해야 확률이 의미를 갖습니다."));
+		return;
+	}
 
-	// 오늘 날씨는 바뀌지 않았으므로 OnWeatherChanged는 방송하지 않습니다.
-	// 이펙트를 다시 스폰하면 내리던 비가 한 번 끊깁니다.
+	// Set은 목표 확률이므로 1을 넘는 값을 거부
+	// Multiply와 Weight는 배수이므로 1보다 큰 값도 허용
+	if (Op == ECSChanceOpType::Set && Value > 1.0f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] ApplyWeatherChance: Set의 Value는 0~1이어야 합니다. (%.2f)"), Value);
+		return;
+	}
+
+	// 확률이 0인 날씨는 곱셈으로 올릴 수 없으므로 Set을 사용하도록 변경을 거부
+	if (Op != ECSChanceOpType::Set && GetWeatherChance(Type) <= 0.0f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] ApplyWeatherChance: 확률이 0이라 곱셈으로 올릴 수 없습니다. "
+			     "Set으로 값을 직접 지정하세요."));
+		return;
+	}
+
+	// 영구층 원본에 연산을 적용
+	ApplyOpTo(RuntimeWeights, Type, Op, Value, Mode);
+}
+
+void UCSWeatherSubsystem::SetRuntimeWeights(const FCSWeatherWeightSet& NewWeights)
+{
+	RuntimeWeights = NewWeights;
+	NormalizeSet(RuntimeWeights);
+}
+
+// ---------------------------------------------------------------------------
+// 확률표 연산 (영구층과 임시 계산본 양쪽에서 쓰는 순수 함수들)
+// ---------------------------------------------------------------------------
+
+void UCSWeatherSubsystem::ApplyOpTo(FCSWeatherWeightSet& Weights, ECSWeatherType Type,ECSChanceOpType Op, float Value, ECSChanceRebalanceMode Mode)
+{
+	switch (Op)
+	{
+	case ECSChanceOpType::Set:
+		// 목표 확률을 직접 지정하며, 확률이 0이던 날씨도 조정 가능
+		ApplyChanceTo(Weights, Type, Value, Mode);
+		break;
+
+	case ECSChanceOpType::Multiply:
+		// 현재 확률에 배수를 곱한 값을 목표 확률로 전달
+		// 목표 확률은 ApplyChanceTo에서 0~1로 제한
+		ApplyChanceTo(Weights, Type, GetChanceIn(Weights, Type) * Value, Mode);
+		break;
+
+	case ECSChanceOpType::Weight:
+		// 대상 가중치에 배수를 곱한 뒤 전체 합이 1이 되도록 정규화
+		// 대상 값도 함께 나누므로 최종 확률이 정확히 Value배가 되지는 않음
+		// 음수 배수는 0으로 보정하며, Mode는 사용하지 않음
+		Weights.Weights.Add(Type, Weights.GetWeight(Type) * FMath::Max(0.0f, Value));
+		NormalizeSet(Weights);
+		break;
+
+	default:
+		break;
+	}
+}
+
+float UCSWeatherSubsystem::GetChanceIn(const FCSWeatherWeightSet& Weights, ECSWeatherType Type)
+{
+	// 음수 가중치는 0으로 취급해 전체 합을 계산
+	float Total = 0.0f;
+	for (const TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		Total += FMath::Max(0.0f, Pair.Value);
+	}
+	// 전체 합이 있을 때만 대상 가중치를 확률로 환산
+	if (Total > 0.0f)
+	{
+		return Weights.GetWeight(Type) / Total;
+	}
+
+	return 0.0f;
+}
+
+void UCSWeatherSubsystem::ApplyChanceTo(FCSWeatherWeightSet& Weights, ECSWeatherType Type,float NewChance, ECSChanceRebalanceMode Mode)
+{
+	// 목표 확률을 0~1 범위로 제한
+	NewChance = FMath::Clamp(NewChance, 0.0f, 1.0f);
+
+	// 목표 확률이 100%이면 다른 날씨가 제외됨을 경고
+	if (NewChance >= 1.0f)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] 확률이 100%%에 도달해 다른 날씨가 모두 제외됩니다."));
+	}
+
+	// 저장된 가중치를 확률로 비교할 수 있도록 정규화
+	NormalizeSet(Weights);
+
+	// 기존 확률과 목표 확률의 차이를 계산
+	const float OldChance = Weights.GetWeight(Type);
+	const float Delta = NewChance - OldChance;
+
+	// 차이가 거의 없으면 추가 조정 없이 종료
+	if (FMath::IsNearlyZero(Delta))
+	{
+		return;
+	}
+
+	// 대상 날씨에 목표 확률을 먼저 설정
+	Weights.Weights.Add(Type, NewChance);
+
+	if (Mode == ECSChanceRebalanceMode::Proportional)
+	{
+		// 다른 날씨 사이의 기존 비율을 유지하며 재분배
+		RebalanceProportionalIn(Weights, Type, NewChance);
+	}
+	else
+	{
+		// 변경된 양을 다른 날씨에 균등하게 분배하거나 회수
+		RebalanceEvenIn(Weights, Type, Delta);
+	}
+}
+
+void UCSWeatherSubsystem::NormalizeSet(FCSWeatherWeightSet& Weights)
+{
+	float Total = 0.0f;
+	for (TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		// 음수를 제거한 값으로 전체 합을 계산
+		Pair.Value = FMath::Max(0.0f, Pair.Value);
+		Total += Pair.Value;
+	}
+
+	// 정규화할 가중치가 없으면 종료
+	if (Total <= 0.0f)
+	{
+		return;
+	}
+
+	// 각 가중치를 전체 합으로 나누어 확률로 변환
+	for (TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		Pair.Value /= Total;
+	}
+}
+
+void UCSWeatherSubsystem::RebalanceProportionalIn(FCSWeatherWeightSet& Weights,ECSWeatherType Type, float NewChance)
+{
+	// 대상 날씨를 제외한 가중치 합을 계산
+	float OthersTotal = 0.0f;
+	for (const TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		if (Pair.Key != Type)
+		{
+			OthersTotal += Pair.Value;
+		}
+	}
+
+	// 나머지 합이 거의 0이면 비례 분배가 어려우므로 대상 값을 1로 설정
+	if (OthersTotal <= KINDA_SMALL_NUMBER)
+	{
+		Weights.Weights.Add(Type, 1.0f);
+		return;
+	}
+
+	// 나머지 합이 1 - NewChance가 되도록 공통 배율을 계산
+	const float Scale = (1.0f - NewChance) / OthersTotal;
+	for (TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		if (Pair.Key != Type)
+		{
+			Pair.Value *= Scale;
+		}
+	}
+}
+
+void UCSWeatherSubsystem::RebalanceEvenIn(FCSWeatherWeightSet& Weights,ECSWeatherType Type, float Delta)
+{
+	// 대상 확률을 낮췄다면 남는 몫을 다른 날씨에 분배
+	if (Delta < 0.0f)
+	{
+		// 표에 있는 다른 날씨의 수를 계산하며, 가중치가 0인 항목도 포함
+		int32 OtherCount = 0;
+		for (const TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+		{
+			if (Pair.Key != Type)
+			{
+				++OtherCount;
+			}
+		}
+		// 분배할 다른 날씨가 없으면 종료
+		if (OtherCount == 0)
+		{
+			return;
+		}
+
+		// 남는 몫을 다른 날씨에 같은 양으로 분배
+		const float Share = -Delta / OtherCount;
+		for (TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+		{
+			if (Pair.Key != Type)
+			{
+				Pair.Value += Share;
+			}
+		}
+		return;
+	}
+	// 변경량이 없으면 종료
+	if (Delta == 0.0f)
+	{
+		return;
+	}
+
+	// 대상 날씨를 제외한 회수 후보를 수집
+	TArray<TPair<ECSWeatherType, float>> Others;
+	for (const TPair<ECSWeatherType, float>& Pair : Weights.Weights)
+	{
+		if (Pair.Key != Type)
+		{
+			Others.Add(Pair);
+		}
+	}
+
+	// 값이 작은 날씨부터 처리하도록 정렬
+	Others.Sort([](
+		const TPair<ECSWeatherType, float>& A,
+		const TPair<ECSWeatherType, float>& B)
+	{
+		return A.Value < B.Value;
+	});
+
+	// 대상 확률이 증가한 만큼 다른 날씨에서 회수
+	float Remaining = Delta;
+
+	// 각 날씨를 한 번씩 처리하며 필요한 확률을 회수
+	for (int32 Index = 0; Index < Others.Num(); ++Index)
+	{
+		// 남은 회수량을 아직 처리하지 않은 날씨 수로 나눔
+		const int32 RemainingCount = Others.Num() - Index;
+		const float Share = Remaining / RemainingCount;
+
+		// 현재 날씨가 가진 값까지만 회수해 음수를 방지
+		const float Take = FMath::Min(Share, Others[Index].Value);
+		Weights.Weights.Add(
+			Others[Index].Key,
+			Others[Index].Value - Take);
+
+		// 부족한 몫은 뒤에 남은 날씨들이 나눠 부담
+		Remaining = FMath::Max(0.0f, Remaining - Take);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 이벤트 개입 (예보 확정 변경)
+// ---------------------------------------------------------------------------
+
+bool UCSWeatherSubsystem::SetForecastWeather(int32 DayOffset, ECSWeatherType NewWeather)
+{
+	// 과거 날짜와 공개 예보 범위 밖의 날짜는 변경을 거부
+	if (DayOffset < 0 || DayOffset > GetPublicForecastDays())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] SetForecastWeather: DayOffset %d 은 공개 예보 범위(0~%d) 밖입니다."),
+			DayOffset, GetPublicForecastDays());
+		return false;
+	}
+
+	// 실제 날씨로 사용할 수 없는 열거형 값은 거부
+	if (NewWeather == ECSWeatherType::None || NewWeather == ECSWeatherType::Max)
+	{
+		return false;
+	}
+
+	// 표시 이름과 이펙트 등을 조회할 날씨 데이터 행이 없으면 거부
+	if (FindWeatherRow(NewWeather) == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] SetForecastWeather: DT_Weather에 행이 없는 날씨라 변경하지 않았습니다."));
+		return false;
+	}
+
+	// 오늘 기준 오프셋을 실제 영업 일차로 변환
+	const int32 TargetDay = CurrentBusinessDay + DayOffset;
+
+	// 초반 고정 맑음 구간은 이벤트로도 변경하지 못하도록 제한
+	if (IsValid(Settings) && TargetDay <= Settings->FixedClearBusinessDays)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Weather] SetForecastWeather: %d일차는 고정 맑음 구간이라 변경하지 않았습니다."),
+			TargetDay);
+		return false;
+	}
+
+	// 대상 날짜까지 확정 배열을 채운 뒤 접근 가능한 인덱스인지 확인
+	EnsureDecidedThrough(TargetDay);
+
+	const int32 Index = TargetDay - 1;
+	if (!DecidedWeather.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	// 이미 같은 날씨면 이벤트를 전달하지 않고 성공 처리
+	if (DecidedWeather[Index] == NewWeather)
+	{
+		return true;
+	}
+
+	// 저장된 확정 날씨를 요청한 날씨로 교체
+	DecidedWeather[Index] = NewWeather;
+
+	// 오늘을 변경한 경우 현재 날씨와 이펙트도 갱신
+	// 미래 예보만 변경한 경우 현재 날씨는 유지
+	if (DayOffset == 0)
+	{
+		const ECSWeatherType Previous = CurrentWeather;
+		CurrentWeather = NewWeather;
+		ApplyWeatherEffect(CurrentWeather);
+		OnWeatherChanged.Broadcast(CurrentWeather, Previous);
+	}
+
+	// 변경된 예보를 표시하도록 구독 중인 대상에 갱신 이벤트를 전달
 	OnWeatherForecastUpdated.Broadcast();
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,9 +755,13 @@ void UCSWeatherSubsystem::BuildWeatherRowCache()
 
 		// 행 이름 규칙이 어긋난 데이터를 시작 시점에 잡습니다.
 		// 동작은 WeatherType 필드를 신뢰하므로 멈추지는 않고 경고만 남깁니다.
-		const int64 Value = EnumPtr != nullptr
-			? EnumPtr->GetValueByNameString(RowName.ToString())
-			: static_cast<int64>(INDEX_NONE);
+		int64 Value = static_cast<int64>(INDEX_NONE);
+
+		if (EnumPtr != nullptr)
+		{
+			Value = EnumPtr->GetValueByNameString(RowName.ToString());
+		}
+
 		if (Value == INDEX_NONE || static_cast<ECSWeatherType>(Value) != Row->WeatherType)
 		{
 			UE_LOG(LogTemp, Warning,
