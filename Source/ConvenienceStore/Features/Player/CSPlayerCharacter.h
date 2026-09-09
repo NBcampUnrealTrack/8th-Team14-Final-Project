@@ -60,6 +60,8 @@ public:
 
 	// 상호작용한 물체를 플레이어 손 위치에 부착합니다.
 	bool TryPickUp(AActor* PickupActor);
+	// 제출할 도구를 손과 퀵바에서 함께 제거하여 파괴 후 참조가 남지 않게 합니다.
+	bool ConsumeQuickbarTool(ACSUsableToolActor* Tool);
 	// 창고 상호작용에서 손에 든 상자 또는 낱개 상품의 소유권을 창고 슬롯으로 넘깁니다.
 	bool TryStoreHeldItem(
 		ACSFreshnessSafeZoneActor* StoragePoint,
