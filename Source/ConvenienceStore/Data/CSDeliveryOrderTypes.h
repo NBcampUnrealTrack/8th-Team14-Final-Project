@@ -4,7 +4,23 @@
 #include "Engine/DataTable.h"
 #include "CSDeliveryOrderTypes.generated.h"
 
-class ACSDeliveryDestinationActor;
+USTRUCT(BlueprintType)
+struct CONVENIENCESTORE_API FCSDeliveryRecipientInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Recipient")
+	FName RecipientId;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Recipient")
+	FText DisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Recipient")
+	FText RegionName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Recipient")
+	FText FlavorText;
+};
 
 // 배달 주문의 현재 진행 상태입니다.
 UENUM(BlueprintType)
@@ -44,7 +60,7 @@ struct CONVENIENCESTORE_API FCSDeliveryOrderLine
 	int32 Quantity = 1;
 };
 
-// UI와 목적지가 읽는 현재 배달 주문의 런타임 데이터입니다.
+// UI와 마법진이 읽는 현재 배달 주문의 런타임 데이터입니다.
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSDeliveryOrderRuntime
 {
@@ -59,8 +75,15 @@ struct CONVENIENCESTORE_API FCSDeliveryOrderRuntime
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order")
 	TArray<FCSDeliveryOrderLine> RequiredProducts;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order")
-	TObjectPtr<ACSDeliveryDestinationActor> Destination;
+	// 월드 목적지 대신 주문에 포함되는 원격 수신처 정보입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order|Recipient")
+	FName RecipientId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order|Recipient")
+	FText RecipientDisplayName;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order|Recipient")
+	FText RecipientRegionName;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Delivery Order")
 	int32 RewardGold = 0;

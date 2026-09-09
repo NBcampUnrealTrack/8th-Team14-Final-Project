@@ -12,6 +12,7 @@ class UUserWidget;
 class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
+class UCSDeliveryToastWidget;
 class UTexture2D;
 enum class ECSStatusAnnouncementType : uint8;
 
@@ -65,6 +66,9 @@ public:
 	// 진열 보관 환경이 맞지 않을 때 HUD에 경고를 전달합니다.
 	void SetStorageWarning(const FText& Message);
 
+	/** 배달 기한 초과처럼 입력을 막으면 안 되는 결과를 화면 토스트로 표시합니다. */
+	void ShowGameplayToast(const FText& Title, const FText& Message);
+
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
 
@@ -96,6 +100,7 @@ protected:
 	UFUNCTION() void HandleDailySummaryConfirmed();
 	UFUNCTION() void HandleClosingWarningRequested(int32 RemainingMinutes);
 	UFUNCTION() void HandleClosingWarningFinished();
+	UFUNCTION() void HandleDeliveryToastFinished();
 
 	void UpdateClosingInputMode();
 	void ShowStatusAnnouncement(ECSStatusAnnouncementType AnnouncementType);
@@ -132,6 +137,10 @@ protected:
 	TSubclassOf<UCSClosingWarningWidget> ClosingWarningWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSClosingWarningWidget> ActiveClosingWarningWidget;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Delivery Toast")
+	TSubclassOf<UCSDeliveryToastWidget> DeliveryToastWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSDeliveryToastWidget> ActiveDeliveryToastWidget;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;

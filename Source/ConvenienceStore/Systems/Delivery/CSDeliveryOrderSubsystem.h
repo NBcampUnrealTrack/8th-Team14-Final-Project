@@ -5,10 +5,9 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "CSDeliveryOrderSubsystem.generated.h"
 
-class ACSDeliveryCartActor;
-class ACSDeliveryDestinationActor;
-class ACSDeliveryOrderTerminalActor;
 class UDataTable;
+class UCSDeliveryOrderSettingsDataAsset;
+class ACSProductPickupActor;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnDeliveryOrderChanged,
@@ -34,6 +33,10 @@ public:
 	// 현재 수락 대기 또는 진행 중인 주문 전체를 반환합니다.
 	UFUNCTION(BlueprintPure, Category = "Delivery Order")
 	TArray<FCSDeliveryOrderRuntime> GetDeliveryOrders() const { return DeliveryOrders; }
+
+	/** 완료·실패·기한 초과 결과를 최근 순서로 보관합니다. 게시판 기록용입니다. */
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	TArray<FCSDeliveryOrderRuntime> GetRecentDeliveryResults() const { return RecentDeliveryResults; }
 
 	// 오늘 생성된 전체 주문 수와 현재 수락된 주문 수를 UI 요약에 사용합니다.
 	UFUNCTION(BlueprintPure, Category = "Delivery Order")
@@ -72,11 +75,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Delivery Order")
 	bool CancelOrder(int32 OrderId, FText& OutMessage);
 
-	// 배달 목적지에서 수레 적재함을 검사한 뒤 주문 상품만 소비합니다.
-	bool TryCompleteCurrentOrder(
-		ACSDeliveryDestinationActor* Destination,
-		ACSDeliveryCartActor* DeliveryCart,
-		FText& OutMessage);
+	/** 마법진 액터가 레벨 설정 에셋을 등록합니다. 단말기 없이 주문을 생성하는 진입점입니다. */
+	void ConfigureOrderSettings(UCSDeliveryOrderSettingsDataAsset* InSettings);
+
+	UFUNCTION(BlueprintCallable, Category = "Delivery Order|Dispatch")
+	bool SetActiveDispatchOrder(int32 OrderId, FText& OutMessage);
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order|Dispatch")
+	int32 GetActiveDispatchOrderId() const { return ActiveDispatchOrderId; }
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order|Dispatch")
+	FCSDeliveryOrderRuntime GetActiveDispatchOrder() const;
+
+	/** 마법진 안에 실제로 놓인 상품만 검사해 선택된 주문을 발송합니다. */
+	bool TryCompleteDispatchOrder(
+		const TArray<ACSProductPickupActor*>& AvailableProducts,
+		FText& OutMessage,
+		int32& OutRewardGold,
+		int32& OutReputationReward);
 
 	UFUNCTION(BlueprintPure, Category = "Delivery Order|Stock")
 	int32 GetReservedQuantity(FName ProductId) const;
@@ -104,17 +120,22 @@ private:
 	FCSDeliveryOrderRuntime* FindOrderMutable(int32 OrderId);
 	const FCSDeliveryOrderRuntime* FindOrder(int32 OrderId) const;
 	int32 FindPrimaryOrderIndex() const;
+	int32 FindDispatchOrderIndex() const;
 	void ReserveOrderStock(const FCSDeliveryOrderRuntime& Order);
 	void ReleaseOrderReservation(const FCSDeliveryOrderRuntime& Order);
-	void ClearDestinationAssignment(const FCSDeliveryOrderRuntime& Order);
 	void BroadcastOrdersChanged(const FCSDeliveryOrderRuntime& ChangedOrder);
 	void RemoveOrderAt(int32 OrderIndex, ECSDeliveryOrderStatus FinalStatus);
-	void ShowDeadlineExpiredSettlement(const FCSDeliveryOrderRuntime& ExpiredOrder);
-	bool IsOrderAtDestination(const FCSDeliveryOrderRuntime& Order, const ACSDeliveryDestinationActor* Destination) const;
+	void ShowDeadlineExpiredToast(const FCSDeliveryOrderRuntime& ExpiredOrder);
+	void ShowDeliveryToast(const FText& Title, const FText& Message) const;
 
 	// 단일 CurrentOrder 대신 여러 수락 대기·진행 중 주문을 함께 보관합니다.
 	UPROPERTY(Transient)
 	TArray<FCSDeliveryOrderRuntime> DeliveryOrders;
+
+	UPROPERTY(Transient)
+	TArray<FCSDeliveryOrderRuntime> RecentDeliveryResults;
+
+	int32 MaximumRecentDeliveryResultCount = 5;
 
 	// 기존 단일 주문 UI와의 호환을 위해 가장 우선순위가 높은 주문을 반환합니다.
 	UPROPERTY(Transient)
@@ -135,6 +156,12 @@ private:
 	UPROPERTY(Transient)
 	int32 NextOrderId = 1;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UCSDeliveryOrderSettingsDataAsset> OrderSettings;
+
+	UPROPERTY(Transient)
+	int32 ActiveDispatchOrderId = INDEX_NONE;
+
 	// 평판별 최대 주문 수는 낮음 0, 보통 1, 좋음 2, 최고 3건입니다.
 	int32 MaxOrdersVeryBadOrBad = 0;
 	int32 MaxOrdersNormal = 1;
@@ -147,6 +174,4 @@ private:
 	int32 MinimumProductQuantity = 1;
 	int32 MaximumProductQuantity = 3;
 	float InStockProductPreference = 0.7f;
-	// 현재 포스트 프로세스 머티리얼에 설정된 초록 외곽선(Stencil 1)을 기본으로 사용합니다.
-	int32 DeliveryOutlineStencilValue = 1;
 };
