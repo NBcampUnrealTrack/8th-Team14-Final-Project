@@ -1,12 +1,9 @@
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
 
 #include "Data/CSProductTypes.h"
+#include "Data/CSDeliveryOrderSettingsDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
-#include "Features/Delivery/CSDeliveryCartActor.h"
-#include "Features/Delivery/CSDeliveryDestinationActor.h"
-#include "Features/Delivery/CSDeliveryOrderTerminalActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -41,10 +38,10 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 			const FCSDeliveryOrderRuntime FailedOrder = Order;
 			const bool bDeadlineExpired = CurrentMinutes >= Order.DeliveryDeadlineMinutes;
 			StoreGameState->AddReputation(-2);
-			RemoveOrderAt(Index, ECSDeliveryOrderStatus::Failed);
+			RemoveOrderAt(Index, bDeadlineExpired ? ECSDeliveryOrderStatus::Expired : ECSDeliveryOrderStatus::Failed);
 			if (bDeadlineExpired)
 			{
-				ShowDeadlineExpiredSettlement(FailedOrder);
+				ShowDeadlineExpiredToast(FailedOrder);
 			}
 		}
 	}
@@ -148,9 +145,13 @@ bool UCSDeliveryOrderSubsystem::AcceptOrder(const int32 OrderId, FText& OutMessa
 		Order->DeliveryDeadlineMinutes = FMath::Min(StoreGameState->AutomaticClosingTimeMinutes, StoreGameState->CurrentGameMinutes + DeliveryWindowMinutes);
 	}
 	Order->Status = ECSDeliveryOrderStatus::Accepted;
-	if (IsValid(Order->Destination)) Order->Destination->SetDeliveryOrderHighlight(true, DeliveryOutlineStencilValue);
 	BroadcastOrdersChanged(*Order);
 	OutMessage = NSLOCTEXT("Delivery", "OrderAccepted", "배달 주문을 수락했습니다.");
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "OrderAcceptedToastTitle", "배달 주문 수락"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "OrderAcceptedToast", "{0} 주문을 수락했습니다.\n게시판에서 발송 준비를 선택하세요."),
+			Order->RecipientDisplayName));
 	return true;
 }
 
@@ -193,25 +194,53 @@ bool UCSDeliveryOrderSubsystem::CancelOrder(const int32 OrderId, FText& OutMessa
 	return true;
 }
 
-bool UCSDeliveryOrderSubsystem::TryCompleteCurrentOrder(ACSDeliveryDestinationActor* Destination, ACSDeliveryCartActor* DeliveryCart, FText& OutMessage)
+void UCSDeliveryOrderSubsystem::ConfigureOrderSettings(UCSDeliveryOrderSettingsDataAsset* InSettings)
 {
-	const int32 OrderIndex = DeliveryOrders.IndexOfByPredicate([Destination](const FCSDeliveryOrderRuntime& Order)
+	OrderSettings = InSettings;
+}
+
+bool UCSDeliveryOrderSubsystem::SetActiveDispatchOrder(const int32 OrderId, FText& OutMessage)
+{
+	const FCSDeliveryOrderRuntime* Order = FindOrder(OrderId);
+	if (Order == nullptr || Order->Status != ECSDeliveryOrderStatus::Accepted)
 	{
-		return Order.Status == ECSDeliveryOrderStatus::Accepted && Order.Destination == Destination;
-	});
-	if (!DeliveryOrders.IsValidIndex(OrderIndex))
-	{
-		OutMessage = NSLOCTEXT("Delivery", "NoOrderAtDestination", "이 배달 지점에 진행 중인 주문이 없습니다.");
+		OutMessage = NSLOCTEXT("Delivery", "NoAcceptedDispatchOrder", "발송 준비할 수락된 주문이 없습니다.");
 		return false;
 	}
-	if (!IsValid(DeliveryCart))
+	ActiveDispatchOrderId = OrderId;
+	OutMessage = FText::Format(
+		NSLOCTEXT("Delivery", "DispatchOrderSelected", "{0} 주문을 발송 준비했습니다."),
+		Order->RecipientDisplayName);
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "DispatchReadyToastTitle", "발송 준비 완료"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "DispatchReadyToast", "{0} 주문을 마법진으로 발송할 수 있습니다."),
+			Order->RecipientDisplayName));
+	return true;
+}
+
+FCSDeliveryOrderRuntime UCSDeliveryOrderSubsystem::GetActiveDispatchOrder() const
+{
+	const FCSDeliveryOrderRuntime* Order = FindOrder(ActiveDispatchOrderId);
+	return Order == nullptr ? FCSDeliveryOrderRuntime() : *Order;
+}
+
+bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
+	const TArray<ACSProductPickupActor*>& AvailableProducts,
+	FText& OutMessage,
+	int32& OutRewardGold,
+	int32& OutReputationReward)
+{
+	OutRewardGold = 0;
+	OutReputationReward = 0;
+	const int32 OrderIndex = FindDispatchOrderIndex();
+	if (!DeliveryOrders.IsValidIndex(OrderIndex))
 	{
-		OutMessage = NSLOCTEXT("Delivery", "CartRequired", "배달 수레를 배달 지점 안으로 가져오세요.");
+		OutMessage = NSLOCTEXT("Delivery", "NoDispatchOrder", "게시판에서 발송할 주문을 먼저 선택하세요.");
 		return false;
 	}
 
 	const FCSDeliveryOrderRuntime& Order = DeliveryOrders[OrderIndex];
-	const TArray<ACSProductPickupActor*> AvailableProducts = DeliveryCart->GetCargoProducts();
 	TArray<ACSProductPickupActor*> ProductsToDeliver;
 	TSet<ACSProductPickupActor*> UsedProducts;
 	for (const FCSDeliveryOrderLine& OrderLine : Order.RequiredProducts)
@@ -228,14 +257,13 @@ bool UCSDeliveryOrderSubsystem::TryCompleteCurrentOrder(ACSDeliveryDestinationAc
 		}
 		if (FoundCount < OrderLine.Quantity)
 		{
-			OutMessage = NSLOCTEXT("Delivery", "MissingCargoProducts", "수레 적재함에 주문 상품이 부족합니다.");
+			OutMessage = NSLOCTEXT("Delivery", "MissingMagicCircleProducts", "마법진 위에 주문 상품이 부족합니다.");
 			return false;
 		}
 	}
 
 	for (ACSProductPickupActor* Product : ProductsToDeliver)
 	{
-		DeliveryCart->RemoveCargoProduct(Product);
 		Product->Destroy();
 	}
 	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState))
@@ -243,9 +271,14 @@ bool UCSDeliveryOrderSubsystem::TryCompleteCurrentOrder(ACSDeliveryDestinationAc
 		StoreGameState->AddFunds(Order.RewardGold);
 		StoreGameState->AddReputation(Order.ReputationReward);
 	}
-	const FText CompletionText = FText::Format(NSLOCTEXT("Delivery", "DeliverySuccess", "배달을 완료했습니다. +{0} 골드 / 평판 +{1}"), FText::AsNumber(Order.RewardGold), FText::AsNumber(Order.ReputationReward));
+	OutRewardGold = Order.RewardGold;
+	OutReputationReward = Order.ReputationReward;
+	OutMessage = FText::Format(
+		NSLOCTEXT("Delivery", "MagicCircleDeliverySuccess", "{0}에 배달을 완료했습니다. +{1} 골드 / 평판 +{2}"),
+		Order.RecipientDisplayName,
+		FText::AsNumber(OutRewardGold),
+		FText::AsNumber(OutReputationReward));
 	RemoveOrderAt(OrderIndex, ECSDeliveryOrderStatus::Completed);
-	OutMessage = CompletionText;
 	return true;
 }
 
@@ -281,25 +314,14 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 		return false;
 	}
 
-	ACSDeliveryOrderTerminalActor* OrderTerminal = nullptr;
-	for (TActorIterator<ACSDeliveryOrderTerminalActor> It(GetWorld()); It; ++It)
+	if (!IsValid(OrderSettings) || !IsValid(OrderSettings->ProductDataTable))
 	{
-		if (IsValid(*It) && (*It)->GetProductDataTable() != nullptr) { OrderTerminal = *It; break; }
-	}
-	if (!IsValid(OrderTerminal))
-	{
-		OutMessage = NSLOCTEXT("Delivery", "NoOrderTerminal", "상품 데이터 테이블이 설정된 배달 주문 단말기가 없습니다.");
+		OutMessage = NSLOCTEXT("Delivery", "NoOrderSettings", "상품 데이터가 설정된 배달 마법진이 없습니다.");
 		return false;
 	}
-
-	TArray<ACSDeliveryDestinationActor*> Destinations;
-	for (TActorIterator<ACSDeliveryDestinationActor> It(GetWorld()); It; ++It)
+	if (OrderSettings->Recipients.IsEmpty())
 	{
-		if (IsValid(*It) && (*It)->CanReceiveRandomDeliveryOrder()) Destinations.Add(*It);
-	}
-	if (Destinations.IsEmpty())
-	{
-		OutMessage = NSLOCTEXT("Delivery", "NoDestination", "주문에 배정할 수 있는 빈 배달 지점이 없습니다.");
+		OutMessage = NSLOCTEXT("Delivery", "NoRecipient", "배달 설정에 원격 수신처가 없습니다.");
 		return false;
 	}
 
@@ -312,13 +334,13 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 
 	TArray<FName> EligibleRowNames;
 	TArray<FName> InStockRowNames;
-	for (const FName RowName : OrderTerminal->GetProductDataTable()->GetRowNames())
+	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
-		const FCSProductDataRow* ProductData = OrderTerminal->GetProductDataTable()->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
+		const FCSProductDataRow* ProductData = OrderSettings->ProductDataTable->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
 		if (ProductData == nullptr || !StoreGameState->IsStoreLevelRequirementMet(ProductData->StoreLevelUnlockCondition) || !StoreGameState->IsReputationRequirementMet(ProductData->ReputationUnlockCondition)) continue;
 		EligibleRowNames.Add(RowName);
 		FDataTableRowHandle ProductRow;
-		ProductRow.DataTable = OrderTerminal->GetProductDataTable();
+		ProductRow.DataTable = OrderSettings->ProductDataTable;
 		ProductRow.RowName = RowName;
 		if (GetAvailableQuantityForOrder(ProductRow) > 0) InStockRowNames.Add(RowName);
 	}
@@ -331,7 +353,10 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	FCSDeliveryOrderRuntime NewOrder;
 	NewOrder.OrderId = NextOrderId++;
 	NewOrder.Status = ECSDeliveryOrderStatus::PendingAcceptance;
-	NewOrder.Destination = Destinations[FMath::RandRange(0, Destinations.Num() - 1)];
+	const FCSDeliveryRecipientInfo& Recipient = OrderSettings->Recipients[FMath::RandRange(0, OrderSettings->Recipients.Num() - 1)];
+	NewOrder.RecipientId = Recipient.RecipientId;
+	NewOrder.RecipientDisplayName = Recipient.DisplayName;
+	NewOrder.RecipientRegionName = Recipient.RegionName;
 	TArray<FName> CandidateRows = EligibleRowNames;
 	const int32 LineCount = FMath::Min(FMath::RandRange(1, GetMaximumLineCount()), CandidateRows.Num());
 	for (int32 LineIndex = 0; LineIndex < LineCount; ++LineIndex)
@@ -346,7 +371,7 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 		const FName SelectedRow = SourceRows[FMath::RandRange(0, SourceRows.Num() - 1)];
 		CandidateRows.Remove(SelectedRow);
 		FCSDeliveryOrderLine& NewLine = NewOrder.RequiredProducts.AddDefaulted_GetRef();
-		NewLine.ProductRow.DataTable = OrderTerminal->GetProductDataTable();
+		NewLine.ProductRow.DataTable = OrderSettings->ProductDataTable;
 		NewLine.ProductRow.RowName = SelectedRow;
 		NewLine.Quantity = FMath::RandRange(MinimumProductQuantity, MaximumProductQuantity);
 		if (const FCSProductDataRow* ProductData = NewLine.ProductRow.GetRow<FCSProductDataRow>(TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"))) NewOrder.RewardGold += ProductData->RecommendedSalePrice * NewLine.Quantity;
@@ -354,12 +379,16 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	NewOrder.RewardGold = FMath::Max(100, FMath::RoundToInt(NewOrder.RewardGold * 1.3f));
 	NewOrder.ReputationReward = FMath::Clamp(NewOrder.RequiredProducts.Num(), 1, 3);
 	NewOrder.AcceptanceDeadlineMinutes = FMath::Min(StoreGameState->AutomaticClosingTimeMinutes, StoreGameState->CurrentGameMinutes + AcceptanceWindowMinutes);
-	NewOrder.Destination->AssignDeliveryOrder(NewOrder.OrderId);
 	DeliveryOrders.Add(NewOrder);
 	++GeneratedOrderCountToday;
 	NextOrderGenerationMinutes = -1.0f;
 	BroadcastOrdersChanged(NewOrder);
 	OutMessage = NSLOCTEXT("Delivery", "OrderGenerated", "새 배달 주문이 도착했습니다.");
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "OrderGeneratedToastTitle", "새 배달 주문 도착"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "OrderGeneratedToast", "{0}에서 주문을 보냈습니다.\n게시판에서 확인하세요."),
+			NewOrder.RecipientDisplayName));
 	return true;
 }
 
@@ -432,6 +461,14 @@ int32 UCSDeliveryOrderSubsystem::FindPrimaryOrderIndex() const
 	return PendingIndex != INDEX_NONE ? PendingIndex : (DeliveryOrders.IsEmpty() ? INDEX_NONE : 0);
 }
 
+int32 UCSDeliveryOrderSubsystem::FindDispatchOrderIndex() const
+{
+	const int32 Index = FindOrderIndex(ActiveDispatchOrderId);
+	return DeliveryOrders.IsValidIndex(Index) && DeliveryOrders[Index].Status == ECSDeliveryOrderStatus::Accepted
+		? Index
+		: INDEX_NONE;
+}
+
 void UCSDeliveryOrderSubsystem::ReserveOrderStock(const FCSDeliveryOrderRuntime& Order)
 {
 	for (const FCSDeliveryOrderLine& Line : Order.RequiredProducts) if (!Line.ProductRow.RowName.IsNone()) ReservedQuantities.FindOrAdd(Line.ProductRow.RowName) += Line.Quantity;
@@ -449,15 +486,6 @@ void UCSDeliveryOrderSubsystem::ReleaseOrderReservation(const FCSDeliveryOrderRu
 	}
 }
 
-void UCSDeliveryOrderSubsystem::ClearDestinationAssignment(const FCSDeliveryOrderRuntime& Order)
-{
-	if (IsValid(Order.Destination))
-	{
-		Order.Destination->SetDeliveryOrderHighlight(false, DeliveryOutlineStencilValue);
-		Order.Destination->ClearDeliveryOrder(Order.OrderId);
-	}
-}
-
 void UCSDeliveryOrderSubsystem::BroadcastOrdersChanged(const FCSDeliveryOrderRuntime& ChangedOrder)
 {
 	OnDeliveryOrderChanged.Broadcast(ChangedOrder);
@@ -471,30 +499,49 @@ void UCSDeliveryOrderSubsystem::RemoveOrderAt(const int32 OrderIndex, const ECSD
 	FCSDeliveryOrderRuntime FinishedOrder = PreviousOrder;
 	FinishedOrder.Status = FinalStatus;
 	if (PreviousOrder.Status == ECSDeliveryOrderStatus::Accepted) ReleaseOrderReservation(PreviousOrder);
-	ClearDestinationAssignment(FinishedOrder);
+	if (PreviousOrder.OrderId == ActiveDispatchOrderId) ActiveDispatchOrderId = INDEX_NONE;
+	if (FinalStatus == ECSDeliveryOrderStatus::Completed ||
+		FinalStatus == ECSDeliveryOrderStatus::Failed ||
+		FinalStatus == ECSDeliveryOrderStatus::Expired)
+	{
+		RecentDeliveryResults.Insert(FinishedOrder, 0);
+		if (RecentDeliveryResults.Num() > MaximumRecentDeliveryResultCount)
+		{
+			RecentDeliveryResults.SetNum(MaximumRecentDeliveryResultCount);
+		}
+	}
 	DeliveryOrders.RemoveAt(OrderIndex);
 	BroadcastOrdersChanged(FinishedOrder);
 }
 
-void UCSDeliveryOrderSubsystem::ShowDeadlineExpiredSettlement(
+void UCSDeliveryOrderSubsystem::ShowDeadlineExpiredToast(
 	const FCSDeliveryOrderRuntime& ExpiredOrder)
 {
 	ACSStorePlayerController* StorePlayerController = GetWorld() == nullptr
 		? nullptr
 		: Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController());
-	if (!IsValid(StorePlayerController) || !IsValid(ExpiredOrder.Destination))
+	if (!IsValid(StorePlayerController))
 	{
 		return;
 	}
 
-	// 기한 초과는 자동 발생하므로 입력을 막지 않는 전용 실패 정산 UI로 안내합니다.
-	ExpiredOrder.Destination->ShowDeliverySettlementForPlayer(
-		StorePlayerController,
-		NSLOCTEXT("Delivery", "DeliveryDeadlineExpired", "배달 기한을 초과했습니다. 평판이 2 감소했습니다."),
-		ECSDeliverySettlementResult::DeadlineExpired);
+	const FText Recipient = ExpiredOrder.RecipientDisplayName.IsEmpty()
+		? NSLOCTEXT("Delivery", "UnknownRecipient", "수신처")
+		: ExpiredOrder.RecipientDisplayName;
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "DeliveryDeadlineExpiredTitle", "배달 기한 초과"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "DeliveryDeadlineExpiredToast", "{0} 주문의 배달 기한을 초과했습니다.\n평판이 2 감소했습니다."),
+			Recipient));
 }
 
-bool UCSDeliveryOrderSubsystem::IsOrderAtDestination(const FCSDeliveryOrderRuntime& Order, const ACSDeliveryDestinationActor* Destination) const
+void UCSDeliveryOrderSubsystem::ShowDeliveryToast(const FText& Title, const FText& Message) const
 {
-	return IsValid(Destination) && Order.Destination == Destination;
+	ACSStorePlayerController* StorePlayerController = GetWorld() == nullptr
+		? nullptr
+		: Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController());
+	if (IsValid(StorePlayerController))
+	{
+		StorePlayerController->ShowGameplayToast(Title, Message);
+	}
 }
