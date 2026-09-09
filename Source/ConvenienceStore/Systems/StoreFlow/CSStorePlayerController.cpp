@@ -6,6 +6,7 @@
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "UI/Store/CSClosingWarningWidget.h"
+#include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 void ACSStorePlayerController::BeginPlay()
@@ -133,6 +134,13 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActiveClosingWarningWidget->RemoveFromParent();
 		ActiveClosingWarningWidget = nullptr;
 	}
+	if (IsValid(ActiveDeliveryToastWidget))
+	{
+		ActiveDeliveryToastWidget->OnToastFinished.RemoveDynamic(
+			this, &ThisClass::HandleDeliveryToastFinished);
+		ActiveDeliveryToastWidget->RemoveFromParent();
+		ActiveDeliveryToastWidget = nullptr;
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -175,6 +183,43 @@ void ACSStorePlayerController::HandleStatusAnnouncementFinished()
 		this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
 	ActiveStatusAnnouncementWidget->RemoveFromParent();
 	ActiveStatusAnnouncementWidget = nullptr;
+}
+
+void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText& Message)
+{
+	if (!IsLocalPlayerController() || DeliveryToastWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	if (!IsValid(ActiveDeliveryToastWidget))
+	{
+		ActiveDeliveryToastWidget = CreateWidget<UCSDeliveryToastWidget>(this, DeliveryToastWidgetClass);
+		if (!IsValid(ActiveDeliveryToastWidget))
+		{
+			return;
+		}
+
+		ActiveDeliveryToastWidget->OnToastFinished.AddUniqueDynamic(
+			this, &ThisClass::HandleDeliveryToastFinished);
+		ActiveDeliveryToastWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		ActiveDeliveryToastWidget->AddToPlayerScreen(150);
+	}
+
+	ActiveDeliveryToastWidget->ShowToast(Title, Message);
+}
+
+void ACSStorePlayerController::HandleDeliveryToastFinished()
+{
+	if (!IsValid(ActiveDeliveryToastWidget))
+	{
+		return;
+	}
+
+	ActiveDeliveryToastWidget->OnToastFinished.RemoveDynamic(
+		this, &ThisClass::HandleDeliveryToastFinished);
+	ActiveDeliveryToastWidget->RemoveFromParent();
+	ActiveDeliveryToastWidget = nullptr;
 }
 
 void ACSStorePlayerController::HandleClosingWarningRequested(int32 RemainingMinutes)

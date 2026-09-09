@@ -5,7 +5,7 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
-#include "Features/Delivery/CSDeliveryCartActor.h"
+#include "Features/Delivery/CSDeliveryMagicCircleActor.h"
 #include "Features/Cart/CSCartActor.h"
 #include "Features/Inventory/CSQuickbarInventoryComponent.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
@@ -271,7 +271,6 @@ void ACSPlayerCharacter::BeginPlay()
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	StopDrivingDeliveryCart();
 	if (IsValid(PushedCart))
 	{
 		// 플레이어가 제거될 때 수레의 Pawn 충돌 응답도 원래대로 되돌립니다.
@@ -300,10 +299,6 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 
     EnhancedInputComponent->BindAction(
         MoveAction, ETriggerEvent::Triggered, this, &ACSPlayerCharacter::Move);
-	EnhancedInputComponent->BindAction(
-		MoveAction, ETriggerEvent::Completed, this, &ACSPlayerCharacter::ClearDeliveryCartDriveInput);
-	EnhancedInputComponent->BindAction(
-		MoveAction, ETriggerEvent::Canceled, this, &ACSPlayerCharacter::ClearDeliveryCartDriveInput);
 
     EnhancedInputComponent->BindAction(
         LookAction, ETriggerEvent::Triggered, this, &ACSPlayerCharacter::Look);
@@ -421,13 +416,6 @@ void ACSPlayerCharacter::Move(const FInputActionValue& Value)
 {
     const FVector2D MovementVector = Value.Get<FVector2D>();
 
-	if (IsValid(DrivenDeliveryCart))
-	{
-		// 운전 중에는 캐릭터가 걷지 않고, 입력을 수레의 전진·조향 값으로 사용합니다.
-		DrivenDeliveryCart->Drive(MovementVector.X, MovementVector.Y);
-		return;
-	}
-
     if (Controller == nullptr)
     {
         return;
@@ -447,15 +435,6 @@ void ACSPlayerCharacter::Move(const FInputActionValue& Value)
 	AddMovementInput(RightDirection, MovementVector.Y);
 }
 
-void ACSPlayerCharacter::ClearDeliveryCartDriveInput()
-{
-	if (IsValid(DrivenDeliveryCart))
-	{
-		// 입력이 완전히 해제되면 목표 속도를 0으로 바꿔 감속 로직이 작동하게 합니다.
-		DrivenDeliveryCart->Drive(0.0f, 0.0f);
-	}
-}
-
 void ACSPlayerCharacter::Look(const FInputActionValue& Value)
 {
     const FVector2D LookAxisVector = Value.Get<FVector2D>();
@@ -466,10 +445,6 @@ void ACSPlayerCharacter::Look(const FInputActionValue& Value)
 
 void ACSPlayerCharacter::StartSprint()
 {
-	if (IsValid(DrivenDeliveryCart))
-	{
-		return;
-	}
 	// 웅크린 상태에서는 달리기를 시작하지 않도록 제한합니다.
 	if (bIsCrouched)
 	{
@@ -486,10 +461,6 @@ void ACSPlayerCharacter::StopSprint()
 
 void ACSPlayerCharacter::StartCrouch()
 {
-	if (IsValid(DrivenDeliveryCart))
-	{
-		return;
-	}
 	// 웅크리기를 시작할 때는 현재 달리기를 즉시 해제합니다.
 	StopSprint();
 
@@ -856,20 +827,6 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 		return;
 	}
 
-	if (IsValid(DrivenDeliveryCart))
-	{
-		// 운전 중에는 수레 카메라와 운전 종료 안내만 유지합니다.
-		if (ACSStorePlayerController* StorePlayerController =
-			Cast<ACSStorePlayerController>(GetController()))
-		{
-			StorePlayerController->ClearInteractionContext();
-			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "StopDrivingDeliveryCartPrompt", "[F] 수레 운전 그만두기"),
-				FLinearColor::White);
-		}
-		return;
-	}
-
 	if (IsValid(HeldActor))
 	{
 		if (HeldActor->Implements<UCSUsableTool>())
@@ -965,7 +922,6 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 		!IsValid(PickupActor) ||
 		PickupActor->Implements<UCSBuildableFacility>() ||
 		IsValid(PushedCart) ||
-		IsValid(DrivenDeliveryCart) ||
 		IsValid(HeldActor) ||
 		HeldItemAnchor == nullptr)
     {
@@ -1265,18 +1221,6 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		}
 	}
 
-	if (const ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(TargetActor))
-	{
-		if (!IsValid(HeldActor) && !DeliveryCart->IsBeingDriven())
-		{
-			// 배달 수레는 E 상호작용이 아닌 F 입력으로 운전 상태를 전환합니다.
-			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "DriveDeliveryCartPrompt", "[F] 수레 운전하기"),
-				FLinearColor::White);
-		}
-		return;
-	}
-
 	if (const ACSCartActor* Cart = Cast<ACSCartActor>(TargetActor))
 	{
 		if (!IsValid(HeldActor) && !Cart->IsBeingPushed())
@@ -1294,6 +1238,17 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		StorePlayerController->SetInteractionPrompt(
 			NSLOCTEXT("Interaction", "ShelfConfigurationPrompt", "[F] 진열 구성 관리"),
 			FLinearColor::White);
+		return;
+	}
+
+	// 마법진은 수락한 주문을 게시판에서 '발송 준비'로 선택했을 때만 E 상호작용을 제공합니다.
+	// 준비 전 상태는 단순 안내이므로 [E] 접두어 없이 표시하고, 상호작용도 실행되지 않습니다.
+	if (const ACSDeliveryMagicCircleActor* MagicCircle = Cast<ACSDeliveryMagicCircleActor>(TargetActor);
+		IsValid(MagicCircle) && !MagicCircle->IsDispatchReady())
+	{
+		StorePlayerController->SetInteractionPrompt(
+			MagicCircle->GetUnavailableInteractionText(),
+			FLinearColor(1.0f, 0.8f, 0.3f, 1.0f));
 		return;
 	}
 
@@ -2802,7 +2757,9 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 				{
 					CandidateActor = CandidateProduct->GetAttachParentActor();
 				}
-				if (IsValid(CandidateActor) && CandidateActor->Implements<UCSShelfPlaceable>())
+				if (IsValid(CandidateActor) &&
+					(CandidateActor->Implements<UCSShelfPlaceable>() ||
+						Cast<ACSDeliveryMagicCircleActor>(CandidateActor) != nullptr))
 				{
 					TargetActor = CandidateActor;
 					break;
@@ -2896,23 +2853,22 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		return;
 	}
 
-	if (ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(TargetActor))
+	if (ACSDeliveryMagicCircleActor* MagicCircle = Cast<ACSDeliveryMagicCircleActor>(TargetActor))
 	{
 		RestoreGlobalShelfPlacementHighlights();
-		if ((Cast<ACSProductPickupActor>(HeldActor) != nullptr ||
-			Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr) &&
+		if (MagicCircle->IsDispatchReady() &&
+			(Cast<ACSProductPickupActor>(HeldActor) != nullptr || Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr) &&
 			IsValid(PlacementPreviewActor))
 		{
-			// 배달 수레는 칸에 고정하지 않고, 적재함 위에서 떨어질 위치만 초록 고스트로 안내합니다.
-			PlacementPreviewActor->SetActorTransform(DeliveryCart->GetCargoPreviewTransform());
+			PlacementPreviewActor->SetActorTransform(MagicCircle->GetDeliveryPreviewTransform());
 			PlacementPreviewActor->SetPlacementPreviewState(ECSShelfPlacementPreviewState::Valid);
 			SetPlacementPreviewVisible(true);
 			if (IsValid(StorePlayerController))
 			{
 				StorePlayerController->SetInteractionPrompt(
 					Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr
-						? NSLOCTEXT("Interaction", "LoadCrateToDeliveryCartPrompt", "[Q] 상자에서 상품 하나 싣기")
-						: NSLOCTEXT("Interaction", "LoadDeliveryCartPrompt", "[Q] 배달 수레에 상품 싣기"),
+						? NSLOCTEXT("Interaction", "PlaceCrateProductOnMagicCircle", "[Q] 상자에서 상품 하나 발송 준비")
+						: NSLOCTEXT("Interaction", "PlaceProductOnMagicCircle", "[Q] 마법진에 상품 올리기"),
 					FLinearColor::White);
 			}
 		}
@@ -3050,7 +3006,7 @@ void ACSPlayerCharacter::DropHeldItem()
 	}
 
 	// 수레를 잡고 이동하는 동안에는 상자 적재·집기와 바닥 내려놓기를 모두 막습니다.
-	if (IsValid(PushedCart) || IsValid(DrivenDeliveryCart))
+	if (IsValid(PushedCart))
 	{
 		return;
 	}
@@ -3144,7 +3100,9 @@ void ACSPlayerCharacter::DropHeldItem()
 					{
 						CandidateActor = CandidateProduct->GetAttachParentActor();
 					}
-					if (IsValid(CandidateActor) && CandidateActor->Implements<UCSShelfPlaceable>())
+					if (IsValid(CandidateActor) &&
+						(CandidateActor->Implements<UCSShelfPlaceable>() ||
+							Cast<ACSDeliveryMagicCircleActor>(CandidateActor) != nullptr))
 					{
 						TargetActor = CandidateActor;
 						break;
@@ -3166,26 +3124,23 @@ void ACSPlayerCharacter::DropHeldItem()
 			return;
 		}
 
-		if (ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(TargetActor);
-			IsValid(DeliveryCart))
+		if (ACSDeliveryMagicCircleActor* MagicCircle = Cast<ACSDeliveryMagicCircleActor>(TargetActor);
+			IsValid(MagicCircle))
 		{
 			if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(HeldActor);
-				IsValid(Product) && DeliveryCart->LoadProduct(Product))
+				IsValid(Product) && MagicCircle->PlaceProduct(Product))
 			{
-				// 수레 적재 직후에는 플레이어 손과 프리뷰 참조를 모두 정리합니다.
 				HeldActor = nullptr;
 				DestroyPlacementPreview();
 				ClearShelfPlacementHighlights();
-				if (ACSStorePlayerController* StorePlayerController =
-					Cast<ACSStorePlayerController>(GetController()))
+				if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetController()))
 				{
 					StorePlayerController->ClearInteractionContext();
 				}
 			}
 			else if (ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(HeldActor);
-				IsValid(DeliveryCrate) && DeliveryCart->LoadOneProductFromCrate(DeliveryCrate))
+				IsValid(DeliveryCrate) && MagicCircle->PlaceOneProductFromCrate(DeliveryCrate))
 			{
-				// 상자가 비었을 때만 손에서 제거하고, 남은 수량이 있으면 연속 적재를 허용합니다.
 				if (!IsValid(DeliveryCrate) || DeliveryCrate->GetRemainingQuantity() <= 0)
 				{
 					HeldActor = nullptr;
@@ -4339,7 +4294,7 @@ void ACSPlayerCharacter::ShowEmployeeReservationWarning(const FText& Message) co
 void ACSPlayerCharacter::TryInteract()
 {
 	// 수레를 잡은 상태에서는 E로 물건을 집거나 다른 상호작용을 실행하지 않습니다.
-	if (IsValid(PushedCart) || IsValid(DrivenDeliveryCart))
+	if (IsValid(PushedCart))
 	{
 		return;
 	}
@@ -4439,12 +4394,6 @@ void ACSPlayerCharacter::ToggleCartPush()
 		return;
 	}
 
-	if (IsValid(DrivenDeliveryCart))
-	{
-		StopDrivingDeliveryCart();
-		return;
-	}
-
 	if (IsValid(PushedCart))
 	{
 		PushedCart->StopPushing(this);
@@ -4479,81 +4428,11 @@ void ACSPlayerCharacter::ToggleCartPush()
 		return;
 	}
 
-	if (ACSDeliveryCartActor* DeliveryCart = Cast<ACSDeliveryCartActor>(HitResult.GetActor());
-		IsValid(DeliveryCart))
-	{
-		StartDrivingDeliveryCart(DeliveryCart);
-		return;
-	}
-
 	if (ACSCartActor* Cart = Cast<ACSCartActor>(HitResult.GetActor());
 		IsValid(Cart) && Cart->BeginPushing(this))
 	{
 		PushedCart = Cart;
 	}
-}
-
-bool ACSPlayerCharacter::StartDrivingDeliveryCart(ACSDeliveryCartActor* DeliveryCart)
-{
-	if (!IsValid(DeliveryCart) || IsValid(HeldActor) || IsValid(PushedCart) ||
-		IsValid(DrivenDeliveryCart) || IsBuildMode() || !DeliveryCart->BeginDriving(this))
-	{
-		return false;
-	}
-
-	USceneComponent* DriverAnchor = DeliveryCart->GetDriverAnchor();
-	if (!IsValid(DriverAnchor) ||
-		!AttachToComponent(DriverAnchor, FAttachmentTransformRules::SnapToTargetNotIncludingScale))
-	{
-		DeliveryCart->StopDriving(this);
-		return false;
-	}
-
-	// 캐릭터가 수레에 붙은 동안 독립 이동·회전을 멈춰 손잡이 위치를 유지합니다.
-	bPreviousUseControllerRotationYaw = bUseControllerRotationYaw;
-	bUseControllerRotationYaw = false;
-	SetActorRelativeRotation(FRotator::ZeroRotator);
-	GetCharacterMovement()->StopMovementImmediately();
-	GetCharacterMovement()->DisableMovement();
-	DrivenDeliveryCart = DeliveryCart;
-
-	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
-	{
-		// 수레의 DriverCamera가 뒤쪽 위에서 캐릭터와 적재함을 함께 보여 줍니다.
-		PlayerController->SetViewTargetWithBlend(DeliveryCart, 0.25f);
-	}
-	return true;
-}
-
-void ACSPlayerCharacter::StopDrivingDeliveryCart()
-{
-	if (!IsValid(DrivenDeliveryCart))
-	{
-		return;
-	}
-
-	ACSDeliveryCartActor* DeliveryCart = DrivenDeliveryCart;
-	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
-	{
-		PlayerController->SetViewTargetWithBlend(this, 0.2f);
-	}
-
-	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	// 운전을 끝내면 수레 바로 뒤 안전한 바닥 위치로 내립니다.
-	const FVector ExitLocation = DeliveryCart->GetActorLocation() -
-		DeliveryCart->GetActorForwardVector() * 150.0f;
-	SetActorLocation(ExitLocation, true, nullptr, ETeleportType::TeleportPhysics);
-	bUseControllerRotationYaw = bPreviousUseControllerRotationYaw;
-	// 운전 시작 전 시점값이 남지 않도록, 내릴 때 카메라와 캐릭터를 수레 전면 방향으로 정렬합니다.
-	const FRotator ExitRotation(0.0f, DeliveryCart->GetActorRotation().Yaw, 0.0f);
-	SetActorRotation(ExitRotation, ETeleportType::TeleportPhysics);
-	if (AController* PlayerController = GetController())
-	{
-		PlayerController->SetControlRotation(ExitRotation);
-	}
-	GetCharacterMovement()->SetMovementMode(MOVE_Walking);
-	DeliveryCart->StopDriving(this);
-	DrivenDeliveryCart = nullptr;
 }
 
 void ACSPlayerCharacter::SelectQuickbarSlot1()
@@ -4580,7 +4459,7 @@ void ACSPlayerCharacter::SelectNextQuickbarSlot()
 {
 	if (IsValid(QuickbarInventory) &&
 		!IsBuildMode() &&
-		!IsValid(PushedCart) && !IsValid(DrivenDeliveryCart) &&
+		!IsValid(PushedCart) &&
 		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
 	{
 		QuickbarInventory->CycleSelection(1);
@@ -4591,7 +4470,7 @@ void ACSPlayerCharacter::SelectPreviousQuickbarSlot()
 {
 	if (IsValid(QuickbarInventory) &&
 		!IsBuildMode() &&
-		!IsValid(PushedCart) && !IsValid(DrivenDeliveryCart) &&
+		!IsValid(PushedCart) &&
 		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
 	{
 		QuickbarInventory->CycleSelection(-1);
@@ -4600,8 +4479,7 @@ void ACSPlayerCharacter::SelectPreviousQuickbarSlot()
 
 bool ACSPlayerCharacter::TrySelectQuickbarSlot(int32 SlotIndex)
 {
-	if (!IsValid(QuickbarInventory) || IsBuildMode() || IsValid(PushedCart) ||
-		IsValid(DrivenDeliveryCart))
+	if (!IsValid(QuickbarInventory) || IsBuildMode() || IsValid(PushedCart))
 	{
 		return false;
 	}
