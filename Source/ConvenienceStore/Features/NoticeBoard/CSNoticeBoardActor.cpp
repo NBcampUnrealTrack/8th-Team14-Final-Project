@@ -7,6 +7,7 @@
 #include "Features/NoticeBoard/UI/CSNoticeBoardWidget.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 
 ACSNoticeBoardActor::ACSNoticeBoardActor()
@@ -108,4 +109,50 @@ void ACSNoticeBoardActor::CloseNoticeBoardUI(UCSNoticeBoardWidget* RequestingWid
 bool ACSNoticeBoardActor::IsNoticeBoardOpen() const
 {
 	return IsValid(ActiveNoticeBoardWidget);
+}
+
+bool ACSNoticeBoardActor::HasTodayNews() const
+{
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeEventSubsystem =
+		World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+	return IsValid(NoticeEventSubsystem) && NoticeEventSubsystem->HasTodayNews();
+}
+
+bool ACSNoticeBoardActor::GetTodayNews(FCSNewsEventDataRow& OutNews) const
+{
+	OutNews = FCSNewsEventDataRow();
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeEventSubsystem =
+		World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+	return IsValid(NoticeEventSubsystem) && NoticeEventSubsystem->GetTodayNews(OutNews);
+}
+
+bool ACSNoticeBoardActor::HasTodayHoliday() const
+{
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeEventSubsystem =
+		World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+	return IsValid(NoticeEventSubsystem) && NoticeEventSubsystem->HasTodayHoliday();
+}
+
+bool ACSNoticeBoardActor::GetTodayHoliday(FCSHolidayEventDataRow& OutHoliday) const
+{
+	OutHoliday = FCSHolidayEventDataRow();
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeEventSubsystem =
+		World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+	return IsValid(NoticeEventSubsystem) && NoticeEventSubsystem->GetTodayHoliday(OutHoliday);
+}
+
+void ACSNoticeBoardActor::GetTodayHolidays(TArray<FCSHolidayEventDataRow>& OutHolidays) const
+{
+	OutHolidays.Reset();
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeEventSubsystem =
+		World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+	if (IsValid(NoticeEventSubsystem))
+	{
+		NoticeEventSubsystem->GetTodayHolidays(OutHolidays);
+	}
 }
