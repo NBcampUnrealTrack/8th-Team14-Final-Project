@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Data/CSNoticeEventTypes.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "GameFramework/Actor.h"
 #include "CSNoticeBoardActor.generated.h"
@@ -34,6 +35,22 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Notice Board")
 	bool IsNoticeBoardOpen() const;
+
+	/** 게시판은 상태를 소유하지 않고 NoticeEventSubsystem의 오늘 뉴스만 전달합니다. */
+	UFUNCTION(BlueprintPure, Category = "Notice Board|Events")
+	bool HasTodayNews() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Notice Board|Events")
+	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
+
+	UFUNCTION(BlueprintPure, Category = "Notice Board|Events")
+	bool HasTodayHoliday() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Notice Board|Events")
+	bool GetTodayHoliday(FCSHolidayEventDataRow& OutHoliday) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Notice Board|Events")
+	void GetTodayHolidays(TArray<FCSHolidayEventDataRow>& OutHolidays) const;
 
 	UFUNCTION(BlueprintPure, Category = "Notice Board")
 	UWidgetComponent* GetDisplayWidgetComponent() const { return DisplayWidgetComponent; }
