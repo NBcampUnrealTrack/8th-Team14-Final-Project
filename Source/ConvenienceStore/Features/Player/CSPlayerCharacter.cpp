@@ -2,6 +2,7 @@
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Interaction/CSInteractable.h"
+#include "Features/Ending/CSEndingActors.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
@@ -829,7 +830,12 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 
 	if (IsValid(HeldActor))
 	{
-		if (HeldActor->Implements<UCSUsableTool>())
+		if (HeldActor->IsA<ACSEndingItemActor>())
+		{
+			// 엔딩 재료를 운반할 때도 마법사와 구매처의 E 안내를 갱신합니다.
+			UpdateInteractionHUD();
+		}
+		else if (HeldActor->Implements<UCSUsableTool>())
 		{
 			// 마법봉은 원래 거치대를 조준한 경우에만 Q 안내를 표시합니다.
 			UpdateHeldMagicWandDockHUD();
@@ -1150,6 +1156,12 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 
 	AActor* TargetActor = HitResult.GetActor();
 	if (!IsValid(TargetActor))
+	{
+		return;
+	}
+	// 엔딩 재료를 든 경우에는 두 엔딩 상호작용 대상에만 안내를 허용합니다.
+	if (IsValid(HeldActor) && HeldActor->IsA<ACSEndingItemActor>() &&
+		!TargetActor->IsA<ACSEndingWizardActor>() && !TargetActor->IsA<ACSEndingVendorActor>())
 	{
 		return;
 	}
@@ -4538,6 +4550,21 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 	SelectedTool->SetActorHiddenInGame(false);
 	SelectedTool->OnEquipped(this);
 	HeldActor = SelectedTool;
+}
+
+bool ACSPlayerCharacter::ConsumeQuickbarTool(ACSUsableToolActor* Tool)
+{
+	if (!IsValid(Tool) || !IsValid(QuickbarInventory) || !QuickbarInventory->ContainsTool(Tool))
+	{
+		return false;
+	}
+	if (HeldActor == Tool)
+	{
+		HeldActor = nullptr;
+	}
+	QuickbarInventory->RemoveTool(Tool);
+	Tool->Destroy();
+	return true;
 }
 
 void ACSPlayerCharacter::StoreEquippedQuickbarTool()
