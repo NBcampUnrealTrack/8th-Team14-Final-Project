@@ -37,7 +37,8 @@ enum class ECSPurchaseRejectReason : uint8
 	PriceRejected,       // 가격이 너무 비쌈 (가격 하드컷, 또는 최소구매임계치 미달의 실제 원인이 가격일 때)
 	CategoryBlocked,     // 이 종족이 절대 안 사는 카테고리
 	HardWalletExceeded,  // 하드 지갑(물리적으로 낼 수 있는 최대 금액) 초과
-	ShelfEmpty           // 진열대에 재고가 없음
+	ShelfEmpty,          // 진열대에 재고가 없음
+	PlannedProductMissing // 계획 상품이 이 진열대에 없고, 같은 카테고리 대체품만 있음(대체품 자체가 없으면 조용히 포기 처리되므로 이 사유가 뜨지 않음)
 };
 
 // 거절 사유 상세 정보. UI 연출(디버그 텍스트/속마음 위젯)이 이 값을 읽어 문구를 조합한다

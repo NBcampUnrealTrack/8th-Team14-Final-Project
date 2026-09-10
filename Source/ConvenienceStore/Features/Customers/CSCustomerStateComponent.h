@@ -180,6 +180,17 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	int32 PlannedBasketTarget = 1;
 
+	// 스폰 시점에 뽑은 이번 방문의 계획 상품 목록(RowName). 진열대 우선 방문 대상.
+	// 한 항목을 확인(구매/거절/대체 포기 전부 포함)하면 결과와 무관하게 이 목록에서 제거된다 -
+	// 안 지우면 이미 처리한 계획 상품을 다음 진열대 선택 때마다 계속 찾아다니게 됨
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	TArray<FName> PlannedProductIds;
+
+	// true면 다음 WantsMoreItems 판정이 확률 굴림 없이 즉시 "그만 쇼핑"으로 확정된다
+	// 계획 상품이 대체품도 없이 품절이라 포기를 굴렸을 때만 켜짐
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	bool bForceStopShopping = false;
+
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
 
