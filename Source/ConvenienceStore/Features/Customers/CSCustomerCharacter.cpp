@@ -20,6 +20,11 @@
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
+namespace
+{
+	const FName ShoppingBagAttachBoneName(TEXT("RightHand"));
+}
+
 // Sets default values
 ACSCustomerCharacter::ACSCustomerCharacter()
 {
@@ -33,6 +38,10 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	BasketAnchor->SetupAttachment(GetMesh());
 	// 블루프린트에서 고객 메시와 애니메이션에 맞춰 손 위치로 조정합니다.
 	BasketAnchor->SetRelativeLocation(FVector(20.0f, 25.0f, 0.0f));
+
+	ShoppingBagAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("ShoppingBagAnchor"));
+	ShoppingBagAnchor->SetupAttachment(GetMesh(), ShoppingBagAttachBoneName);
+	ShoppingBagAnchor->SetRelativeTransform(FTransform::Identity);
 
 
 	AIControllerClass = ACSCustomerAIController::StaticClass();// 스폰될 때 어떤 클래스의 AI 컨트롤러가 빙의할지 지정
@@ -401,18 +410,30 @@ void ACSCustomerCharacter::ShowShoppingBag()
 	if (IsValid(ShoppingBagActor) ||
 		ShoppingBagActorClass == nullptr ||
 		GetWorld() == nullptr ||
-		!IsValid(BasketAnchor))
+		!IsValid(ShoppingBagAnchor))
 	{
 		return;
 	}
 
+	const USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!IsValid(MeshComponent) || MeshComponent->GetBoneIndex(ShoppingBagAttachBoneName) == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("%s: ShoppingBag was not spawned because the current skeletal mesh has no RightHand bone."),
+			*GetName());
+		return;
+	}
+
+	FTransform SpawnTransform = ShoppingBagAnchor->GetComponentTransform();
+	// 생성 시에도 손님과 Mesh의 스케일을 복사하지 않아 종족에 관계없이 봉투 크기를 유지합니다.
+	SpawnTransform.SetScale3D(FVector::OneVector);
 	ShoppingBagActor = GetWorld()->SpawnActor<ACSCustomerShoppingBagActor>(
 		ShoppingBagActorClass,
-		BasketAnchor->GetComponentTransform());
+		SpawnTransform);
 	if (IsValid(ShoppingBagActor))
 	{
 		ShoppingBagActor->AttachToComponent(
-			BasketAnchor,
+			ShoppingBagAnchor,
 			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		// 결제 후 생성하는 쇼핑백도 손님 스케일을 상속하지 않도록 같은 규칙을 적용합니다.
 		ShoppingBagActor->GetRootComponent()->SetAbsolute(false, false, true);
