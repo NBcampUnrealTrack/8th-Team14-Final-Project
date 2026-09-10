@@ -594,6 +594,12 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 			const int32 PlannedBasketSeed = MasterStream.RandHelper(MAX_int32);
 			FRandomStream PlannedBasketStream(PlannedBasketSeed);
 			State->PlannedBasketTarget = Decision->RollPlannedBasketTarget(PlannedBasketStream);
+
+			// 우선 방문할 계획 상품(1~2개)도 같은 스트림에서 이어서 뽑음
+			// PlannedBasketStream은 이 블록이 끝나면 버려지는 임시 스트림이라 안에서 몇 번을 더
+			// 굴리든 MasterStream도 다른 손님도 영향받지 않음 - 새 파생 시드를 더 뽑을 필요 없음
+			const int32 CurrentStoreLevel = IsValid(CachedStoreGameState) ? CachedStoreGameState->GetStoreLevel() : 1;
+			State->PlannedProductIds = Decision->RollPlannedProducts(PlannedBasketStream, CurrentStoreLevel);
 		}
 
 		// [빌런 판정 로직] (추후에 맵에 대해서 빌런 확률 더 증가한다 이런게 추가되면 값을 받아와서 계산하는 로직을 추가)

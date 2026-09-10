@@ -7,7 +7,9 @@
 #include "Navigation/PathFollowingComponent.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Data/CSProductTypes.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
+#include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "DrawDebugHelpers.h"
@@ -15,6 +17,103 @@
 // =====================================================================
 // PickNextShelf
 // =====================================================================
+
+namespace
+{
+	// 계획 상품 우선 방문 판정 결과. 값이 클수록 우선순위가 높음(정확 일치가 최우선)
+	enum class ECSPlannedShelfMatch : uint8
+	{
+		None,
+		Category,
+		Exact
+	};
+
+	// 진열대 하나가 PlannedProductIds 중 어느 것과 일치하는지 판정
+	// 정확 일치가 하나라도 있으면 그 즉시 Exact(카테고리 일치 여부는 더 볼 필요 없음)
+	// 정확 일치가 없으면 같은 카테고리 상품이 하나라도 있는지 확인
+	ECSPlannedShelfMatch EvaluateShelfForPlannedProducts(
+		const UCSCustomerRuntimeSubsystem& Subsystem,
+		AActor& ShelfActor,
+		const TArray<FName>& PlannedProductIds,
+		const UDataTable* ProductMasterDataTable)
+	{
+		const TArray<AActor*> ShelfProducts = Subsystem.GetProductsOnShelf(&ShelfActor);
+		if (ShelfProducts.Num() == 0)
+		{
+			return ECSPlannedShelfMatch::None;
+		}
+
+		bool bCategoryMatchFound = false;
+
+		for (const FName PlannedId : PlannedProductIds)
+		{
+			for (const AActor* ProductActor : ShelfProducts)
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				if (Product != nullptr && Product->GetProductId() == PlannedId)
+				{
+					// 정확 일치는 이 진열대의 최종 판정이므로 다른 계획 상품은 더 볼 필요 없음
+					return ECSPlannedShelfMatch::Exact;
+				}
+			}
+
+			// 이 계획 상품의 카테고리를 조회해 이미 카테고리 일치를 찾지 못한 경우에만 비교
+			// (ProductMasterDataTable이 안 배정돼 있으면 카테고리 조회 자체가 불가능 - 대체 방문 없이 조용히 건너뜀)
+			if (!bCategoryMatchFound && ProductMasterDataTable != nullptr)
+			{
+				const FCSProductDataRow* PlannedRow = ProductMasterDataTable->FindRow<FCSProductDataRow>(
+					PlannedId, TEXT("EvaluateShelfForPlannedProducts"));
+				if (PlannedRow != nullptr)
+				{
+					for (const AActor* ProductActor : ShelfProducts)
+					{
+						const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+						if (Product == nullptr)
+						{
+							continue;
+						}
+						const FCSProductDataRow* ShelfRow = Product->GetProductRow().GetRow<FCSProductDataRow>(
+							TEXT("EvaluateShelfForPlannedProducts"));
+						if (ShelfRow != nullptr && ShelfRow->Category == PlannedRow->Category)
+						{
+							bCategoryMatchFound = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		return bCategoryMatchFound ? ECSPlannedShelfMatch::Category : ECSPlannedShelfMatch::None;
+	}
+
+	// PlannedId가 안 가본 진열대 어딘가에 같은 카테고리 상품을 하나라도 갖고 있는지 확인
+	// ("카테고리 텅 빔" 판정 전용 - EvaluateShelfForPlannedProducts와 별도로 계획 상품 하나만 검사)
+	bool HasCategoryMatchAnywhere(
+		const UCSCustomerRuntimeSubsystem& Subsystem,
+		const TArray<TObjectPtr<AActor>>& UnvisitedSelectableShelves,
+		const FCSProductDataRow& PlannedRow)
+	{
+		for (AActor* Shelf : UnvisitedSelectableShelves)
+		{
+			for (const AActor* ProductActor : Subsystem.GetProductsOnShelf(Shelf))
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				if (Product == nullptr)
+				{
+					continue;
+				}
+				const FCSProductDataRow* ShelfRow = Product->GetProductRow().GetRow<FCSProductDataRow>(
+					TEXT("HasCategoryMatchAnywhere"));
+				if (ShelfRow != nullptr && ShelfRow->Category == PlannedRow.Category)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+}
 
 EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
@@ -44,7 +143,75 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 		State->MarkVisited(Data.TargetShelf);
 	}
 
-	AActor* PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves);
+	AActor* PickedShelf = nullptr;
+
+	// 계획 상품이 남아있으면 정확 일치 > 카테고리 일치 우선순위대로 진열대를 고른다
+	// 다 채웠거나(PlannedProductIds 비어있음) 전부 카테고리 텅 빔으로 정리됐으면 아래 랜덤 폴백으로 넘어감
+	if (State->PlannedProductIds.Num() > 0)
+	{
+		UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
+		const UDataTable* ProductMasterDataTable = Decision != nullptr ? Decision->ProductMasterDataTable : nullptr;
+
+		// 안 가본 방문 후보만 미리 추려서 아래 스캔들이 같은 필터링을 반복하지 않게 함
+		TArray<TObjectPtr<AActor>> UnvisitedShelves;
+		for (const TObjectPtr<AActor>& Shelf : Subsystem->GetShelves())
+		{
+			if (Subsystem->IsShelfSelectable(Shelf) && !State->HasVisited(Shelf))
+			{
+				UnvisitedShelves.Add(Shelf);
+			}
+		}
+
+		// 한 번의 스캔으로 "정확 일치가 있는 첫 진열대"와 "카테고리 일치가 있는 첫 진열대"를 동시에 찾는다
+		AActor* FirstExactMatchShelf = nullptr;
+		AActor* FirstCategoryMatchShelf = nullptr;
+		for (const TObjectPtr<AActor>& Shelf : UnvisitedShelves)
+		{
+			const ECSPlannedShelfMatch Match = EvaluateShelfForPlannedProducts(
+				*Subsystem, *Shelf, State->PlannedProductIds, ProductMasterDataTable);
+
+			if (Match == ECSPlannedShelfMatch::Exact && FirstExactMatchShelf == nullptr)
+			{
+				FirstExactMatchShelf = Shelf;
+			}
+			else if (Match == ECSPlannedShelfMatch::Category && FirstCategoryMatchShelf == nullptr)
+			{
+				FirstCategoryMatchShelf = Shelf;
+			}
+		}
+		PickedShelf = (FirstExactMatchShelf != nullptr) ? FirstExactMatchShelf : FirstCategoryMatchShelf;
+
+		// 안 가본 진열대 어디에도 같은 카테고리가 없는 계획 상품은 "카테고리 텅 빔"으로 조용히 정리
+		// (시각 반응 없이 45% 확률로 포기 - 대체품조차 없어서 더 찾아다닐 이유가 없는 케이스)
+		// 위에서 이번 라운드에 어느 진열대로 갈지와 무관하게, 남은 모든 계획 상품에 대해 독립적으로 검사한다
+		if (Decision != nullptr && ProductMasterDataTable != nullptr)
+		{
+			for (int32 i = State->PlannedProductIds.Num() - 1; i >= 0; i--)
+			{
+				const FName PlannedId = State->PlannedProductIds[i];
+				const FCSProductDataRow* PlannedRow = ProductMasterDataTable->FindRow<FCSProductDataRow>(
+					PlannedId, TEXT("FCSTask_PickNextShelf::EnterState"));
+				if (PlannedRow == nullptr)
+				{
+					continue;
+				}
+
+				if (!HasCategoryMatchAnywhere(*Subsystem, UnvisitedShelves, *PlannedRow))
+				{
+					State->PlannedProductIds.RemoveAt(i);
+					if (Decision->RollChance(0.45f))
+					{
+						State->bForceStopShopping = true;
+					}
+				}
+			}
+		}
+	}
+
+	if (PickedShelf == nullptr)
+	{
+		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves);
+	}
 	if (PickedShelf == nullptr)
 	{
 		// 더 볼 진열대가 없음 → 상태 실패 → 전이(On Failed)로 다음 단계 결정
@@ -556,6 +723,94 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		RejectionInfo.Reason = ECSPurchaseRejectReason::ShelfEmpty;
 		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
 		return EStateTreeRunStatus::Running;
+	}
+
+	// 계획 상품 우선방문 결과 처리
+	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
+		Data.RoundCount == 0 && !State->HasVisited(ShelfActor) && State->PlannedProductIds.Num() > 0)
+	{
+		if (Data.ElapsedTime < Data.GlanceTime)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		State->MarkVisited(ShelfActor);
+
+		const TArray<FCSPurchaseCandidate> EarlyCandidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+
+		// 1) 정확 일치: 반응 없이 조용히 "확인 완료" 처리. 실제로 사든 안 사든(대기줄만 확보) 아래
+		// 정상 DecidePurchase 파이프라인에 맡기고, 계획으로서의 역할은 여기서 끝난다
+		for (int32 i = State->PlannedProductIds.Num() - 1; i >= 0; i--)
+		{
+			const FName PlannedId = State->PlannedProductIds[i];
+			const bool bExactMatch = EarlyCandidates.ContainsByPredicate([PlannedId](const FCSPurchaseCandidate& Candidate)
+			{
+				return Candidate.ProductRowHandle.RowName == PlannedId;
+			});
+			if (bExactMatch)
+			{
+				State->PlannedProductIds.RemoveAt(i);
+			}
+		}
+
+		// 2) 카테고리만 일치(정확 일치 없음): PlannedProductMissing 반응 + 15% 포기 굴림
+		// 한 진열대 방문당 반응은 최대 1회 - 첫 번째로 발견된 계획 상품만 처리하고 break
+		for (int32 i = 0; i < State->PlannedProductIds.Num(); i++)
+		{
+			const FName PlannedId = State->PlannedProductIds[i];
+			const FCSProductDataRow* PlannedRow = (Decision->ProductMasterDataTable != nullptr)
+				? Decision->ProductMasterDataTable->FindRow<FCSProductDataRow>(PlannedId, TEXT("FCSTask_BrowseShelf::PlannedProductCheck"))
+				: nullptr;
+			if (PlannedRow == nullptr)
+			{
+				continue;
+			}
+
+			const bool bCategoryMatch = EarlyCandidates.ContainsByPredicate([PlannedRow](const FCSPurchaseCandidate& Candidate)
+			{
+				const FCSProductDataRow* CandidateRow = Candidate.ProductRowHandle.GetRow<FCSProductDataRow>(TEXT("FCSTask_BrowseShelf::PlannedProductCheck"));
+				return CandidateRow != nullptr && CandidateRow->Category == PlannedRow->Category;
+			});
+			if (!bCategoryMatch)
+			{
+				continue;
+			}
+
+			State->PlannedProductIds.RemoveAt(i);
+
+			FCSPurchaseRejectionInfo PlannedMissingInfo;
+			PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
+			PlannedMissingInfo.ProductId = PlannedId;
+			PlannedMissingInfo.Severity = 1.0f;
+
+			// 대체품이 있는 케이스라 포기확률은 항상 15%(고정) - 지금 서 있는 이 진열대 자체가
+			// 같은 카테고리 상품을 갖고 있으므로 대체품 유무를 다시 따질 필요가 없음
+			if (Decision->RollChance(0.15f))
+			{
+				State->bForceStopShopping = true;
+
+				// 포기 케이스는 기존 거절과 동일하게 표시 후 대기, 대기가 끝나면 세션 종료
+				// (이 시점엔 아직 Thinking을 시작 전이라 사실상 no-op이지만, 다른 거절 경로와
+				// 동일하게 방어적으로 호출 - 혹시 남아있을 이전 라운드의 hold를 확실히 정리)
+				Customer->ReleaseActionTransitionHold();
+				CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, PlannedMissingInfo, Context.GetWorld());
+				return EStateTreeRunStatus::Running;
+			}
+
+			// 포기 아님: 이 사유를 표시/방송만 하고 이후 정상 Thinking/BrowseTime → 평가 흐름을
+			// 그대로 이어간다(대체품을 실제로 담을지는 기존 채점 로직에 맡김) - CS_HandlePurchaseRejection을
+			// 쓰지 않는 이유는 그 함수가 항상 WaitingReaction 대기 후 세션 종료로 이어지기 때문
+			const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
+			State->LastRejectionInfo = PlannedMissingInfo;
+			State->LastRejectionTime = Context.GetWorld() != nullptr ? Context.GetWorld()->GetTimeSeconds() : 0.0f;
+			DrawDebugString(
+				Context.GetWorld(),
+				Customer->GetActorLocation() + FVector(0.0f, 0.0f, Customer->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
+				Decision->GetRejectionDisplayTier(PlannedMissingInfo).DebugText.ToString(),
+				nullptr, FColor::White, DisplayDuration, true);
+			Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
+			break;
+		}
 	}
 
 	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink)

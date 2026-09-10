@@ -105,8 +105,14 @@ bool FCSCond_WantsMoreItems::TestCondition(FStateTreeExecutionContext& Context) 
 		{
 			const int32 ItemsInBasket = State->SelectProducts.Num();
 
+			// 계획 상품이 대체품도 없이 품절이라 포기를 굴린 경우 - 확률 굴림 없이 즉시 "그만 쇼핑"
+			// (진열대 우선방문 로직이 세팅. 다른 판정보다 최우선으로 검사)
+			if (State->bForceStopShopping)
+			{
+				bResult = false;
+			}
 			// 목표 개수(PlannedBasketTarget)를 채웠으면 더 안 담음 - 진열대를 더 돌아도 소용없으므로 최우선으로 검사
-			if (ItemsInBasket >= State->PlannedBasketTarget)
+			else if (ItemsInBasket >= State->PlannedBasketTarget)
 			{
 				bResult = false;
 			}
