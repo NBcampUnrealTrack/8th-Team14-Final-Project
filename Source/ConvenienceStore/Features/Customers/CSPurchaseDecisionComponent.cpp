@@ -4,6 +4,7 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "GameFramework/Actor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "UObject/ConstructorHelpers.h"
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
@@ -11,6 +12,13 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 
 	RandomStream.Initialize(FMath::Rand());
+
+	static ConstructorHelpers::FObjectFinder<UDataTable> ProductMasterDataTableFinder(
+		TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster"));
+	if (ProductMasterDataTableFinder.Succeeded())
+	{
+		ProductMasterDataTable = ProductMasterDataTableFinder.Object;
+	}
 }
 
 const FCSProductDataRow* UCSPurchaseDecisionComponent::GetProductRow(const FCSPurchaseCandidate& Candidate) const
@@ -513,6 +521,153 @@ int32 UCSPurchaseDecisionComponent::RollPlannedBasketTarget(FRandomStream& Strea
 	return Count;
 }
 
+namespace
+{
+	// RollPlannedProducts 전용 - ECSProductCategory 전체 값을 순회하기 위한 목록
+	// (UENUM 리플렉션으로 순회하지 않고 배열로 나열 - 카테고리가 10종으로 고정돼 있고 자주 안 바뀜)
+	const ECSProductCategory AllProductCategories[] = {
+		ECSProductCategory::Alcohol, ECSProductCategory::Beverage, ECSProductCategory::FreshFood,
+		ECSProductCategory::FrozenFood, ECSProductCategory::Potion, ECSProductCategory::Scroll,
+		ECSProductCategory::Snack, ECSProductCategory::Supply, ECSProductCategory::Toiletry,
+		ECSProductCategory::Tool
+	};
+
+	// Category에 속하면서 CurrentStoreLevel에서 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 상품만 모아
+	// RowName과 BaseDemand 가중치를 나란히 채움
+	// 이 필터가 없으면 저레벨 매장에서 Beverage/Toiletry/Tool처럼 후보가 아예 0개인 카테고리를
+	// 다음 단계(상품 가중 샘플링)에서 빈 배열로 넘기게 됨
+	void CollectUnlockedProductsInCategory(
+		const UDataTable& ProductTable,
+		ECSProductCategory Category,
+		int32 CurrentStoreLevel,
+		TArray<FName>& OutRowNames,
+		TArray<float>& OutWeights)
+	{
+		for (const TPair<FName, uint8*>& Pair : ProductTable.GetRowMap())
+		{
+			const FCSProductDataRow* Row = reinterpret_cast<const FCSProductDataRow*>(Pair.Value);
+			if (Row == nullptr || Row->Category != Category || Row->StoreLevelUnlockCondition > CurrentStoreLevel)
+			{
+				continue;
+			}
+			OutRowNames.Add(Pair.Key);
+			OutWeights.Add(static_cast<float>(Row->BaseDemand));
+		}
+
+		// BaseDemand가 전부 0(데이터 미기입)이면 가중 샘플링이 전부 0표를 뽑는 꼴이라 균등 가중치로 대체
+		float TotalWeight = 0.0f;
+		for (const float Weight : OutWeights)
+		{
+			TotalWeight += Weight;
+		}
+		if (TotalWeight <= 0.0f)
+		{
+			for (float& Weight : OutWeights)
+			{
+				Weight = 1.0f;
+			}
+		}
+	}
+
+	// 누적 가중치 방식으로 인덱스 하나를 뽑음. Weights가 비어있지 않다는 건 호출부가 보장함
+	int32 WeightedRandomIndex(const TArray<float>& Weights, FRandomStream& Stream)
+	{
+		float TotalWeight = 0.0f;
+		for (const float Weight : Weights)
+		{
+			TotalWeight += FMath::Max(Weight, 0.0f);
+		}
+		if (TotalWeight <= 0.0f)
+		{
+			return 0;
+		}
+
+		const float Roll = Stream.FRandRange(0.0f, TotalWeight);
+		float Cumulative = 0.0f;
+		for (int32 i = 0; i < Weights.Num(); i++)
+		{
+			Cumulative += FMath::Max(Weights[i], 0.0f);
+			if (Roll <= Cumulative)
+			{
+				return i;
+			}
+		}
+		return Weights.Num() - 1;
+	}
+}
+
+// 스폰 시점에 이번 방문에서 우선적으로 찾아다닐 계획 상품(1~2개)을 미리 뽑아둠
+// PlannedBasketStream을 그대로 이어받아 쓰므로 여기서 몇 번을 더 굴리든 MasterStream 시퀀스에는 영향 없음
+TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& Stream, int32 CurrentStoreLevel) const
+{
+	TArray<FName> Result;
+
+	if (!IsValid(ProductMasterDataTable))
+	{
+		return Result;
+	}
+
+	// 개수(1~2)부터 이 스트림에서 정함
+	const int32 TargetCount = (Stream.FRand() < PlannedProductSecondItemChance) ? 2 : 1;
+
+	for (int32 i = 0; i < TargetCount; i++)
+	{
+		// 1) 후보 카테고리 수집: BlockedCategories 제외 + 이 레벨에서 살 수 있는 상품이
+		// 하나도 없는 카테고리 제외(레벨 필터 - CSV 확인상 Beverage/Toiletry/Tool이 특히 걸림)
+		TArray<ECSProductCategory> CandidateCategories;
+		TArray<float> CategoryWeights;
+
+		for (const ECSProductCategory Category : AllProductCategories)
+		{
+			if (Archetype && Archetype->BlockedCategories.Contains(Category))
+			{
+				continue;
+			}
+
+			TArray<FName> ProductsInCategory;
+			TArray<float> ProductWeights;
+			CollectUnlockedProductsInCategory(*ProductMasterDataTable, Category, CurrentStoreLevel, ProductsInCategory, ProductWeights);
+			if (ProductsInCategory.Num() == 0)
+			{
+				continue;
+			}
+
+			// 선호도 맵에 없는 카테고리는 평균(0.5)으로 취급
+			const float* FoundPreference = Archetype ? Archetype->CategoryPreference.Find(Category) : nullptr;
+			CandidateCategories.Add(Category);
+			CategoryWeights.Add(FoundPreference ? *FoundPreference : 0.5f);
+		}
+
+		if (CandidateCategories.Num() == 0)
+		{
+			// 이 손님의 레벨/차단 카테고리 조건으로는 계획을 세울 상품이 하나도 없음 - 조용히 포기
+			break;
+		}
+
+		// 2) 카테고리 하나를 선호도 가중 샘플링으로 확정
+		const ECSProductCategory PickedCategory = CandidateCategories[WeightedRandomIndex(CategoryWeights, Stream)];
+
+		// 3) 그 카테고리 안에서 BaseDemand 가중 샘플링으로 상품 하나 확정
+		TArray<FName> ProductsInPickedCategory;
+		TArray<float> ProductWeightsInPickedCategory;
+		CollectUnlockedProductsInCategory(*ProductMasterDataTable, PickedCategory, CurrentStoreLevel, ProductsInPickedCategory, ProductWeightsInPickedCategory);
+		if (ProductsInPickedCategory.Num() == 0)
+		{
+			// 위 필터를 이미 통과한 카테고리라 정상적으로는 도달하지 않음 - 방어적 재확인
+			continue;
+		}
+
+		const FName PickedProduct = ProductsInPickedCategory[WeightedRandomIndex(ProductWeightsInPickedCategory, Stream)];
+		Result.Add(PickedProduct);
+
+		// [계획상품 확인용 로그]
+		UE_LOG(LogTemp, Log, TEXT("[계획상품 확인용] StoreLevel=%d | 카테고리=%s | 상품=%s"),
+			CurrentStoreLevel, *UEnum::GetDisplayValueAsText(PickedCategory).ToString(), *PickedProduct.ToString());
+	}
+
+	return Result;
+}
+
 void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
 {
 	RandomStream.Initialize(Seed);
@@ -551,6 +706,9 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 	case ECSPurchaseRejectReason::ShelfEmpty:
 		RowName = TEXT("ShelfEmpty");
 		break;
+	case ECSPurchaseRejectReason::PlannedProductMissing:
+		RowName = TEXT("PlannedProductMissing");
+		break;
 	default:
 		return FCSPurchaseRejectionTier();
 	}
@@ -574,7 +732,22 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 	return Row->Tiers.Last();
 }
 
-// 위 Tier의 InnerThoughtTemplate에 {ActualPrice}/{ReferencePrice} 자리표시자를 실제 값으로 채운다
+// Info.ProductId(RowName)로 ProductMasterDataTable을 조회해 화면 표시용 상품명을 반환
+// 못 찾으면(ShelfEmpty처럼 ProductId가 애초에 없는 경우 포함) 빈 텍스트를 반환해
+// {ProductName}을 참조하지 않는 기존 템플릿(가격/카테고리 반응 등)에는 영향이 없게 함
+FText UCSPurchaseDecisionComponent::GetProductDisplayName(FName ProductId) const
+{
+	if (ProductId.IsNone() || !IsValid(ProductMasterDataTable))
+	{
+		return FText::GetEmpty();
+	}
+
+	const FCSProductDataRow* Row = ProductMasterDataTable->FindRow<FCSProductDataRow>(
+		ProductId, TEXT("UCSPurchaseDecisionComponent::GetProductDisplayName"));
+	return Row != nullptr ? Row->DisplayName : FText::GetEmpty();
+}
+
+// 위 Tier의 InnerThoughtTemplate에 {ActualPrice}/{ReferencePrice}/{ProductName} 자리표시자를 실제 값으로 채운다
 FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const
 {
 	const FCSPurchaseRejectionTier Tier = GetRejectionDisplayTier(Info);
@@ -582,6 +755,7 @@ FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejec
 	FFormatNamedArguments Args;
 	Args.Add(TEXT("ActualPrice"), FText::AsNumber(FMath::RoundToInt(Info.ActualPrice)));
 	Args.Add(TEXT("ReferencePrice"), FText::AsNumber(FMath::RoundToInt(Info.ReferencePrice)));
+	Args.Add(TEXT("ProductName"), GetProductDisplayName(Info.ProductId));
 	return FText::Format(Tier.InnerThoughtTemplate, Args);
 }
 

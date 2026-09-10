@@ -33,6 +33,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Purchase|Archetype")
 	TObjectPtr<UCSCustomerArchetypeDataAsset> Archetype;
 
+	// 계획 상품(RollPlannedProducts)을 뽑을 때 카테고리별 레벨 해금 필터링·수요 가중치 조회에 쓰는
+	// 상품 마스터 데이터테이블
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned")
+	TObjectPtr<UDataTable> ProductMasterDataTable;
+
 	// 지금까지 담은 개수를 보고 하나 더 담을지를 0~1 확률로 계산
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	float ContinueShoppingProbability(int32 ItemsInBasket) const;
@@ -44,6 +49,13 @@ public:
 
 	// 스폰 시점에 이번 방문에서 목표로 삼을 장바구니 개수를 미리 뽑아둠
 	int32 RollPlannedBasketTarget(FRandomStream& Stream) const;
+
+	// 스폰 시점에 이번 방문에서 우선적으로 찾아다닐 계획 상품(1~2개)을 미리 뽑아둠
+	// 개수 자체도 이 스트림에서 굴려서 정함(PlannedProductSecondItemChance)
+	// 카테고리 선정 -> 그 카테고리 내 상품 선정 순서로, 둘 다 CurrentStoreLevel에서
+	// 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 후보만 대상으로 함
+	// (레벨이 낮아 후보가 0개인 카테고리를 걸러내지 않으면 다음 단계에서 빈 배열을 가중 샘플링하게 됨)
+	TArray<FName> RollPlannedProducts(FRandomStream& Stream, int32 CurrentStoreLevel) const;
 
 	// 스포너가 스폰 직후 파생 시드를 주입할 때 사용
 	// 이미 굴림이 시작된 뒤에 다시 부르면 그 시점부터 시퀀스가 바뀌므로 스폰 직후 1회만 호출 전제
@@ -176,6 +188,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
 	TObjectPtr<UDataTable> RejectionDisplayDataTable;
 
+	// 계획 상품을 1개가 아니라 2개 뽑을 확률
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PlannedProductSecondItemChance = 0.35f;
+
 	// 후보 하나에 점수를 매기는 함수
 	// 반환값 규약: 정상 후보는 0.0~1.0, 구매 불가(하드 차단/지갑 초과/데이터 없음)는 음수(-1.0)를 반환
 	// 구매 불가 시 OutRejectionInfo에 사유를 채운다 성공 시에는 건드리지 않는다(Reason=None으로 남음)
@@ -194,6 +210,10 @@ protected:
 private:
 	// 후보가 가리키는 상품 마스터 데이터를 데이터테이블에서 조회합니다.
 	const FCSProductDataRow* GetProductRow(const FCSPurchaseCandidate& Candidate) const;
+
+	// ProductId(RowName)만으로 화면 표시용 상품명을 조회
+	// BuildInnerThoughtText의 {ProductName} 자리표시자 전용
+	FText GetProductDisplayName(FName ProductId) const;
 
 	// 후보 하나의 실제가/기준가/PriceScore를 한 번에 구하는 공용 계산 결과
 	// ScoreCandidate/BuildScoreShortfallRejectionInfo/BuildPriceReactionInfo 세 곳이
