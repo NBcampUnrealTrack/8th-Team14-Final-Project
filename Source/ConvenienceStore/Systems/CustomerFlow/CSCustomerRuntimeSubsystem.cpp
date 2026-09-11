@@ -15,6 +15,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Trash/CSTrashActor.h"
+#include "Features/Store/CSStoreInteriorActor.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/CapsuleComponent.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
@@ -55,6 +56,21 @@ void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	TrashWitnessRollStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
 
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
+
+	// 매장 실내 영역도 진열대와 마찬가지로 레벨 시작 시 한 번만 찾아 캐싱한다(정적 마커라 재탐색 불필요)
+	CachedStoreInteriorActor = nullptr;
+	for (TActorIterator<ACSStoreInteriorActor> It(&InWorld); It; ++It)
+	{
+		CachedStoreInteriorActor = *It;
+		break;
+	}
+
+	if (!CachedStoreInteriorActor.IsValid())
+	{
+		// 레벨에 배치가 안 되어 있으면 청결도 판정이 월드 전체 쓰레기를 세는 것으로 폴백된다 -
+		// 매장 밖 쓰레기까지 섞여 들어갈 수 있으니 레벨 설정 누락을 바로 알아챌 수 있게 경고로 남긴다
+		UE_LOG(LogTemp, Warning, TEXT("[청결도] 레벨에 ACSStoreInteriorActor가 없어 쓰레기를 매장 안으로 한정하지 못하고 월드 전체를 셉니다"));
+	}
 }
 
 void UCSCustomerRuntimeSubsystem::RefreshShelves()
@@ -1307,6 +1323,95 @@ void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 
 }
 
+// GetProductsOnShelf와 달리 IsSellable() 필터 없이 Attach된 상품 액터 수만 센다
+int32 UCSCustomerRuntimeSubsystem::CountAttachedProducts(const AActor* ShelfActor) const
+{
+	int32 Count = 0;
+	if (ShelfActor == nullptr)
+	{
+		return Count;
+	}
+
+	TArray<AActor*> Attached;
+	ShelfActor->GetAttachedActors(Attached);
+	for (const AActor* AttachedActor : Attached)
+	{
+		if (Cast<ACSProductPickupActor>(AttachedActor) != nullptr)
+		{
+			++Count;
+		}
+	}
+
+	return Count;
+}
+
+// 등록된 진열대 전체의 충진율을 계산. 등록된 진열대가 없거나 전체 슬롯이 0이면 0.0(가장 빈 가게로 취급)
+float UCSCustomerRuntimeSubsystem::CalculateShelfFillRatio(int32& OutShelfCount, int32& OutFilledSlots, int32& OutTotalSlots) const
+{
+	OutShelfCount = 0;
+	OutFilledSlots = 0;
+	OutTotalSlots = 0;
+
+	for (const TObjectPtr<AActor>& RegisteredShelf : Shelves)
+	{
+		// const 함수라 여기서 RemoveAll로 정리할 수 없으니 무효 항목은 건너뛰기만 한다
+		if (!IsValid(RegisteredShelf))
+		{
+			continue;
+		}
+
+		const ACSShelfActor* Shelf = Cast<ACSShelfActor>(RegisteredShelf);
+		if (Shelf == nullptr)
+		{
+			continue;
+		}
+
+		++OutShelfCount;
+		const int32 Occupied = CountAttachedProducts(Shelf);
+		OutFilledSlots += Occupied;
+		OutTotalSlots += Occupied + Shelf->GetEmptySlotCount();
+	}
+
+	if (OutTotalSlots <= 0)
+	{
+		return 0.0f;
+	}
+
+	return static_cast<float>(OutFilledSlots) / static_cast<float>(OutTotalSlots);
+}
+
+// DroppedTrashCache는 손님이 흘린 쓰레기만 등록되고 레벨에 사전 배치된 쓰레기는 빠지므로,
+// 충진율과 같은 기준("눈에 보이는 것")에 맞추려고 매 판정마다 월드를 직접 순회한다
+// ACSStoreInteriorActor가 배치되어 있으면 그 영역 안의 쓰레기만 세고, 없으면 월드 전체를 센다(폴백)
+int32 UCSCustomerRuntimeSubsystem::CountTrashInWorld() const
+{
+	int32 Count = 0;
+	const UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return Count;
+	}
+
+	const ACSStoreInteriorActor* InteriorActor = CachedStoreInteriorActor.Get();
+
+	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
+	{
+		if (!IsValid(*It))
+		{
+			continue;
+		}
+
+		if (InteriorActor != nullptr && !InteriorActor->EncompassesPoint(It->GetActorLocation()))
+		{
+			continue;
+		}
+
+		++Count;
+	}
+
+	return Count;
+}
+
 bool UCSCustomerRuntimeSubsystem::ShouldEnterStore(const ACSCustomerCharacter* Customer) const
 {
 	if (Customer == nullptr)
@@ -1320,14 +1425,7 @@ bool UCSCustomerRuntimeSubsystem::ShouldEnterStore(const ACSCustomerCharacter* C
 		return false;
 	}
 
-	// 매장 상태로 판단 open인지 close인지
-	const ACSStoreGameState* StoreState = World->GetGameState<ACSStoreGameState>();
-	if (StoreState == nullptr || StoreState->bIsStoreOpen == false)
-	{
-		return false;
-	}
-
-	// [백록담님] 개인 심리 파트
+	// 로그에 시드를 찍기 위해 컴포넌트 조회를 영업 체크보다 앞으로 옮김 - 난수를 소비하지 않는 조회라 순서를 옮겨도 무방
 	const UCSPurchaseDecisionComponent* Decision =
 		Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
 	if (Decision == nullptr)
@@ -1335,11 +1433,68 @@ bool UCSCustomerRuntimeSubsystem::ShouldEnterStore(const ACSCustomerCharacter* C
 		return false;
 	}
 
-	// [백록담님]
-	// 소비심리 로직이 붙으면 이 한 줄이 그 파트의 판정 함수 호출로 바뀜
-	// StoreEntryChance는 현재 1.0이라 영업 중이면 일단 테스트용이므로 전원 입장으로 구현
-	// 아무 이유없이 줄이게되면 영향을 받을 수 있어서 (추후 생각)
-	return Decision->RollChance(Decision->StoreEntryChance);
+	const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	const int32 CustomerSeed = Decision->GetCustomerSeed();
+
+	// 매장 상태로 판단 open인지 close인지 - 영업 미개시면 굴리지 않는다
+	const ACSStoreGameState* StoreState = World->GetGameState<ACSStoreGameState>();
+	if (StoreState == nullptr || StoreState->bIsStoreOpen == false)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[입장판정] 손님=%s | 시드=%d | 결과=영업미개시"),
+			*Customer->GetName(), CustomerSeed);
+		return false;
+	}
+
+	// 계획 유무 - 스폰 시점에 이미 정해진 값이라 여기서 새로 굴리지 않는다
+	// 입장 판정이 쇼핑보다 먼저라 이 시점엔 PlannedProductIds가 아직 줄어든 적이 없고,
+	// 종족 데이터 때문에 카테고리가 전부 막힌 손님도 자연히 "계획 없음"으로 처리된다
+	const bool bHasPlan = State->PlannedProductIds.Num() > 0;
+
+	// 매장 상태는 판정 순간마다 새로 계산한다(캐시 금지) - 손님이 걸어오는 동안 플레이어가
+	// 진열대를 채우거나 쓰레기를 치우면 그게 바로 반영되게 하려는 것. 판정이 손님당 1회라 비용 문제는 없다
+	int32 ShelfCount = 0;
+	int32 FilledSlots = 0;
+	int32 TotalSlots = 0;
+	const float FillRatio = CalculateShelfFillRatio(ShelfCount, FilledSlots, TotalSlots);
+
+	const int32 TrashCount = CountTrashInWorld();
+	const int32 TrashDenominator = FMath::Max(1, DefaultTrashCountForZeroCleanliness);
+	const float Cleanliness = FMath::Clamp(1.0f - static_cast<float>(TrashCount) / static_cast<float>(TrashDenominator), 0.0f, 1.0f);
+
+	// 진열대가 비면 청결도와 무관하게 0이어야 하고, 두 입력 중 어느 쪽을 개선해도 결과가 나아져야 해서 곱을 쓴다
+	const float StoreCondition = FillRatio * Cleanliness;
+
+	const float EntryChanceMin = bHasPlan ? DefaultPlannedEntryChanceMin : DefaultUnplannedEntryChanceMin;
+	const float EntryChanceMax = bHasPlan ? DefaultPlannedEntryChanceMax : DefaultUnplannedEntryChanceMax;
+	const float FinalChance = FMath::Lerp(EntryChanceMin, EntryChanceMax, StoreCondition);
+
+	// 이 손님 마스터 스트림의 첫 굴림 - 계획 있음/없음 어느 쪽이든 굴림 횟수가 1회로 같다
+	// 살 목적이 있는 손님이 확률 때문에 튕겨나가면 버그처럼 보이므로 계획 유무로 범위를 나누고,
+	// 판정을 가게 앞 한 번으로 고정해 "들어올까 말까"를 지켜보는 순간을 만든다
+	const bool bEntered = Decision->RollChance(FinalChance);
+
+	const FString LogLine = FString::Printf(
+		TEXT("[입장판정] 손님=%s | 시드=%d | 결과=%s | 계획=%s | 진열대=%d개 | 슬롯=%d/%d | 충진율=%.2f | 쓰레기=%d개 | 청결도=%.2f | 매장상태=%.2f | 확률=%.2f"),
+		*Customer->GetName(), CustomerSeed, bEntered ? TEXT("입장") : TEXT("확률탈락"),
+		bHasPlan ? TEXT("있음") : TEXT("없음"), ShelfCount, FilledSlots, TotalSlots,
+		FillRatio, TrashCount, Cleanliness, StoreCondition, FinalChance);
+
+	// 전체 슬롯이 0일 때만 Warning - 진열대 등록이 빠지는 버그를 콘솔에서 바로 보이게 하려는 것
+	if (TotalSlots <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *LogLine);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("%s"), *LogLine);
+	}
+
+	return bEntered;
 }
 
 void UCSCustomerRuntimeSubsystem::CommitShoplift(ACSCustomerCharacter* Customer)
