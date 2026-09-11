@@ -27,6 +27,16 @@ ACSEndingItemActor::ACSEndingItemActor()
 void ACSEndingItemActor::PrepareForPickupPhysics()
 {
 	if (!IsValid(ToolMesh) || !IsValid(ItemSceneRoot)) return;
+	if (GetRootComponent() == ToolMesh)
+	{
+		Super::PrepareForPickupPhysics();
+		// 떨어진 위치에서 편집용 씬 루트를 복원한 뒤 메시를 원래 계층으로 되돌립니다.
+		ItemSceneRoot->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		SetRootComponent(ItemSceneRoot);
+		ToolMesh->AttachToComponent(ItemSceneRoot, FAttachmentTransformRules::KeepWorldTransform);
+		ToolMesh->SetRelativeTransform(StoredMeshRelativeTransform);
+		return;
+	}
 	if (ToolMesh->GetAttachParent() == ItemSceneRoot)
 	{
 		StoredMeshRelativeTransform = ToolMesh->GetRelativeTransform();
@@ -42,11 +52,31 @@ void ACSEndingItemActor::PrepareForPickupPhysics()
 
 void ACSEndingItemActor::EnableWorldDropPhysics()
 {
-	if (IsValid(ToolMesh) && ToolMesh->GetAttachParent() == ItemSceneRoot)
+	if (!IsValid(ToolMesh) || !IsValid(ItemSceneRoot) || !ToolMesh->GetStaticMesh()) return;
+	if (GetRootComponent() != ToolMesh)
 	{
 		StoredMeshRelativeTransform = ToolMesh->GetRelativeTransform();
+		// 물리 이동 중에는 툴 메시를 루트로 삼아 추가 메시도 한 물체처럼 따라오게 합니다.
+		// 월드 트랜스폼을 유지하므로 BP에서 설정한 각 부품의 배치와 크기는 바뀌지 않습니다.
+		ToolMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		SetRootComponent(ToolMesh);
+		ItemSceneRoot->AttachToComponent(ToolMesh, FAttachmentTransformRules::KeepWorldTransform);
 	}
+	TInlineComponentArray<UPrimitiveComponent*> Primitives(this);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		// 추가 장식 메시가 독립된 물리 바디로 떨어지지 않도록 툴 메시만 시뮬레이션합니다.
+		if (Primitive != ToolMesh) Primitive->SetSimulatePhysics(false);
+	}
+	// 공중 배출 시에도 BP의 초기 중력 설정과 무관하게 자연스럽게 낙하합니다.
+	ToolMesh->SetEnableGravity(true);
 	Super::EnableWorldDropPhysics();
+}
+
+void ACSEndingItemActor::OnEquipped(ACSPlayerCharacter* NewOwner)
+{
+	Super::OnEquipped(NewOwner);
+	if (IsValid(NewOwner) && IsValid(IssuingManager)) IssuingManager->NotifyItemPickedUp(this);
 }
 
 void ACSEndingItemActor::InitializeItem(const FCSEndingItemDefinition& Definition, ACSEndingManager* Manager)
@@ -73,7 +103,7 @@ FText ACSEndingManager::GetPurchasePrompt() const
 	const UCSEndingData* Data = GetEndingData();
 	if (!Data->IsConfigurationValid()) return NSLOCTEXT("Ending", "InvalidData", "엔딩 데이터 설정을 확인하세요");
 	if (bEndingStarted) return NSLOCTEXT("Ending", "Started", "귀환이 시작되었습니다");
-	if (IsValid(PendingPickup) && !PendingPickup->GetAttachParentActor())
+	if (IsValid(PendingPickup))
 		return NSLOCTEXT("Ending", "PickupFirst", "나온 귀환 재료를 먼저 주워주세요");
 	if (!Data->Items.IsValidIndex(NextPurchaseIndex))
 		return NSLOCTEXT("Ending", "SoldOut", "모든 귀환 재료를 구매했습니다");
@@ -88,7 +118,7 @@ void ACSEndingManager::Purchase(ACSPlayerCharacter* Player, const FTransform& Sp
 	const UCSEndingData* Data = GetEndingData();
 	ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
 	if (!IsValid(Player) || !State || bTransactionInProgress || bEndingStarted || !Data->IsConfigurationValid() ||
-		!Data->Items.IsValidIndex(NextPurchaseIndex) || (IsValid(PendingPickup) && !PendingPickup->GetAttachParentActor())) return;
+		!Data->Items.IsValidIndex(NextPurchaseIndex) || IsValid(PendingPickup)) return;
 	TGuardValue<bool> TransactionGuard(bTransactionInProgress, true);
 	const FCSEndingItemDefinition& Item = Data->Items[NextPurchaseIndex];
 	if (!State->CanAfford(Item.PriceGold)) return;
@@ -105,6 +135,15 @@ void ACSEndingManager::Purchase(ACSPlayerCharacter* Player, const FTransform& Sp
 	Spawned->InitializeItem(Item, this);
 	PendingPickup = Spawned;
 	++NextPurchaseIndex;
+	// 구매로 배출한 실물만 즉시 중력으로 떨어뜨립니다. 전시 복제본에는 적용하지 않습니다.
+	Spawned->SetActorEnableCollision(true);
+	Spawned->EnableWorldDropPhysics();
+}
+
+void ACSEndingManager::NotifyItemPickedUp(ACSEndingItemActor* Item)
+{
+	// 현재 부착 여부 대신 실제 획득 성공 시점에 배출 대기를 해제합니다.
+	if (IsValid(Item) && PendingPickup == Item) PendingPickup = nullptr;
 }
 
 FText ACSEndingManager::GetWizardPrompt() const
@@ -146,7 +185,11 @@ void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)
 			if (!IsValid(Item) || Item->IssuingManager != this || SubmittedItemIds.Contains(Item->EndingItemId)) continue;
 			const FName Id = Item->EndingItemId;
 			if (!Data->Items.ContainsByPredicate([Id](const FCSEndingItemDefinition& Entry) { return Entry.ItemId == Id; })) continue;
-			if (Player->ConsumeQuickbarTool(Item)) SubmittedItemIds.Add(Id);
+			if (Player->ConsumeQuickbarTool(Item))
+			{
+				SubmittedItemIds.Add(Id);
+				OnSubmissionChanged.Broadcast();
+			}
 			// 마지막 재료를 맡긴 입력으로 골드까지 지불하지 않습니다.
 			return;
 		}
