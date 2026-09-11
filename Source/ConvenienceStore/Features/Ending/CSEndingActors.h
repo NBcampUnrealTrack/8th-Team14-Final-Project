@@ -12,6 +12,8 @@ class ACSPlayerCharacter;
 class ACSEndingManager;
 struct FCSEndingItemDefinition;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnEndingSubmissionChanged);
+
 // 사용 효과 없이 기존 도구의 줍기와 퀵바 보관 기능을 재사용합니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSEndingItemActor : public ACSUsableToolActor
@@ -21,6 +23,7 @@ public:
 	ACSEndingItemActor();
 	virtual void PrepareForPickupPhysics() override;
 	virtual void EnableWorldDropPhysics() override;
+	virtual void OnEquipped(ACSPlayerCharacter* NewOwner) override;
 	void InitializeItem(const FCSEndingItemDefinition& Definition, ACSEndingManager* Manager);
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") FName EndingItemId;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") TObjectPtr<ACSEndingManager> IssuingManager;
@@ -43,11 +46,15 @@ public:
 	FText GetPurchasePrompt() const;
 	FText GetWizardPrompt() const;
 	void Purchase(ACSPlayerCharacter* Player, const FTransform& SpawnTransform);
+	// 처음 집은 배출 상품은 이후 내려놓더라도 다음 구매를 막지 않습니다.
+	void NotifyItemPickedUp(ACSEndingItemActor* Item);
 	void SubmitOrActivate(ACSPlayerCharacter* Player);
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ending") TObjectPtr<UCSEndingData> EndingData;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") int32 NextPurchaseIndex = 0;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") TSet<FName> SubmittedItemIds;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") bool bEndingStarted = false;
+	// 제출 확정 후 전시대에 변경 사실을 알립니다.
+	UPROPERTY(BlueprintAssignable, Category = "Ending") FCSOnEndingSubmissionChanged OnSubmissionChanged;
 private:
 	// 배출된 물건을 집기 전에는 다음 상품이 겹쳐 나오지 않게 합니다.
 	UPROPERTY(Transient) TObjectPtr<ACSEndingItemActor> PendingPickup;
