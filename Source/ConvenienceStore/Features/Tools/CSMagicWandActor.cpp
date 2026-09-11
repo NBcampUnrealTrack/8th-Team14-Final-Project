@@ -1,6 +1,7 @@
 #include "Features/Tools/CSMagicWandActor.h"
 
 #include "Features/Tools/CSMagicProjectileActor.h"
+#include "Features/Player/CSPlayerCharacter.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/Pawn.h"
@@ -35,6 +36,57 @@ ACSMagicWandActor::ACSMagicWandActor()
 	Muzzle->SetupAttachment(ToolMesh);
 	// 지팡이 모델이 없을 때도 발사 위치를 확인할 수 있도록 기본값을 앞쪽에 둡니다.
 	Muzzle->SetRelativeLocation(FVector(60.0f, 0.0f, 0.0f));
+}
+
+void ACSMagicWandActor::OnEquipped(ACSPlayerCharacter* NewOwner)
+{
+	Super::OnEquipped(NewOwner);
+	if (IsValid(NewOwner))
+	{
+		if (!CachedWorldScale.IsSet())
+		{
+			CachedWorldScale = GetActorScale3D();
+		}
+		SetActorScale3D(CachedWorldScale.GetValue() *
+			FMath::Max(0.01f, NewOwner->GetMagicWandHeldScaleMultiplier()));
+	}
+}
+
+void ACSMagicWandActor::OnUnequipped()
+{
+	RestoreWorldScale();
+	Super::OnUnequipped();
+}
+
+void ACSMagicWandActor::PrepareForPickupPhysics()
+{
+	Super::PrepareForPickupPhysics();
+	// Quickbar 보관과 Home Dock 반환도 이 기존 준비 경로를 거칩니다.
+	RestoreWorldScale();
+}
+
+FBox ACSMagicWandActor::GetUnheldBounds() const
+{
+	const FBox Bounds = GetComponentsBoundingBox(true);
+	const double CurrentScaleSize = GetActorScale3D().Size();
+	if (Bounds.IsValid && CachedWorldScale.IsSet() && CurrentScaleSize > UE_SMALL_NUMBER)
+	{
+		// 장착 배율은 균일 배율이므로 월드 AABB도 Actor 원점을 기준으로 복원할 수 있습니다.
+		const double RestoreRatio = CachedWorldScale.GetValue().Size() / CurrentScaleSize;
+		const FVector Origin = GetActorLocation();
+		return FBox(Origin + (Bounds.Min - Origin) * RestoreRatio,
+			Origin + (Bounds.Max - Origin) * RestoreRatio);
+	}
+	return Bounds;
+}
+
+void ACSMagicWandActor::RestoreWorldScale()
+{
+	if (CachedWorldScale.IsSet())
+	{
+		SetActorScale3D(CachedWorldScale.GetValue());
+		CachedWorldScale.Reset();
+	}
 }
 
 bool ACSMagicWandActor::RememberHomeDockFromCurrentAttachment()
