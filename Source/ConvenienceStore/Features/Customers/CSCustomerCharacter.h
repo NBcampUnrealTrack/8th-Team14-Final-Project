@@ -101,6 +101,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSCustomerBasketActor> BasketActor;
 
+	// 오른손 Bone을 따라가는 봉투 전용 기준점입니다. BP에서 상대 위치와 회전을 조정합니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Shopping Bag")
+	TObjectPtr<USceneComponent> ShoppingBagAnchor;
+
 	// 계산 후 고객이 들고 나갈 내용물이 보이지 않는 봉투 블루프린트입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Shopping Bag")
 	TSubclassOf<ACSCustomerShoppingBagActor> ShoppingBagActorClass;

@@ -3,6 +3,7 @@
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Ending/CSEndingActors.h"
+#include "Features/Ending/CSEndingDisplayActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
@@ -272,6 +273,7 @@ void ACSPlayerCharacter::BeginPlay()
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (AimedEndingDisplay.IsValid()) AimedEndingDisplay->HidePlacementPreview();
 	if (IsValid(PushedCart))
 	{
 		// 플레이어가 제거될 때 수레의 Pawn 충돌 응답도 원래대로 되돌립니다.
@@ -800,6 +802,8 @@ void ACSPlayerCharacter::RestoreFacilityMagicWands(AActor* FacilityActor)
 void ACSPlayerCharacter::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+	if (AimedEndingDisplay.IsValid()) AimedEndingDisplay->HidePlacementPreview();
+	AimedEndingDisplay.Reset();
 	// 아래 모드별 early return과 무관하게 플레이어 이동 애니메이션은 항상 먼저 갱신합니다.
 	UpdatePlayerLocomotionAnimation();
 
@@ -1159,10 +1163,19 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	{
 		return;
 	}
-	// 엔딩 재료를 든 경우에는 두 엔딩 상호작용 대상에만 안내를 허용합니다.
+	// 엔딩 재료를 든 경우에도 다른 엔딩 재료의 줍기 안내를 표시합니다.
 	if (IsValid(HeldActor) && HeldActor->IsA<ACSEndingItemActor>() &&
-		!TargetActor->IsA<ACSEndingWizardActor>() && !TargetActor->IsA<ACSEndingVendorActor>())
+		!TargetActor->IsA<ACSEndingWizardActor>() && !TargetActor->IsA<ACSEndingVendorActor>() &&
+		!TargetActor->IsA<ACSEndingDisplayActor>() && !TargetActor->IsA<ACSEndingItemActor>())
 	{
+		return;
+	}
+	if (ACSEndingDisplayActor* Display = Cast<ACSEndingDisplayActor>(TargetActor))
+	{
+		AimedEndingDisplay = Display;
+		Display->UpdatePlacementPreview(this, HitResult.GetComponent());
+		// 슬롯별 안내에는 입력 키 또는 배치 불가 사유가 이미 포함되어 있습니다.
+		StorePlayerController->SetInteractionPrompt(Display->GetSlotPrompt(this, HitResult.GetComponent()), FLinearColor::White);
 		return;
 	}
 	// 상품을 든 상태에서는 이미 진열된 상품을 조준해도, 그 상품이 속한 진열대를 계속 배치 대상으로 사용합니다.
@@ -3332,6 +3345,8 @@ void ACSPlayerCharacter::DropHeldItem()
 void ACSPlayerCharacter::HandleDropActionStarted()
 {
 	ResetDropActionHoldState();
+	// 전시대를 조준한 Q는 즉시 배치로 소비하여 실패해도 바닥에 버리거나 던지지 않습니다.
+	if (TryPlaceOnEndingDisplay()) return;
 
 	// 건축모드는 기존 Q Started 조작감을 유지하고 홀드 투척 판정을 시작하지 않습니다.
 	if (IsBuildMode())
@@ -3370,6 +3385,8 @@ void ACSPlayerCharacter::HandleDropActionReleased()
 	{
 		return;
 	}
+	// Q를 누른 뒤 전시대로 조준을 옮긴 경우에도 투척보다 슬롯 배치를 우선합니다.
+	if (TryPlaceOnEndingDisplay()) return;
 
 	if (HeldDuration >= ThrowHoldThreshold)
 	{
@@ -3379,6 +3396,24 @@ void ACSPlayerCharacter::HandleDropActionReleased()
 	{
 		DropHeldItem();
 	}
+}
+
+bool ACSPlayerCharacter::TryPlaceOnEndingDisplay()
+{
+	if (IsBuildMode() || IsValid(PushedCart) || !IsValid(FirstPersonCamera) ||
+		!IsValid(HeldActor) || !HeldActor->IsA<ACSEndingItemActor>()) return false;
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(HeldActor);
+	const FVector Start = FirstPersonCamera->GetComponentLocation();
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Start,
+		Start + FirstPersonCamera->GetForwardVector() * InteractionDistance, ECC_Visibility, Params)) return false;
+	ACSEndingDisplayActor* Display = Cast<ACSEndingDisplayActor>(Hit.GetActor());
+	if (!Display) return false;
+	const ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(GetController());
+	if (!StoreController || !StoreController->IsGameplayUIInputLocked()) Display->PlaceInSlot(this, Hit.GetComponent());
+	return true;
 }
 
 void ACSPlayerCharacter::HandleDropActionCanceled()
@@ -4375,6 +4410,13 @@ void ACSPlayerCharacter::TryInteract()
 		}
 	}
 
+    if (ACSEndingDisplayActor* Display = Cast<ACSEndingDisplayActor>(HitActor))
+    {
+		// 액터 전체가 아닌 실제 조준한 슬롯으로 배치·회수를 처리합니다.
+		Display->InteractWithSlot(this, HitResult.GetComponent());
+		return;
+    }
+
     if (IsValid(HitActor) && HitActor->Implements<UCSInteractable>())
     {
         ICSInteractable::Execute_Interact(HitActor, this);
@@ -4554,6 +4596,13 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 
 bool ACSPlayerCharacter::ConsumeQuickbarTool(ACSUsableToolActor* Tool)
 {
+	if (!ReleaseQuickbarTool(Tool)) return false;
+	Tool->Destroy();
+	return true;
+}
+
+bool ACSPlayerCharacter::ReleaseQuickbarTool(ACSUsableToolActor* Tool)
+{
 	if (!IsValid(Tool) || !IsValid(QuickbarInventory) || !QuickbarInventory->ContainsTool(Tool))
 	{
 		return false;
@@ -4563,7 +4612,9 @@ bool ACSPlayerCharacter::ConsumeQuickbarTool(ACSUsableToolActor* Tool)
 		HeldActor = nullptr;
 	}
 	QuickbarInventory->RemoveTool(Tool);
-	Tool->Destroy();
+	Tool->PrepareForPickupPhysics();
+	Tool->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	Tool->OnUnequipped();
 	return true;
 }
 
