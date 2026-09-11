@@ -81,6 +81,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Checkout")
 	bool IsInCashierInteractionZone(const AActor* Actor) const;
 
+	// 직원 AI가 손님 대기열 쪽이 아닌 계산 담당자 구역으로 이동할 수 있도록, 구역 중심 접근 지점을 반환합니다.
+	bool TryGetCashierInteractionPoint(FVector& OutLocation) const;
+
+	// 중심이 가구/벽에 막혀 있어도 직원 구역 내부의 다른 자리를 검사할 수 있게 합니다.
+	void GetCashierWaitingPoints(TArray<FVector>& OutLocations) const;
+
+	// 직원 위치에서 상품을 스캔하는 상판을 바라보는 수평 방향을 반환합니다.
+	bool TryGetCashierInteractionFacing(const FVector& CashierLocation, FRotator& OutFacing) const;
+
 	// 대기열 맨 앞 손님의 구매 목록을 상품별 수량과 금액이 정리된 주문으로 변환합니다.
 	UFUNCTION(BlueprintCallable, Category = "Checkout")
 	bool BuildFrontCustomerOrder(

@@ -48,6 +48,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Employee")
 	FCSStoreEmployeeTask GetActiveTask() const { return ActiveTask; }
 
+	UFUNCTION(BlueprintPure, Category = "Employee|Idle")
+	bool IsReturningToIdleLocation() const { return bHasIdleDestination && !bAtIdleDestination; }
+
+	UFUNCTION(BlueprintPure, Category = "Employee|Idle")
+	bool IsWaitingAtIdleLocation() const { return bAtIdleDestination; }
+
 	// 애니메이션 블루프린트가 상자 운반 몽타주와 양손 IK를 전환할 수 있도록 현재 운반 상태를 제공합니다.
 	UFUNCTION(BlueprintPure, Category = "Employee|Carry")
 	bool IsCarryingCrate() const;
@@ -71,6 +77,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Employee|Role")
 	bool bLockToFallbackSupportedTaskTypes = false;
 
+	// 계산대 대기 정책은 공용 구역으로 대체하지 않습니다. 계산 전담 역할에는 자동 적용됩니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Idle")
+	bool bWaitAtCheckoutCounter = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Idle", meta = (ClampMin = "0.0", Units = "s"))
+	float IdleReturnDelaySeconds = 4.0f;
+
 	// 목적지 액터에 이 거리 이내로 도착하면 이동을 멈추고 작업을 시작합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Movement", meta = (ClampMin = "1.0", UIMin = "1.0"))
 	float WorkAcceptanceRadius = 160.0f;
@@ -78,6 +91,10 @@ protected:
 	// 경로 추종 컴포넌트의 실제 정지 지점과 코드의 거리 계산 오차를 흡수해, 도착 후 업무 단계로 안정적으로 전환합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float WorkArrivalTolerance = 100.0f;
+
+	// 작업 위치에 도착한 뒤 대상을 향해 몸을 돌리는 초당 각도입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Movement", meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float WorkFacingTurnRate = 360.0f;
 
 	// NavMesh 투영 지점이 원본 상자와 멀리 떨어진 경우, 직원이 원격으로 집어 드는 일을 막는 실제 상자 집기 거리입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Movement", meta = (ClampMin = "1.0", UIMin = "1.0"))
@@ -135,12 +152,23 @@ protected:
 private:
 	const TArray<ECSStoreEmployeeTaskType>& GetSupportedTaskTypes() const;
 	void TryAcquireTask();
+	void UpdateIdleBehavior(float DeltaSeconds);
+	bool ShouldWaitAtCheckoutCounter() const;
+	bool TryFindIdleDestination();
+	bool TryProjectIdleLocation(const FVector& Location, FVector& OutNavigationLocation) const;
+	bool GetIdleDestination(FVector& OutLocation, FRotator& OutFacing) const;
+	void CancelIdleReturn(bool bReleaseCheckoutStation = true);
 	void UpdateActiveTask(float DeltaSeconds);
 	void UpdateRestockTask(float DeltaSeconds);
 	void UpdateStorageTask(float DeltaSeconds);
 	bool ExecuteActiveTask();
 	void ClearActiveTask(bool bSucceeded);
 	bool GetCurrentWorkLocation(FVector& OutWorkLocation, AActor*& OutTargetActor) const;
+	bool TryGetCurrentWorkFacing(const AActor* TargetActor, FRotator& OutFacing) const;
+	// 회전이 끝날 때까지 업무 타이머와 실제 상호작용을 진행하지 않습니다.
+	bool UpdateWorkFacing(const AActor* TargetActor, float DeltaSeconds);
+	bool UpdateFacingRotation(const FRotator& TargetFacing, float DeltaSeconds);
+	void RestoreWorkRotationSettings();
 	bool MoveToWorkLocation(const FVector& WorkLocation, AActor* TargetActor);
 	void BeginRestockPhase(ECSStoreEmployeeRestockPhase NewPhase);
 	// 실패·취소·진열대 포화 등 종료 사유와 무관하게, 손에 든 재고를 창고 우선으로 반납합니다.
@@ -162,6 +190,22 @@ private:
 	bool bHasActiveTask = false;
 	bool bHasReachedWorkTarget = false;
 	bool bHasIssuedMoveRequest = false;
+	bool bHasIdleDestination = false;
+	bool bIdleMoveRequested = false;
+	bool bAtIdleDestination = false;
+	float IdleElapsedSeconds = 0.0f;
+	float IdleSearchCountdown = 0.0f;
+	float IdleMoveElapsedSeconds = 0.0f;
+	int32 IdleSlotIndex = INDEX_NONE;
+	FVector IdleMoveGoal = FVector::ZeroVector;
+	FVector IdleDestinationAnchor = FVector::ZeroVector;
+	FTransform IdleTargetTransform = FTransform::Identity;
+	TWeakObjectPtr<AActor> IdleTarget;
+	// 작업 중에만 이동/컨트롤러 회전을 끄고, 다음 이동이나 업무 종료 시 원래 BP 설정으로 복원합니다.
+	bool bHasWorkRotationOverride = false;
+	bool bSavedUseControllerRotationYaw = false;
+	bool bSavedOrientRotationToMovement = false;
+	bool bSavedUseControllerDesiredRotation = false;
 	// 계산대가 자동 스캔 연출을 끝낼 때까지 계산 직원이 업무를 유지하도록 합니다.
 	bool bWaitingForEmployeeCheckout = false;
 	bool bHeldProductWasSpawnedFromCrate = false;
