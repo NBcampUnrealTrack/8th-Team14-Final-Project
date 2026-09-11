@@ -59,6 +59,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Interaction")
 	AActor* GetHeldActor() const { return HeldActor; }
 
+	float GetMagicWandHeldScaleMultiplier() const { return MagicWandHeldScaleMultiplier; }
+
+	// Post Process AnimBP에서만 소비하는 Mesh Component Space IK 목표입니다.
+	UFUNCTION(BlueprintPure, Category = "Animation|Magic Wand")
+	void GetMagicWandIKTargets(FTransform& HandTarget, FVector& ElbowTarget) const;
+
 	// 상호작용한 물체를 플레이어 손 위치에 부착합니다.
 	bool TryPickUp(AActor* PickupActor);
 	// 제출할 도구를 손과 퀵바에서 함께 제거하여 파괴 후 참조가 남지 않게 합니다.
@@ -110,6 +116,20 @@ protected:
 	// 손에 든 물체를 카메라 앞에 부착하는 기준점입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> HeldItemAnchor;
+
+	// 마법봉만 오른손 Bone을 따라가며, 그립 위치와 회전은 플레이어 BP에서 조절합니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> MagicWandAnchor;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> MagicWandHandTarget;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<USceneComponent> MagicWandElbowTarget;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Magic Wand",
+		meta = (ClampMin = "0.01", UIMin = "0.01"))
+	float MagicWandHeldScaleMultiplier = 0.7f;
 
 	// 수레 손잡이가 따라갈 플레이어 앞쪽의 기준점입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -442,6 +462,7 @@ private:
 	void SelectPreviousQuickbarSlot();
 	bool TrySelectQuickbarSlot(int32 SlotIndex);
 	void EquipSelectedQuickbarTool();
+	USceneComponent* GetHeldItemAttachTarget(const AActor* ItemActor) const;
 	void StoreEquippedQuickbarTool();
 	void UpdateQuickbarHUD();
 
