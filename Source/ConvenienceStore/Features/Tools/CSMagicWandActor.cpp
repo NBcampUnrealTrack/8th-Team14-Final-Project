@@ -4,7 +4,9 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 
 namespace
@@ -136,7 +138,8 @@ AActor* ACSMagicWandActor::GetHomeDockOwner() const
 
 bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 {
-	if (!bIsEquipped || !IsValid(User) || MagicProjectileClass == nullptr || GetWorld() == nullptr)
+	if (!bIsEquipped || !IsValid(User) || !IsValid(Muzzle) ||
+		MagicProjectileClass == nullptr || GetWorld() == nullptr)
 	{
 		return false;
 	}
@@ -150,14 +153,33 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	FVector ViewLocation;
 	FRotator ViewRotation;
 	User->GetActorEyesViewPoint(ViewLocation, ViewRotation);
-	const FVector TravelDirection = ViewRotation.Vector().GetSafeNormal();
-	const FVector SpawnLocation = IsValid(Muzzle)
-		? Muzzle->GetComponentLocation()
-		: ViewLocation + TravelDirection * 60.0f;
+	APawn* UserPawn = Cast<APawn>(User);
+	if (IsValid(UserPawn))
+	{
+		if (APlayerController* PlayerController = Cast<APlayerController>(UserPawn->GetController()))
+		{
+			PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		}
+	}
+
+	const FVector ViewDirection = ViewRotation.Vector().GetSafeNormal();
+	constexpr float AimDistance = 10000.0f;
+	FVector AimPoint = ViewLocation + ViewDirection * AimDistance;
+	FCollisionQueryParams AimQuery(SCENE_QUERY_STAT(MagicWandAim), false, User);
+	AimQuery.AddIgnoredActor(this);
+	FHitResult AimHit;
+	if (GetWorld()->LineTraceSingleByChannel(AimHit, ViewLocation, AimPoint, ECC_Visibility, AimQuery))
+	{
+		AimPoint = AimHit.ImpactPoint;
+	}
+
+	// 카메라가 가리킨 지점으로 봉 끝에서 수렴시켜 시차에 의한 조준 오차를 없앱니다.
+	const FVector SpawnLocation = Muzzle->GetComponentLocation();
+	const FVector TravelDirection = (AimPoint - SpawnLocation).GetSafeNormal(UE_SMALL_NUMBER, ViewDirection);
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.Owner = User;
-	SpawnParameters.Instigator = Cast<APawn>(User);
+	SpawnParameters.Instigator = UserPawn;
 	SpawnParameters.SpawnCollisionHandlingOverride =
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -174,7 +196,7 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	// 지팡이 끝에서 생성된 투사체가 지팡이 자체 충돌에 막히지 않도록 제외합니다.
 	Projectile->AddIgnoredActor(this);
 
-	// 투사체가 카메라 조준 방향을 그대로 사용하도록 초기 속도와 방향을 전달합니다.
+	// Spawn 회전과 초기 속도에 같은 Muzzle -> AimPoint 방향을 사용합니다.
 	Projectile->InitializeProjectile(TravelDirection);
 	LastPrimaryUseTime = CurrentTime;
 	PlayMagicWandGameplaySFX(this, ECSAudioEvent::MagicAttack);
