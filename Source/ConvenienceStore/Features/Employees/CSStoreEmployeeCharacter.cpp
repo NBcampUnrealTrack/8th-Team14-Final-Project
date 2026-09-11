@@ -91,6 +91,9 @@ void ACSStoreEmployeeCharacter::BeginPlay()
 
 void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CancelIdleReturn();
+	RestoreWorkRotationSettings();
+
 	if (UWorld* World = GetWorld())
 	{
 		if (UCSStoreEmployeeSubsystem* EmployeeSubsystem =
@@ -111,6 +114,10 @@ void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 	{
 		NoTaskDiagnosticElapsedSeconds += DeltaSeconds;
 		TryAcquireTask();
+		if (!bHasActiveTask)
+		{
+			UpdateIdleBehavior(DeltaSeconds);
+		}
 		return;
 	}
 
@@ -207,6 +214,8 @@ void ACSStoreEmployeeCharacter::TryAcquireTask()
 		return;
 	}
 
+	// 대기 자리와 복귀 이동을 먼저 정리합니다. 계산 업무가 예약한 계산대는 업무 중에도 유지합니다.
+	CancelIdleReturn(NewTask.Type != ECSStoreEmployeeTaskType::CheckoutService);
 	ActiveTask = NewTask;
 	bHasActiveTask = true;
 	NoTaskDiagnosticElapsedSeconds = 0.0f;
@@ -285,6 +294,12 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 	float RequestedArrivalTolerance = bIsDeliveryPortalSource
 		? FMath::Min(WorkArrivalTolerance, 25.0f)
 		: WorkArrivalTolerance;
+	if (Cast<ACSCheckoutCounterActor>(TargetActor) != nullptr)
+	{
+		// 기본 반경(160cm)으로는 직원 구역 밖에서 도착 처리될 수 있으므로, 구역 중심까지 충분히 접근합니다.
+		RequestedAcceptanceRadius = FMath::Min(RequestedAcceptanceRadius, 50.0f);
+		RequestedArrivalTolerance = FMath::Min(RequestedArrivalTolerance, 25.0f);
+	}
 	if (const ACSShelfActor* ShelfWorkTarget = Cast<ACSShelfActor>(TargetActor))
 	{
 		FVector UnusedCenter = FVector::ZeroVector;
@@ -307,6 +322,8 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 	const AAIController* ExistingAIController = Cast<AAIController>(GetController());
 	if (!bHasReachedWorkTarget && DistanceSquared > FMath::Square(WorkStartDistance))
 	{
+		RestoreWorkRotationSettings();
+
 		if (bHasIssuedMoveRequest && IsValid(ExistingAIController) &&
 			ExistingAIController->GetMoveStatus() != EPathFollowingStatus::Moving)
 		{
@@ -394,12 +411,28 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 		}
 	}
 
+	// 도착 시 남아 있는 이동 방향을 작업 방향으로 바꾸고, 작업 중에도 같은 방향을 유지합니다.
+	if (!UpdateWorkFacing(TargetActor, DeltaSeconds))
+	{
+		return;
+	}
+
 	if (ActiveTask.Type == ECSStoreEmployeeTaskType::CheckoutService)
 	{
 		ACSCheckoutCounterActor* Counter = Cast<ACSCheckoutCounterActor>(ActiveTask.TargetActor);
 		if (!IsValid(Counter))
 		{
 			ClearActiveTask(false);
+			return;
+		}
+
+		// NavMesh 거리만으로 도착 처리하지 않고, 실제 CashierInteractionZone 안에서만 계산합니다.
+		if (!Counter->IsInCashierInteractionZone(this))
+		{
+			RestoreWorkRotationSettings();
+			bHasReachedWorkTarget = false;
+			bHasIssuedMoveRequest = false;
+			MoveSettledElapsedSeconds = 0.0f;
 			return;
 		}
 
@@ -720,12 +753,18 @@ bool ACSStoreEmployeeCharacter::ExecuteActiveTask()
 
 void ACSStoreEmployeeCharacter::ClearActiveTask(bool bSucceeded)
 {
+	RestoreWorkRotationSettings();
+
 	if (!bSucceeded && BeginHeldInventoryReturn(false))
 	{
 		return;
 	}
 
 	// 업무가 중단되어도 손에 붙은 임시 상품이나 상자가 월드에 남지 않도록 먼저 정리합니다.
+	if (AAIController* AI = Cast<AAIController>(GetController()))
+	{
+		AI->StopMovement();
+	}
 	ClearHeldProduct();
 	ReleaseHeldCrate();
 
@@ -752,6 +791,8 @@ void ACSStoreEmployeeCharacter::ClearActiveTask(bool bSucceeded)
 	FailureRecoveryStoragePoint = nullptr;
 	RestockPhase = ECSStoreEmployeeRestockPhase::None;
 	RemainingRestockQuantity = 0;
+	IdleElapsedSeconds = 0.0f;
+	IdleSearchCountdown = 0.0f;
 }
 
 bool ACSStoreEmployeeCharacter::BeginHeldInventoryReturn(bool bTaskSuccessAfterReturn)
@@ -914,6 +955,24 @@ bool ACSStoreEmployeeCharacter::GetCurrentWorkLocation(
 		return Shelf->TryGetCustomerShoppingPoint(OutWorkLocation);
 	}
 
+	if (const ACSCheckoutCounterActor* Counter = Cast<ACSCheckoutCounterActor>(OutTargetActor))
+	{
+		// 대기 중 확보한 구역 내부 자리에서 바로 계산합니다. 업무 시작 때 막힌 중심으로 다시 이동하지 않습니다.
+		FVector InteractionPoint;
+		if (!Counter->TryGetCashierInteractionPoint(InteractionPoint))
+		{
+			return false;
+		}
+		if (Counter->IsInCashierInteractionZone(this))
+		{
+			OutWorkLocation = GetNavAgentLocation();
+			return true;
+		}
+		// 계산 직원은 액터 원점(대기열 근처)이 아니라 계산대 뒷편 직원 상호작용 구역으로 이동합니다.
+		OutWorkLocation = InteractionPoint;
+		return true;
+	}
+
 	if (const ACSFreshnessSafeZoneActor* StoragePoint =
 		Cast<ACSFreshnessSafeZoneActor>(OutTargetActor))
 	{
@@ -921,9 +980,116 @@ bool ACSStoreEmployeeCharacter::GetCurrentWorkLocation(
 		return StoragePoint->TryGetStorageApproachPoint(OutWorkLocation);
 	}
 
-	// 계산대처럼 전용 접근 마커가 없는 업무 대상은 액터 위치를 기본 작업 위치로 사용합니다.
+	// 전용 접근 마커가 없는 업무 대상은 액터 위치를 기본 작업 위치로 사용합니다.
 	OutWorkLocation = OutTargetActor->GetActorLocation();
 	return true;
+}
+
+bool ACSStoreEmployeeCharacter::TryGetCurrentWorkFacing(
+	const AActor* TargetActor, FRotator& OutFacing) const
+{
+	OutFacing = FRotator::ZeroRotator;
+	if (!IsValid(TargetActor))
+	{
+		return false;
+	}
+
+	// 진열대 원점이 한쪽에 치우쳐 있어도, BP의 접근 화살표가 지정한 정면을 바라봅니다.
+	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(TargetActor))
+	{
+		FVector UnusedCenter = FVector::ZeroVector;
+		float UnusedRadius = 0.0f;
+		if (Shelf->TryGetBrowseZone(UnusedCenter, OutFacing, UnusedRadius))
+		{
+			return true;
+		}
+	}
+
+	if (const ACSCheckoutCounterActor* Counter = Cast<ACSCheckoutCounterActor>(TargetActor))
+	{
+		return Counter->TryGetCashierInteractionFacing(GetActorLocation(), OutFacing);
+	}
+
+	FVector FacingLocation = TargetActor->GetActorLocation();
+	if (RestockPhase == ECSStoreEmployeeRestockPhase::MoveToReturnCrate && bHasHeldCrateReturnLocation)
+	{
+		// 손에 붙어 함께 회전하는 물건이 아니라, 실제로 내려놓을 원래 위치를 봅니다.
+		FacingLocation = HeldCrateReturnLocation;
+	}
+	else if (RestockPhase == ECSStoreEmployeeRestockPhase::MoveToReturnProduct && bHasHeldProductReturnTransform)
+	{
+		FacingLocation = HeldProductReturnTransform.GetLocation();
+	}
+
+	FVector ToTarget = FacingLocation - GetActorLocation();
+	ToTarget.Z = 0.0f;
+	if (ToTarget.IsNearlyZero())
+	{
+		// 발밑의 상품처럼 수평 방향을 만들 수 없는 경우에는 현재 방향으로 작업합니다.
+		return false;
+	}
+
+	OutFacing = ToTarget.Rotation();
+	return true;
+}
+
+bool ACSStoreEmployeeCharacter::UpdateWorkFacing(const AActor* TargetActor, float DeltaSeconds)
+{
+	FRotator TargetFacing;
+	if (!TryGetCurrentWorkFacing(TargetActor, TargetFacing))
+	{
+		return true;
+	}
+	return UpdateFacingRotation(TargetFacing, DeltaSeconds);
+}
+
+bool ACSStoreEmployeeCharacter::UpdateFacingRotation(const FRotator& TargetFacing, float DeltaSeconds)
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!bHasWorkRotationOverride)
+	{
+		bSavedUseControllerRotationYaw = bUseControllerRotationYaw;
+		bSavedOrientRotationToMovement = Movement->bOrientRotationToMovement;
+		bSavedUseControllerDesiredRotation = Movement->bUseControllerDesiredRotation;
+		bHasWorkRotationOverride = true;
+		// 이동 잔여 속도와 BP의 회전 설정이 작업 방향을 덮어쓰지 않게 합니다.
+		Movement->StopMovementImmediately();
+		bUseControllerRotationYaw = false;
+		Movement->bOrientRotationToMovement = false;
+		Movement->bUseControllerDesiredRotation = false;
+	}
+
+	FRotator NewRotation = FMath::RInterpConstantTo(
+		FRotator(0.0f, GetActorRotation().Yaw, 0.0f), TargetFacing,
+		DeltaSeconds, FMath::Max(1.0f, WorkFacingTurnRate));
+	const bool bIsFacingTarget = FMath::Abs(
+		FMath::FindDeltaAngleDegrees(NewRotation.Yaw, TargetFacing.Yaw)) <= 2.0f;
+	if (bIsFacingTarget)
+	{
+		NewRotation = TargetFacing;
+	}
+	SetActorRotation(NewRotation);
+	if (AController* EmployeeController = GetController())
+	{
+		EmployeeController->SetControlRotation(NewRotation);
+	}
+	return bIsFacingTarget;
+}
+
+void ACSStoreEmployeeCharacter::RestoreWorkRotationSettings()
+{
+	if (!bHasWorkRotationOverride)
+	{
+		return;
+	}
+
+	bUseControllerRotationYaw = bSavedUseControllerRotationYaw;
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+		Movement->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+	}
+	bHasWorkRotationOverride = false;
 }
 
 void ACSStoreEmployeeCharacter::BeginRestockPhase(ECSStoreEmployeeRestockPhase NewPhase)
@@ -938,6 +1104,7 @@ void ACSStoreEmployeeCharacter::BeginRestockPhase(ECSStoreEmployeeRestockPhase N
 		NewPhase == ECSStoreEmployeeRestockPhase::MoveToReturnProduct;
 	if (bRequiresMovement)
 	{
+		RestoreWorkRotationSettings();
 		// 새 목적지로 이동할 때는 이전 단계의 도착·이동 요청 상태를 반드시 초기화합니다.
 		bHasReachedWorkTarget = false;
 		bHasIssuedMoveRequest = false;

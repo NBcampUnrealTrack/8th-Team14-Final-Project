@@ -270,6 +270,7 @@ void UCSStoreEmployeeSubsystem::RegisterEmployee(ACSStoreEmployeeCharacter* Empl
 
 void UCSStoreEmployeeSubsystem::UnregisterEmployee(ACSStoreEmployeeCharacter* Employee)
 {
+	ReleaseCheckoutStation(Employee);
 	RegisteredEmployees.Remove(Employee);
 	for (ACSStoreEmployeeCharacter* ExistingEmployee : RegisteredEmployees)
 	{
@@ -287,6 +288,64 @@ void UCSStoreEmployeeSubsystem::UnregisterEmployee(ACSStoreEmployeeCharacter* Em
 			ReleaseTaskSourceReservation(Task, Employee);
 			Task.AssignedEmployee = nullptr;
 			Task.Status = ECSStoreEmployeeTaskStatus::Pending;
+		}
+	}
+}
+
+bool UCSStoreEmployeeSubsystem::CanUseCheckoutStation(
+	const ACSStoreEmployeeCharacter* Employee, const ACSCheckoutCounterActor* Counter) const
+{
+	FVector UnusedLocation;
+	if (!IsValid(Employee) || !IsValid(Counter) || !Counter->TryGetCashierInteractionPoint(UnusedLocation))
+	{
+		return false;
+	}
+	const auto* Reservation = CheckoutStations.Find(
+		TWeakObjectPtr<ACSCheckoutCounterActor>(const_cast<ACSCheckoutCounterActor*>(Counter)));
+	if (Reservation != nullptr && Reservation->IsValid() &&
+		!Reservation->Get()->IsActorBeingDestroyed() && Reservation->Get() != Employee)
+	{
+		return false;
+	}
+	return !Tasks.ContainsByPredicate([Employee, Counter](const FCSStoreEmployeeTask& Task)
+	{
+		return Task.Type == ECSStoreEmployeeTaskType::CheckoutService && Task.TargetActor == Counter &&
+			Task.Status == ECSStoreEmployeeTaskStatus::InProgress && IsValid(Task.AssignedEmployee) &&
+			Task.AssignedEmployee != Employee;
+	});
+}
+
+bool UCSStoreEmployeeSubsystem::TryReserveCheckoutStation(
+	ACSStoreEmployeeCharacter* Employee, ACSCheckoutCounterActor* Counter)
+{
+	if (!CanUseCheckoutStation(Employee, Counter))
+	{
+		return false;
+	}
+	ReleaseCheckoutStation(Employee);
+	CheckoutStations.Add(Counter, Employee);
+	return true;
+}
+
+ACSCheckoutCounterActor* UCSStoreEmployeeSubsystem::GetReservedCheckoutStation(const ACSStoreEmployeeCharacter* Employee) const
+{
+	for (const auto& Reservation : CheckoutStations)
+	{
+		if (Reservation.Key.IsValid() && Reservation.Value.Get() == Employee)
+		{
+			return Reservation.Key.Get();
+		}
+	}
+	return nullptr;
+}
+
+void UCSStoreEmployeeSubsystem::ReleaseCheckoutStation(const ACSStoreEmployeeCharacter* Employee)
+{
+	for (auto It = CheckoutStations.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || !It.Value().IsValid() || It.Value().Get() == Employee || It.Value()->IsActorBeingDestroyed())
+		{
+			It.RemoveCurrent();
 		}
 	}
 }
@@ -360,6 +419,13 @@ bool UCSStoreEmployeeSubsystem::TryClaimBestTask(
 			continue;
 		}
 
+		if (Task.Type == ECSStoreEmployeeTaskType::CheckoutService &&
+			!CanUseCheckoutStation(Employee, Cast<ACSCheckoutCounterActor>(Task.TargetActor)))
+		{
+			++ReservedByOtherEmployeeTaskCount;
+			continue;
+		}
+
 		if (BestTask == nullptr || Task.Priority > BestTask->Priority)
 		{
 			BestTask = &Task;
@@ -401,6 +467,12 @@ bool UCSStoreEmployeeSubsystem::TryClaimBestTask(
 		return false;
 	}
 
+	if (BestTask->Type == ECSStoreEmployeeTaskType::CheckoutService &&
+		!TryReserveCheckoutStation(Employee, Cast<ACSCheckoutCounterActor>(BestTask->TargetActor)))
+	{
+		ReleaseTaskSourceReservation(*BestTask, Employee);
+		return false;
+	}
 	BestTask->AssignedEmployee = Employee;
 	BestTask->Status = ECSStoreEmployeeTaskStatus::InProgress;
 	OutTask = *BestTask;
@@ -469,6 +541,10 @@ void UCSStoreEmployeeSubsystem::FinishTask(
 		else
 		{
 			RegisterTaskFailure(Task);
+			if (Task.Type == ECSStoreEmployeeTaskType::CheckoutService)
+			{
+				ReleaseCheckoutStation(Employee);
+			}
 		}
 		ReleaseTaskSourceReservation(Task, Employee);
 		Task.AssignedEmployee = nullptr;
