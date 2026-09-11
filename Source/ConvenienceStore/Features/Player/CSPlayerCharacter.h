@@ -25,6 +25,7 @@ class ACSShelfActor;
 class ACSUsableToolActor;
 class ACSFreshnessSafeZoneActor;
 class UCSQuickbarInventoryComponent;
+class ACSEndingDisplayActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
 
@@ -62,6 +63,8 @@ public:
 	bool TryPickUp(AActor* PickupActor);
 	// 제출할 도구를 손과 퀵바에서 함께 제거하여 파괴 후 참조가 남지 않게 합니다.
 	bool ConsumeQuickbarTool(ACSUsableToolActor* Tool);
+	// 전시대 등에 넘길 도구를 파괴하지 않고 손과 퀵바에서 분리합니다.
+	bool ReleaseQuickbarTool(ACSUsableToolActor* Tool);
 	// 창고 상호작용에서 손에 든 상자 또는 낱개 상품의 소유권을 창고 슬롯으로 넘깁니다.
 	bool TryStoreHeldItem(
 		ACSFreshnessSafeZoneActor* StoragePoint,
@@ -465,6 +468,9 @@ private:
 	bool RestoreMagicWandToHomeDock(ACSMagicWandActor* MagicWand);
 	void RestoreFacilityMagicWands(AActor* FacilityActor);
 	void UpdateInteractionHUD();
+	// 전시대에서 벗어나거나 모드가 바뀌면 이전 프리뷰를 숨깁니다.
+	TWeakObjectPtr<ACSEndingDisplayActor> AimedEndingDisplay;
+	bool TryPlaceOnEndingDisplay();
 	void UpdateBuildModeHUD();
 	void UpdatePlacementPreview();
 	void UpdateBuildPlacementPreview();

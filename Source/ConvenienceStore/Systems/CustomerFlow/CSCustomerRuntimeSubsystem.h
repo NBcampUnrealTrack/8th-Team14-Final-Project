@@ -23,6 +23,7 @@ class ACSCustomerCharacter;
 class ACSShelfActor;
 class ACSProductPickupActor;
 class ACSTrashActor;
+class ACSStoreInteriorActor;
 class UCSInnerThoughtWidget;
 struct FCSSelectProduct;
 
@@ -343,6 +344,27 @@ public:
 	// 거리 통행 / 입장 판정
 	// =====================================================================
 
+	// 계획 상품이 있는 손님의 입장 확률 범위 (매장 상태 0일 때 Min, 1일 때 Max로 선형 보간)
+	// 계획을 세우고 온 손님이라 매장 상태에 거의 흔들리지 않게 좁은 구간으로 잡음
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Entry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultPlannedEntryChanceMin = 0.90f;
+
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Entry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultPlannedEntryChanceMax = 0.98f;
+
+	// 계획 없이 온 손님의 입장 확률 범위. 매장 상태에 크게 좌우되도록 넓은 구간으로 잡음
+	// 하한을 낮게 잡은 이유: 매장이 비어 있을 때 가게 앞 거리가 눈에 띄게 한산해지도록 하기 위한 게임적 허용
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Entry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultUnplannedEntryChanceMin = 0.05f;
+
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Entry", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DefaultUnplannedEntryChanceMax = 0.35f;
+
+	// 쓰레기가 이 개수 이상이면 청결도를 0으로 취급
+	// 하루 동안 안 치우면 쌓이는 추정량(입장 손님 약 22명 × 투척 확률 0.30)에 맞춘 값 - 쓰레기 하나를 주울 때마다 체감되는 차이를 주려는 것
+	UPROPERTY(EditAnywhere, Category = "Store|Customer|Entry", meta = (ClampMin = "1"))
+	int32 DefaultTrashCountForZeroCleanliness = 6;
+
 	// 손님이 매장에 들어갈지 판정
 	// "문이 열려 있는가"라는 매장 상태만 확인, "들어가고 싶은가"라는 개인 심리는 UCSPurchaseDecisionComponent가 판단
 	bool ShouldEnterStore(const ACSCustomerCharacter* Customer) const;
@@ -427,6 +449,10 @@ private:
 	// 유효하지 않은 항목(플레이어가 주워서 파괴됨 등)은 검사 시점에 걸러내므로 mutable
 	mutable TArray<TWeakObjectPtr<ACSTrashActor>> DroppedTrashCache;
 
+	// 레벨에 배치된 매장 실내 영역. OnWorldBeginPlay에서 한 번만 찾아 캐싱한다(레벨 로드 뒤 옮겨 다니지 않는 정적 마커라서 매 호출마다 다시 찾을 필요가 없음)
+	// 없으면(레벨에 배치가 안 된 경우) nullptr로 남고 CountTrashInWorld가 월드 전체를 세는 것으로 폴백한다
+	TWeakObjectPtr<ACSStoreInteriorActor> CachedStoreInteriorActor;
+
 	// 목격 판정 30% 확률 굴림 전용 스트림. RollTrashWitnessed가 const라서 mutable 필요
 	mutable FRandomStream TrashWitnessRollStream;
 
@@ -435,4 +461,18 @@ private:
 
 	// 타이머 콜백 - 위젯을 숨김(뷰포트에서 제거하지 않고 Collapsed 처리만 - 다음 호출 때 재사용하기 위함)
 	void HideInnerThought();
+
+	// 등록된 진열대 전체의 충진율(점유 슬롯 ÷ 전체 슬롯)을 계산
+	// const 함수라 무효 항목을 RemoveAll로 정리할 수 없어 건너뛰기만 한다
+	// Out 인수는 로그에서 전체 슬롯 0(등록 누락 의심)을 바로 보여주기 위한 것
+	float CalculateShelfFillRatio(int32& OutShelfCount, int32& OutFilledSlots, int32& OutTotalSlots) const;
+
+	// GetProductsOnShelf와 달리 IsSellable() 필터 없이 Attach된 상품 액터 수만 센다
+	// 충진율은 "겉보기 점유 여부"만 봐야 한다 - 유통기한이 지나 판매 불가여도 매장 밖에서는 구분되지 않는다
+	int32 CountAttachedProducts(const AActor* ShelfActor) const;
+
+	// 월드에 남아있는 쓰레기 액터 수를 센다
+	// DroppedTrashCache는 손님이 흘린 것만 등록되고 레벨에 사전 배치된 쓰레기는 빠지므로,
+	// 충진율과 같은 기준("눈에 보이는 것")에 맞추려고 매 판정마다 월드를 직접 순회한다
+	int32 CountTrashInWorld() const;
 };

@@ -43,7 +43,8 @@ public:
 	float ContinueShoppingProbability(int32 ItemsInBasket) const;
 
 	// 담은 개수 → 확률 계산 + 실제 굴림까지 한 번에 처리
-	// StateTree Condition은 이 함수 하나만 호출하면 되고 내부 확률/난수는 몰라도 됨
+	// 상품을 담은 직후 CS_EvaluateSessionContinuation(BrowseShelf 세션 지속 판단)에서 라운드당 1회 호출됨
+	// 호출부는 내부 확률/난수를 몰라도 됨
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	bool RollContinueShopping(int32 ItemsInBasket) const;
 
@@ -51,6 +52,8 @@ public:
 	int32 RollPlannedBasketTarget(FRandomStream& Stream) const;
 
 	// 스폰 시점에 이번 방문에서 우선적으로 찾아다닐 계획 상품(1~2개)을 미리 뽑아둠
+	// 맨 앞에서 PlannedPurchaseChance를 먼저 굴려 이번 손님이 계획을 가질지부터 정하고,
+	// 실패하면 빈 배열을 반환해 계획 없이 스폰되게 함(입장 판정이 이 결과로 계획 유무를 가름)
 	// 개수 자체도 이 스트림에서 굴려서 정함(PlannedProductSecondItemChance)
 	// 카테고리 선정 -> 그 카테고리 내 상품 선정 순서로, 둘 다 CurrentStoreLevel에서
 	// 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 후보만 대상으로 함
@@ -62,24 +65,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
 	void InitializeRandomStream(int32 Seed);
 
-	// =====================================================================
-	// [임시] 손님 입장 확률 (백록담님 언제든지 삭제 및 변경해도 됩니다.)
-	// =====================================================================
-	// 가게가 open이면 스포너에 있는 가게 주위 영역포인트까지 걸어옴
-	// 영역에 도착하면 CSCustomerRuntimeSubsystem::ShouldEnterStore()에서 이 값을 읽어 굴림
-	// 결과에 따라 매장에 들어가거나 그대로 지나쳐 거리 반대쪽 끝까지 걸어가 사라집니다.
-	// [고려해야할 점]
-	// 1. 판정은 한번 뿐
-	// 2. 나중에 살 생각이 없었는데 지나가다가 충동적으로 구매를 하게 하고 싶거나 할 때 영향을 받게 가능함
-	// 3. 만약 어떠 손님이 편의점에서 물건을 살 목적이 있는데 이 확률에 영향을 받게되어 안사고 지나치는 오류를 범할 수도 있음
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Purchase|Entry",
-		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float StoreEntryChance = 1.0f;
-
-	// [임시] 0~1 확률을 받아 이 손님의 스트림으로 굴립니다.
+	// 0~1 확률을 받아 이 손님의 스트림으로 굴립니다.
 	// 가게로 들어갈지 안갈지를 정할려고 확률을 굴리는 함수입니다.
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
 	bool RollChance(float Chance) const;
+
+	// FRandomStream은 원본 시드와 진행 상태를 따로 들고 있어서 이 getter를 몇 번 읽어도 난수 순서에 영향이 없다
+	// 로그에서 같은 시드 실행끼리 손님을 맞춰보기 위한 용도
+	int32 GetCustomerSeed() const { return RandomStream.GetInitialSeed(); }
 
 	// Archetype이 있으면 그 값을, 없으면 폴백값을 쓰는 헬퍼
 	// 원래 private이었으나 FCSTask_BrowseShelf::Tick에서 이번 방문에 실제로 몇 개를 비교 대상에 올렸는지
@@ -187,6 +180,12 @@ protected:
 	// 재컴파일 없이 디자이너가 문장을 조정할 수 있도록 값 전부를 여기로 뺌
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
 	TObjectPtr<UDataTable> RejectionDisplayDataTable;
+
+	// 이 손님이 계획 상품을 가질 확률. 실패하면 계획 없이 스폰되어 진열대에서 본 것으로만 산다(충동구매)
+	// 전원이 계획을 가지면 입장 판정(ShouldEnterStore)의 "계획 없음" 분기가 항상 비어 효과가 사라지므로
+	// 이 굴림으로 두 부류를 실제로 갈라놓는다
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PlannedPurchaseChance = 0.65f;
 
 	// 계획 상품을 1개가 아니라 2개 뽑을 확률
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.0", ClampMax = "1.0"))
