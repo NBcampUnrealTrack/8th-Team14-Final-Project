@@ -602,6 +602,14 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 {
 	TArray<FName> Result;
 
+	// 계획 유무부터 갈라놓는 굴림 - DT 상태와 무관하게 항상 이 자리에서 1회만 일어나야
+	// 입장 판정 쪽에서 계획 있음/없음 어느 쪽이든 굴림 횟수가 같다는 전제가 성립한다
+	// 반드시 인수로 받은 스트림(스포너의 파생 스트림)만 쓴다 - 멤버 RandomStream을 쓰면 손님 마스터 시퀀스가 밀린다
+	if (Stream.FRand() >= PlannedPurchaseChance)
+	{
+		return Result;
+	}
+
 	if (!IsValid(ProductMasterDataTable))
 	{
 		return Result;
