@@ -769,6 +769,70 @@ bool ACSCheckoutCounterActor::IsInCashierInteractionZone(const AActor* Actor) co
 		CashierInteractionZone->IsOverlappingActor(Actor);
 }
 
+bool ACSCheckoutCounterActor::TryGetCashierInteractionPoint(FVector& OutLocation) const
+{
+	OutLocation = FVector::ZeroVector;
+	if (!IsValid(CashierInteractionZone))
+	{
+		return false;
+	}
+	// 계산대가 시설의 자식 액터인 구성에서도, 플레이어가 들고 있는 계산대로 직원을 보내지 않습니다.
+	for (const AActor* Facility = this; IsValid(Facility); Facility = Facility->GetAttachParentActor())
+	{
+		if (Facility->IsActorBeingDestroyed() || (Facility->Implements<UCSBuildableFacility>() &&
+			!ICSBuildableFacility::Execute_IsFacilityInstalled(Facility)))
+		{
+			return false;
+		}
+	}
+
+	// MoveToLocation에서 NavMesh에 투영하므로, 여기서는 BP에서 조정한 직원 구역의 중심을 그대로 제공합니다.
+	OutLocation = CashierInteractionZone->GetComponentLocation();
+	return true;
+}
+
+void ACSCheckoutCounterActor::GetCashierWaitingPoints(TArray<FVector>& OutLocations) const
+{
+	OutLocations.Reset();
+	FVector Center;
+	if (!TryGetCashierInteractionPoint(Center))
+	{
+		return;
+	}
+	OutLocations.Add(Center);
+	const FVector Extent = CashierInteractionZone->GetUnscaledBoxExtent();
+	const FTransform Transform = CashierInteractionZone->GetComponentTransform();
+	for (int32 X = -2; X <= 2; ++X)
+	{
+		for (int32 Y = -2; Y <= 2; ++Y)
+		{
+			if (X != 0 || Y != 0)
+			{
+				OutLocations.Add(Transform.TransformPosition(FVector(Extent.X * X * 0.4f, Extent.Y * Y * 0.4f, 0.0f)));
+			}
+		}
+	}
+}
+
+bool ACSCheckoutCounterActor::TryGetCashierInteractionFacing(
+	const FVector& CashierLocation, FRotator& OutFacing) const
+{
+	OutFacing = FRotator::ZeroRotator;
+	// 손님의 계산 방향과 마찬가지로 BP에서 조정한 상품 표시 위치를 기준으로 삼습니다.
+	const FVector FacingLocation = IsValid(CheckoutDisplayOrigin)
+		? CheckoutDisplayOrigin->GetComponentLocation()
+		: GetActorLocation();
+	FVector ToCounter = FacingLocation - CashierLocation;
+	ToCounter.Z = 0.0f;
+	if (ToCounter.IsNearlyZero())
+	{
+		return false;
+	}
+
+	OutFacing = ToCounter.Rotation();
+	return true;
+}
+
 void ACSCheckoutCounterActor::Interact_Implementation(AActor* Interactor)
 {
 	UWorld* World = GetWorld();
