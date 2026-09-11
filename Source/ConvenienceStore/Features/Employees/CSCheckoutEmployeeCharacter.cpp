@@ -6,4 +6,6 @@ ACSCheckoutEmployeeCharacter::ACSCheckoutEmployeeCharacter()
 	FallbackSupportedTaskTypes = { ECSStoreEmployeeTaskType::CheckoutService };
 	// 계산원은 역할 에셋을 잘못 연결해도 계산 업무만 수행해야 하므로 기본 업무 목록을 강제합니다.
 	bLockToFallbackSupportedTaskTypes = true;
+	bWaitAtCheckoutCounter = true;
+	IdleReturnDelaySeconds = 0.0f;
 }
