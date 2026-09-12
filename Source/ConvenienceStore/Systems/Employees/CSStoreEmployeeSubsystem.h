@@ -7,6 +7,7 @@
 
 class ACSStoreEmployeeCharacter;
 class ACSShelfActor;
+class ACSCheckoutCounterActor;
 
 // 계산 대기열과 빈 진열대를 감시하여, 직원이 처리할 업무를 생성·배정하는 월드 단위 관리자입니다.
 UCLASS()
@@ -40,6 +41,12 @@ public:
 	// 플레이어가 단별 상품 설정을 바꾼 직후처럼, 다음 주기를 기다리지 않고 업무 목록을 갱신해야 할 때 호출합니다.
 	void RefreshTasksImmediately();
 
+	// 대기와 실제 계산 업무가 동일한 계산대 자리를 공유합니다. 계산대당 직원은 한 명만 배정합니다.
+	bool CanUseCheckoutStation(const ACSStoreEmployeeCharacter* Employee, const ACSCheckoutCounterActor* Counter) const;
+	bool TryReserveCheckoutStation(ACSStoreEmployeeCharacter* Employee, ACSCheckoutCounterActor* Counter);
+	ACSCheckoutCounterActor* GetReservedCheckoutStation(const ACSStoreEmployeeCharacter* Employee) const;
+	void ReleaseCheckoutStation(const ACSStoreEmployeeCharacter* Employee);
+
 private:
 	// 같은 재고/대상에 대해 도달 실패가 반복될 때, 즉시 재수령하는 왕복을 막기 위한 상태입니다.
 	struct FTaskRetryState
@@ -72,6 +79,7 @@ private:
 
 	// 업무가 새로 생성되어도 같은 원본 상자/상품을 곧바로 다시 선택하지 않도록 유지합니다.
 	TMap<TWeakObjectPtr<AActor>, FTaskRetryState> TaskRetryStates;
+	TMap<TWeakObjectPtr<ACSCheckoutCounterActor>, TWeakObjectPtr<ACSStoreEmployeeCharacter>> CheckoutStations;
 
 	float RefreshElapsedSeconds = 0.0f;
 	int32 NextTaskId = 1;

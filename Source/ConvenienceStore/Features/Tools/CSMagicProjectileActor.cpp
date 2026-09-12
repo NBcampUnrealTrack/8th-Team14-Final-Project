@@ -3,8 +3,10 @@
 #include "Components/SphereComponent.h"
 #include "Features/Tools/CSHitReactable.h"
 #include "GameFramework/ProjectileMovementComponent.h"
+#include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "TimerManager.h"
 
 ACSMagicProjectileActor::ACSMagicProjectileActor()
 {
@@ -46,6 +48,41 @@ void ACSMagicProjectileActor::InitializeProjectile(const FVector& InTravelDirect
 
 	ProjectileMovement->Velocity = TravelDirection * ProjectileMovement->InitialSpeed;
 	SetActorRotation(TravelDirection.Rotation());
+	ProjectileMovement->SetComponentTickEnabled(false);
+	EffectsReadyDeadline = GetWorld()->GetTimeSeconds() + 0.25f;
+	GetWorldTimerManager().SetTimerForNextTick(this, &ACSMagicProjectileActor::StartProjectileAfterEffectsReady);
+}
+
+void ACSMagicProjectileActor::StartProjectileAfterEffectsReady()
+{
+	TInlineComponentArray<UNiagaraComponent*> ProjectileEffects(this);
+	for (const UNiagaraComponent* Effect : ProjectileEffects)
+	{
+		// The first activation can be deferred while Niagara/PSOs become ready.
+		// Bound the wait so a culled effect cannot prevent projectile gameplay.
+		if (Effect->GetAsset() && Effect->bAutoActivate &&
+			(!Effect->IsActive() || !Effect->GetSystemInstanceController()) &&
+			GetWorld()->GetTimeSeconds() < EffectsReadyDeadline)
+		{
+			GetWorldTimerManager().SetTimerForNextTick(this, &ACSMagicProjectileActor::StartProjectileAfterEffectsReady);
+			return;
+		}
+	}
+
+	// Seed the location-event ribbon at the muzzle before the first movement tick.
+	// Otherwise its first particles are created after the fast projectile has moved.
+	for (UNiagaraComponent* Effect : ProjectileEffects)
+	{
+		if (Effect->IsActive())
+		{
+			Effect->AdvanceSimulation(3, 1.0f / 60.0f);
+		}
+	}
+	// Keep the seeded effect at the muzzle for its first rendered frame.
+	GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		ProjectileMovement->SetComponentTickEnabled(true);
+	}));
 }
 
 void ACSMagicProjectileActor::AddIgnoredActor(AActor* ActorToIgnore)

@@ -7,6 +7,7 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
+#include "Features/Employees/CSEmployeeWaitingArea.h"
 #include "Features/Delivery/CSDeliveryMagicCircleActor.h"
 #include "Features/Cart/CSCartActor.h"
 #include "Features/Inventory/CSQuickbarInventoryComponent.h"
@@ -53,6 +54,7 @@ namespace
 const FName BuildPlacementCollisionTag(TEXT("BuildPlacementCollision"));
 const FName BuildPlacementAreaTag(TEXT("BuildPlacementArea"));
 const FName BuildPlacementAccessZoneTag(TEXT("BuildPlacementAccessZone"));
+const FName MagicWandAttachBoneName(TEXT("RightHand"));
 
 bool TryCalculateProspectiveBox(
 	const UBoxComponent* BoxComponent,
@@ -210,6 +212,17 @@ ACSPlayerCharacter::ACSPlayerCharacter()
     HeldItemAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("HeldItemAnchor"));
     HeldItemAnchor->SetupAttachment(FirstPersonCamera);
     HeldItemAnchor->SetRelativeLocation(FVector(80.0f, 20.0f, -20.0f));
+
+	MagicWandAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("MagicWandAnchor"));
+	MagicWandAnchor->SetupAttachment(GetMesh(), MagicWandAttachBoneName);
+	MagicWandAnchor->SetRelativeTransform(FTransform::Identity);
+	// 손 위치/회전만 따라가고, 비균일 Player Mesh Scale은 마법봉에 전달하지 않습니다.
+	MagicWandAnchor->SetAbsolute(false, false, true);
+
+	MagicWandHandTarget = CreateDefaultSubobject<USceneComponent>(TEXT("MagicWandHandTarget"));
+	MagicWandHandTarget->SetupAttachment(FirstPersonCamera);
+	MagicWandElbowTarget = CreateDefaultSubobject<USceneComponent>(TEXT("MagicWandElbowTarget"));
+	MagicWandElbowTarget->SetupAttachment(GetCapsuleComponent());
 
 	CartPushAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("CartPushAnchor"));
 	CartPushAnchor->SetupAttachment(GetCapsuleComponent());
@@ -895,6 +908,12 @@ void ACSPlayerCharacter::UpdatePlayerLocomotionAnimation(bool bForce)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
+	USceneComponent* AttachTarget = GetHeldItemAttachTarget(PickupActor);
+	if (!IsValid(AttachTarget))
+	{
+		return false;
+	}
+
 	if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(PickupActor);
 		!IsBuildMode() &&
 		IsValid(ToolActor) &&
@@ -1029,7 +1048,7 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 
 	PickupActor->SetActorEnableCollision(false);
 	PickupActor->AttachToComponent(
-		HeldItemAnchor,
+		AttachTarget,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 	if (const ACSDeliveryCrateActor* DeliveryCrate =
 		Cast<ACSDeliveryCrateActor>(PickupActor))
@@ -1366,7 +1385,7 @@ void ACSPlayerCharacter::UpdateBuildModeHUD()
 			else if (bHasHeldBuildableAccessZoneConflict)
 			{
 				Prompt = NSLOCTEXT("Interaction", "BuildBlockedByAccessZone",
-					"손님 이동 구역을 막습니다");
+					"이동·대기 구역을 막습니다");
 				PromptColor = FLinearColor::Red;
 			}
 			else if (!bIsHeldBuildableInsidePlacementArea)
@@ -1960,7 +1979,7 @@ void ACSPlayerCharacter::RefreshBuildPlacementAreaCache()
 
 		// 접근 영역 판정 대상도 같은 순회에서 모읍니다.
 		// 박스는 판정 시점에 현재 트랜스폼을 읽으므로 시설이 움직여도 재수집이 필요 없습니다.
-		if (AreaOwner->Implements<UCSBuildableFacility>())
+		if (AreaOwner->Implements<UCSBuildableFacility>() || AreaOwner->IsA<ACSEmployeeWaitingArea>())
 		{
 			CachedAccessZoneFacilities.Add(AreaOwner);
 		}
@@ -2278,12 +2297,12 @@ bool ACSPlayerCharacter::HasBuildPlacementAccessZoneConflict(
 		AActor* Other = OtherWeak.Get();
 		if (!IsValid(Other) ||
 			Other == FacilityActor ||
-			!ICSBuildableFacility::Execute_IsFacilityInstalled(Other))
+			(!Other->IsA<ACSEmployeeWaitingArea>() && !ICSBuildableFacility::Execute_IsFacilityInstalled(Other)))
 		{
 			continue;
 		}
 		// 멀리 있는 시설은 계산에서 제외해 Tick 비용을 묶어 둡니다.
-		if (FVector::DistSquared2D(Other->GetActorLocation(), FacilityLocation) >
+		if (!Other->IsA<ACSEmployeeWaitingArea>() && FVector::DistSquared2D(Other->GetActorLocation(), FacilityLocation) >
 			FMath::Square(AccessZoneQueryRange))
 		{
 			continue;
@@ -3275,7 +3294,10 @@ void ACSPlayerCharacter::DropHeldItem()
 		TrashToDrop->PrepareForPickupPhysics();
 	}
 
-	const FBox Bounds = ActorToDrop->GetComponentsBoundingBox(true);
+	const ACSMagicWandActor* MagicWandToDrop = Cast<ACSMagicWandActor>(ActorToDrop);
+	const FBox Bounds = IsValid(MagicWandToDrop)
+		? MagicWandToDrop->GetUnheldBounds()
+		: ActorToDrop->GetComponentsBoundingBox(true);
 	const float ActorLocationZ = ActorToDrop->GetActorLocation().Z;
 	if (!Bounds.IsValid ||
 		!FMath::IsFinite(Bounds.Min.Z) ||
@@ -4015,7 +4037,7 @@ void ACSPlayerCharacter::RefreshInstalledAccessZoneDisplays()
 		AActor* Other = OtherWeak.Get();
 		if (!IsValid(Other) ||
 			Other == HeldActor ||
-			!ICSBuildableFacility::Execute_IsFacilityInstalled(Other))
+			(!Other->IsA<ACSEmployeeWaitingArea>() && !ICSBuildableFacility::Execute_IsFacilityInstalled(Other)))
 		{
 			continue;
 		}
@@ -4560,6 +4582,52 @@ bool ACSPlayerCharacter::TrySelectQuickbarSlot(int32 SlotIndex)
 	return true;
 }
 
+void ACSPlayerCharacter::GetMagicWandIKTargets(FTransform& HandTarget, FVector& ElbowTarget) const
+{
+	HandTarget = FTransform::Identity;
+	ElbowTarget = FVector::ZeroVector;
+	if (!IsValid(GetMesh()) || !IsValid(FirstPersonCamera) ||
+		!IsValid(MagicWandHandTarget) || !IsValid(MagicWandElbowTarget))
+	{
+		return;
+	}
+
+	FTransform CameraTransform = FirstPersonCamera->GetComponentTransform();
+	if (FirstPersonCamera->bUsePawnControlRotation)
+	{
+		// CameraManager가 카메라를 갱신하기 전에도 이번 프레임의 시선을 사용합니다.
+		CameraTransform.SetRotation(GetViewRotation().Quaternion());
+	}
+	const FTransform& MeshTransform = GetMesh()->GetComponentTransform();
+	HandTarget = (MagicWandHandTarget->GetRelativeTransform() * CameraTransform)
+		.GetRelativeTransform(MeshTransform);
+	ElbowTarget = MeshTransform.InverseTransformPosition(
+		MagicWandElbowTarget->GetComponentLocation());
+}
+
+USceneComponent* ACSPlayerCharacter::GetHeldItemAttachTarget(const AActor* ItemActor) const
+{
+	if (!IsValid(ItemActor))
+	{
+		return nullptr;
+	}
+	if (!ItemActor->IsA<ACSMagicWandActor>())
+	{
+		return HeldItemAnchor;
+	}
+
+	const USkeletalMeshComponent* PlayerMesh = GetMesh();
+	if (!IsValid(MagicWandAnchor) || !IsValid(PlayerMesh) ||
+		PlayerMesh->GetBoneIndex(MagicWandAttachBoneName) == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("%s: Cannot equip magic wand: MagicWandAnchor or RightHand bone is missing."),
+			*GetName());
+		return nullptr;
+	}
+	return MagicWandAnchor;
+}
+
 void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 {
 	if (!IsValid(QuickbarInventory) || !IsValid(QuickbarStorageAnchor) ||
@@ -4586,8 +4654,13 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 	}
 
 	SelectedTool->PrepareForPickupPhysics();
+	USceneComponent* AttachTarget = GetHeldItemAttachTarget(SelectedTool);
+	if (!IsValid(AttachTarget))
+	{
+		return;
+	}
 	SelectedTool->AttachToComponent(
-		HeldItemAnchor,
+		AttachTarget,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 	SelectedTool->SetActorHiddenInGame(false);
 	SelectedTool->OnEquipped(this);
