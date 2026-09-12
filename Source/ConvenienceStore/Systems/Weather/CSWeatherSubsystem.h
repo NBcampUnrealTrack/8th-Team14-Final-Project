@@ -11,7 +11,10 @@
 
 class ACSStoreGameState;
 class ACSWeatherEffectActor;
+class ACSWeatherIndoorArea;
+class ACSWeatherZoneActor;
 class UCSWeatherSettingsDataAsset;
+class UNiagaraSystem;
 
 // 날씨가 바뀌었을 때 다른 시스템(손님, 조명 등)에 알리기 위한 델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnWeatherChanged,ECSWeatherType, NewWeather,ECSWeatherType, PreviousWeather);
@@ -134,6 +137,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Weather|Event")
 	bool SetForecastWeather(int32 DayOffset, ECSWeatherType NewWeather);
 
+	// -----------------------------------------------------------------------
+	// 실내·문 앞 연출 영역
+	// 플레이어가 문 앞 판정 박스나 실내 영역 안에 있으면 캐릭터 주위 비·눈을 끄고
+	// 모든 문 연출 영역을 보이게 합니다. 밖으로 나가면 반대로 바꿉니다.
+	// -----------------------------------------------------------------------
+
+	// 문 앞 연출 영역을 등록하고 현재 날씨 에셋과 표시 상태를 적용
+	// 등록 후 플레이어의 보호 상태를 재판정
+	void RegisterZone(ACSWeatherZoneActor* Zone);
+
+	// 문 앞 연출 영역의 등록을 해제하고 유효하지 않은 항목도 정리
+	void UnregisterZone(ACSWeatherZoneActor* Zone);
+
+	// 실내 영역을 등록하고 현재 플레이어의 보호 상태를 재판정
+	void RegisterIndoorArea(ACSWeatherIndoorArea* Area);
+
+	// 실내 영역을 등록하고 현재 플레이어의 보호 상태를 재판정
+	void UnregisterIndoorArea(ACSWeatherIndoorArea* Area);
+
+	// 오버랩이 변경된 액터가 플레이어이면 보호 상태를 재판정
+	// 손님과 직원 등 다른 액터의 오버랩은 무시
+	void NotifyShelterOverlapChanged(AActor* OtherActor);
+
+	// 플레이어가 실내 또는 문 앞 판정 영역에 걸쳐 있는지 반환
+	// true이면 캐릭터 주위 파티클을 숨기고 문 앞 영역 파티클을 표시
+	UFUNCTION(BlueprintPure, Category = "Weather|Shelter")
+	bool IsPlayerSheltered() const { return bSheltered; }
+
 	// ----- 디버그 (임시) 여기부터 -----
 	// 구현은 전부 Systems/Weather/CSWeatherDebug.cpp에 있습니다.
 	// 제거할 때는 이 블록과 그 파일, CSWeatherSubsystem.cpp의 #if CS_WEATHER_DEBUG 블록을 지웁니다.
@@ -193,6 +224,23 @@ protected:
 	// GameState와 동일하게 맞추고 있는 오늘 일차
 	int32 CurrentBusinessDay = 1;
 
+	// 현재 날씨에서 문 앞 영역에 적용할 나이아가라 에셋
+	// 사용할 에셋이 없으면 nullptr로 유지
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> ActiveZoneSystem;
+
+	// 등록된 문 앞 연출 영역 목록
+	// 액터의 수명을 유지하지 않도록 약한 참조로 보관
+	TArray<TWeakObjectPtr<ACSWeatherZoneActor>> Zones;
+
+	// 등록된 실내 판정 영역 목록
+	// 액터의 수명을 유지하지 않도록 약한 참조로 보관
+	TArray<TWeakObjectPtr<ACSWeatherIndoorArea>> IndoorAreas;
+
+	// 플레이어가 실내 또는 문 앞 판정 영역에 걸쳐 있는 상태
+	// 비와 눈의 재생 여부와 관계없이 판정 결과를 관리
+	bool bSheltered = false;
+
 private:
 	// GameState에서 하루가 넘어갈 때 호출되는 함수
 	UFUNCTION()
@@ -244,8 +292,32 @@ private:
 	void BuildWeatherRowCache();
 	const FCSWeatherRow* FindWeatherRow(ECSWeatherType Type) const;
 
-	// 날씨에 맞춰 파티클(이펙트) 액터를 스폰하거나 파괴
+	// 날씨에 맞춰 파티클(이펙트) 액터를 스폰하거나 파괴하고, 문 연출 영역 에셋도 교체
 	void ApplyWeatherEffect(ECSWeatherType NewWeather);
+
+	// 날씨 행의 이펙트 액터 클래스를 로드해 생성하고 연출 시작
+	void SpawnEffectActor(const FCSWeatherRow* Row);
+
+	// 날씨 행의 영역용 나이아가라 에셋을 로드해 등록된 모든 영역에 적용
+	// 에셋이 없으면 기존 영역 파티클을 비활성화
+	void ApplyZoneSystem(const FCSWeatherRow* Row);
+
+	// -----------------------------------------------------------------------
+	// 실내·문 앞 판정
+	// -----------------------------------------------------------------------
+
+	// 플레이어 위치를 재판정하고 상태가 변경되면 연출 표시를 갱신
+	// bForceApply가 true이면 상태가 같아도 다시 적용
+	// 플레이어 폰이 없으면 이전 상태를 유지
+	void UpdateShelterState(bool bForceApply);
+
+	// 등록된 실내 박스와 문 앞 판정 박스의 오버랩 상태를 조회
+	// 플레이어가 하나라도 겹쳐 있으면 true를 반환
+	bool EvaluateSheltered(const AActor* PlayerPawn) const;
+
+	// 보호 상태이면 캐릭터 주위 파티클을 숨기고 등록된 모든 문 앞 영역을 표시
+	// 보호 상태가 아니면 캐릭터 주위 파티클을 표시하고 문 앞 영역을 숨김
+	void ApplyShelterState();
 
 	// ----- 디버그 (임시) 여기부터 -----
 	// 디버그 출력용. 한 엔트리를 한 줄 문자열과 색으로 바꿉니다.
