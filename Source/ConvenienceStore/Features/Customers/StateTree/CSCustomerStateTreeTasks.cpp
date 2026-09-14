@@ -143,12 +143,16 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 	}
 
 	AActor* PickedShelf = nullptr;
+	UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
 
-	// 계획 상품이 남아있으면 정확 일치 > 카테고리 일치 우선순위대로 진열대를 고른다
-	// 다 채웠거나(PlannedProductIds 비어있음) 전부 카테고리 텅 빔으로 정리됐으면 아래 랜덤 폴백으로 넘어감
+	// 아직 매장 어딘가(안 가본 진열대)에 같은 카테고리가 남아있는 계획 상품의 카테고리 집합
+	// 정확 일치를 못 찾았을 때 아래 폴백에서 연관구매 대상과 함께 "끌림" 후보로 합류시키는 데 쓴다
+	TSet<ECSProductCategory> RemainingPlannedCategories;
+
+	// 계획 상품이 남아있으면 정확 일치부터 찾는다 - "이 상품을 사러 왔다"는 가장 강한 신호라
+	// 연관구매·카테고리 선호 가중치보다 항상 우선한다(찾으면 아래 폴백 자체를 타지 않음)
 	if (State->PlannedProductIds.Num() > 0)
 	{
-		UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
 		const UDataTable* ProductMasterDataTable = Decision != nullptr ? Decision->ProductMasterDataTable : nullptr;
 
 		// 안 가본 방문 후보만 미리 추려서 아래 스캔들이 같은 필터링을 반복하지 않게 함
@@ -161,27 +165,21 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 			}
 		}
 
-		// 한 번의 스캔으로 "정확 일치가 있는 첫 진열대"와 "카테고리 일치가 있는 첫 진열대"를 동시에 찾는다
-		AActor* FirstExactMatchShelf = nullptr;
-		AActor* FirstCategoryMatchShelf = nullptr;
 		for (const TObjectPtr<AActor>& Shelf : UnvisitedShelves)
 		{
 			const ECSPlannedShelfMatch Match = EvaluateShelfForPlannedProducts(
 				*Subsystem, *Shelf, State->PlannedProductIds, ProductMasterDataTable);
-
-			if (Match == ECSPlannedShelfMatch::Exact && FirstExactMatchShelf == nullptr)
+			if (Match == ECSPlannedShelfMatch::Exact)
 			{
-				FirstExactMatchShelf = Shelf;
-			}
-			else if (Match == ECSPlannedShelfMatch::Category && FirstCategoryMatchShelf == nullptr)
-			{
-				FirstCategoryMatchShelf = Shelf;
+				PickedShelf = Shelf;
+				break;
 			}
 		}
-		PickedShelf = (FirstExactMatchShelf != nullptr) ? FirstExactMatchShelf : FirstCategoryMatchShelf;
 
 		// 안 가본 진열대 어디에도 같은 카테고리가 없는 계획 상품은 "카테고리 텅 빔"으로 조용히 정리
 		// (시각 반응 없이 45% 확률로 포기 - 대체품조차 없어서 더 찾아다닐 이유가 없는 케이스)
+		// 살아남은(=매장 어딘가에 카테고리가 있는) 계획 상품은 RemainingPlannedCategories에 모아뒀다가
+		// 정확 일치가 안 나왔을 때 아래 폴백의 끌림 대상으로 넘긴다
 		// 위에서 이번 라운드에 어느 진열대로 갈지와 무관하게, 남은 모든 계획 상품에 대해 독립적으로 검사한다
 		if (Decision != nullptr && ProductMasterDataTable != nullptr)
 		{
@@ -195,20 +193,19 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 					continue;
 				}
 
-				if (!HasCategoryMatchAnywhere(*Subsystem, UnvisitedShelves, *PlannedRow))
+				if (HasCategoryMatchAnywhere(*Subsystem, UnvisitedShelves, *PlannedRow))
 				{
-					State->PlannedProductIds.RemoveAt(i);
+					RemainingPlannedCategories.Add(PlannedRow->Category);
+					continue;
+				}
 
-					// 대체품조차 없어서 조용히 포기하던 것을 플레이어가 알 수 있게 만든다 -
-					// 다만 지금은 다음 진열대로 걸어가기 전이라 여기서 바로 띄우면 진열대 앞이 아니라
-					// 매장에 막 들어온 위치에서 떠버린다. 실제 표시는 보류해뒀다가
-					// FCSTask_BrowseShelf가 다음 진열대에 도착한 첫 틱에 대신 띄운다
-					State->PendingPlannedCategoryMissingProductId = PlannedId;
+				State->PlannedProductIds.RemoveAt(i);
 
-					if (Decision->RollChance(0.45f))
-					{
-						State->bForceStopShopping = true;
-					}
+				State->PendingPlannedCategoryMissingProductId = PlannedId;
+
+				if (Decision->RollChance(0.45f))
+				{
+					State->bForceStopShopping = true;
 				}
 			}
 		}
@@ -216,9 +213,15 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 
 	if (PickedShelf == nullptr)
 	{
-		// 계획이 없거나 다 정리된 상태 - 장바구니 기준 짝 대상 카테고리가 있으면 그 진열대를 우선한다
-		const TSet<ECSProductCategory> AffinityTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
-		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, AffinityTargets, Data.Actor);
+		// 정확 일치를 못 찾은 경우(계획이 없거나, 있어도 이번 라운드엔 못 찾음) - 연관구매 대상과
+		// 아직 살아있는 계획 카테고리를 함께 "끌림" 후보로 놓고, 그 안에서 카테고리 선호 가중치로 고른다
+		TSet<ECSProductCategory> PullTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		PullTargets.Append(RemainingPlannedCategories);
+
+		const TMap<ECSProductCategory, float> AttractionWeights =
+			Decision != nullptr ? Decision->GetCategoryAttractionWeights() : TMap<ECSProductCategory, float>();
+
+		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, PullTargets, AttractionWeights, Data.Actor);
 	}
 	if (PickedShelf == nullptr)
 	{
