@@ -33,6 +33,12 @@ TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("0 이상이면 이 값을 손님 관련 굴림(종족 배정/예산 추첨/진열대 선택)의 고정 시드로 사용. -1(기본값)이면 매번 다른 시드"),
 	ECVF_Default);
 
+TAutoConsoleVariable<int32> CVarCS_Affinity(
+	TEXT("cs.Affinity"),
+	1,
+	TEXT("카테고리 연관구매(점수 보너스·짝 진열대 끌어가기) 켜짐/꺼짐. PIE 시작 전에 입력. 0이면 끔, 기본 1"),
+	ECVF_Default);
+
 UCSCustomerRuntimeSubsystem::UCSCustomerRuntimeSubsystem()
 {
 	// UWorldSubsystem은 디테일 패널이 없어 TrashActorClass를 에디터에서 지정할 수 없으므로, 여기서 BP_Trash를 기본값으로 채운다.
@@ -54,6 +60,9 @@ void UCSCustomerRuntimeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	// ShelfRandomStream과 같은 FixedSeed 값을 쓰지만 별개의 객체라 시퀀스가 서로 얽히지 않는다
 	TrashWitnessRollStream.Initialize(FixedSeed >= 0 ? FixedSeed : FMath::Rand());
+
+	// 시드 초기화와 같은 "PIE 시작 시 한 번"으로 묶는다 - 손님 스폰은 이보다 뒤에 일어난다
+	LoadAndValidateCategoryAffinityTable();
 
 	RefreshShelves();//레벨 시작할때 레벨에 있는 진열대를 바로 등록 (만약 타이쿤 시스템 도입시 생각)
 
@@ -159,10 +168,20 @@ bool UCSCustomerRuntimeSubsystem::IsShelfSelectable(const AActor* ShelfActor) co
 		ICSBuildableFacility::Execute_IsFacilityInstalled(ShelfActor);
 }
 
-// [임시/테스트용]
+// 계획이 없거나 계획에 맞는 진열대를 찾지 못했을 때의 폴백. 짝 대상 카테고리를 우선하지 않는
+// 버전이 필요한 호출부를 위해 남겨두고, 아래 오버로드에 빈 집합을 넘겨 그대로 위임한다
 AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited) const
 {
-	//방문하지 않은 진열대 배열
+	return PickRandomUnvisitedShelf(Visited, TSet<ECSProductCategory>());
+}
+
+AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(
+	const TArray<TObjectPtr<AActor>>& Visited,
+	const TSet<ECSProductCategory>& AffinityTargetCategories,
+	const ACSCustomerCharacter* Customer) const
+{
+	//방문하지 않은 선택 가능 진열대 배열 - 아래 짝 진열대 목록은 반드시 이 목록의 부분집합이어야 한다
+	// (따로 만들면 "짝 목록은 있는데 전체 목록은 0개"인 경우가 생겨 굴림 횟수가 달라진다)
 	TArray<AActor*> Candidates;
 
 	for (int32 i = 0; i < Shelves.Num(); i++)
@@ -191,15 +210,56 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObje
 		}
 	}
 
-	// 조건에 맞는 진열대가 하나도 없다면 nullptr 반환
+	// 조건에 맞는 진열대가 하나도 없다면 굴리지 않고 nullptr 반환
+	// (여기서 반환하지 않으면 아래에서 빈 배열에 RandRange를 굴려 공용 스트림 순서가 깨진다)
 	if (Candidates.Num() == 0)
 	{
 		return nullptr;
 	}
 
-	// 후보군 배열 내에서 무작위 인덱스를 하나 뽑아 해당 진열대를 반환
-	const int32 PickIndex = ShelfRandomStream.RandRange(0, Candidates.Num() - 1);
-	return Candidates[PickIndex];
+	// 짝 대상 카테고리가 있으면 위 목록 안에서만(딱 이 부분집합에서만) 짝 진열대를 추린다
+	// GetProductsOnShelf 결과 중 카테고리가 대상 집합에 속하는 상품이 하나라도 있으면 짝 진열대다 -
+	// 가격, 강도, 차단은 여기서 보지 않는다
+	TArray<AActor*> AffinityCandidates;
+	if (AffinityTargetCategories.Num() > 0)
+	{
+		for (AActor* Shelf : Candidates)
+		{
+			for (const AActor* ProductActor : GetProductsOnShelf(Shelf))
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				const FCSProductDataRow* ProductRow = Product != nullptr
+					? Product->GetProductRow().GetRow<FCSProductDataRow>(TEXT("UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(Affinity)"))
+					: nullptr;
+				if (ProductRow != nullptr && AffinityTargetCategories.Contains(ProductRow->Category))
+				{
+					AffinityCandidates.Add(Shelf);
+					break;
+				}
+			}
+		}
+	}
+
+	// 짝 진열대가 1개 이상이면 그 목록에서, 아니면 전체 목록에서 - 어느 경우든 굴림은 정확히 1회
+	const bool bPickedFromAffinity = AffinityCandidates.Num() > 0;
+	const TArray<AActor*>& FinalCandidates = bPickedFromAffinity ? AffinityCandidates : Candidates;
+	const int32 PickIndex = ShelfRandomStream.RandRange(0, FinalCandidates.Num() - 1);
+	AActor* Picked = FinalCandidates[PickIndex];
+
+	if (bPickedFromAffinity)
+	{
+		TArray<FString> TargetNames;
+		for (const ECSProductCategory Category : AffinityTargetCategories)
+		{
+			TargetNames.Add(UEnum::GetDisplayValueAsText(Category).ToString());
+		}
+		UE_LOG(LogTemp, Log, TEXT("[연관구매] 끌어가기 손님=%s 대상=[%s] 짝 진열대=%d/%d → %s"),
+			Customer != nullptr ? *Customer->GetName() : TEXT("?"),
+			*FString::Join(TargetNames, TEXT(", ")),
+			AffinityCandidates.Num(), Candidates.Num(), *Picked->GetName());
+	}
+
+	return Picked;
 }
 
 // [임시/테스트용]
@@ -308,6 +368,187 @@ void UCSCustomerRuntimeSubsystem::NotifyPurchaseRejected(ACSCustomerCharacter* C
 	}
 
 	OnPurchaseRejected.Broadcast(Customer, Info);
+}
+
+// =====================================================================
+// 카테고리 연관구매
+// =====================================================================
+
+void UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable()
+{
+	// PIE 도중에 콘솔값이 바뀌어도 반영하지 않기 위해 여기서 한 번만 읽어 확정한다
+	bCategoryAffinityActive = CVarCS_Affinity.GetValueOnGameThread() != 0;
+
+	ValidatedAffinityRows.Reset();
+
+	const UDataTable* AffinityTable = CategoryAffinityDataTableAsset.LoadSynchronous();
+	if (!IsValid(AffinityTable))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[연관구매] DT_CategoryAffinity를 찾지 못했습니다: %s"),
+			*CategoryAffinityDataTableAsset.ToSoftObjectPath().ToString());
+	}
+	else if (AffinityTable->GetRowStruct() != FCSCategoryAffinityRow::StaticStruct())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[연관구매] DT_CategoryAffinity의 행 구조체가 FCSCategoryAffinityRow가 아닙니다: %s"),
+			AffinityTable->GetRowStruct() != nullptr ? *AffinityTable->GetRowStruct()->GetName() : TEXT("None"));
+	}
+	else
+	{
+		int32 ExcludedCount = 0;
+		TArray<FCSCategoryAffinityRow*> Rows;
+		AffinityTable->GetAllRows(TEXT("UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable"), Rows);
+
+		for (const FCSCategoryAffinityRow* Row : Rows)
+		{
+			if (Row == nullptr)
+			{
+				continue;
+			}
+
+			// 원본 DT 행(에디터가 들고 있는 실제 메모리)을 직접 고치지 않도록 복사본에서 검증·클램프한다
+			FCSCategoryAffinityRow Candidate = *Row;
+
+			if (Candidate.AnchorCategory == Candidate.TargetCategory)
+			{
+				// 반복 페널티(RepeatCategoryPenalty)와 정면으로 충돌하는 조합이라 제외
+				UE_LOG(LogTemp, Warning, TEXT("[연관구매] Anchor와 Target이 같은 행을 제외했습니다: %s"),
+					*UEnum::GetDisplayValueAsText(Candidate.AnchorCategory).ToString());
+				ExcludedCount++;
+				continue;
+			}
+
+			if (Candidate.Strength <= 0.0f)
+			{
+				// 의도적으로 끈 쌍 - 경고가 아니라 일반 로그
+				UE_LOG(LogTemp, Log, TEXT("[연관구매] Strength<=0인 행을 제외했습니다: %s → %s"),
+					*UEnum::GetDisplayValueAsText(Candidate.AnchorCategory).ToString(),
+					*UEnum::GetDisplayValueAsText(Candidate.TargetCategory).ToString());
+				ExcludedCount++;
+				continue;
+			}
+
+			if (Candidate.Strength > 1.0f)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[연관구매] Strength>1인 행을 1로 클램프했습니다: %s → %s (%.2f)"),
+					*UEnum::GetDisplayValueAsText(Candidate.AnchorCategory).ToString(),
+					*UEnum::GetDisplayValueAsText(Candidate.TargetCategory).ToString(), Candidate.Strength);
+				Candidate.Strength = 1.0f;
+			}
+
+			const bool bDuplicate = ValidatedAffinityRows.ContainsByPredicate(
+				[&Candidate](const FCSCategoryAffinityRow& Existing)
+				{
+					return Existing.AnchorCategory == Candidate.AnchorCategory && Existing.TargetCategory == Candidate.TargetCategory;
+				});
+			if (bDuplicate)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[연관구매] 중복된 Anchor→Target 행을 제외했습니다: %s → %s"),
+					*UEnum::GetDisplayValueAsText(Candidate.AnchorCategory).ToString(),
+					*UEnum::GetDisplayValueAsText(Candidate.TargetCategory).ToString());
+				ExcludedCount++;
+				continue;
+			}
+
+			ValidatedAffinityRows.Add(Candidate);
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("[연관구매] 활성=%d 유효 쌍=%d 제외=%d"),
+			bCategoryAffinityActive ? 1 : 0, ValidatedAffinityRows.Num(), ExcludedCount);
+		return;
+	}
+
+	// DT를 못 찾았거나 행 구조체가 다른 경우에도 활성 여부는 그대로 로그로 남긴다
+	UE_LOG(LogTemp, Log, TEXT("[연관구매] 활성=%d 유효 쌍=%d 제외=0"),
+		bCategoryAffinityActive ? 1 : 0, ValidatedAffinityRows.Num());
+}
+
+TMap<ECSProductCategory, int32> UCSCustomerRuntimeSubsystem::CountCategoriesInBasket(const TArray<FCSSelectProduct>& SelectProducts) const
+{
+	TMap<ECSProductCategory, int32> Counts;
+	for (const FCSSelectProduct& Selected : SelectProducts)
+	{
+		const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("UCSCustomerRuntimeSubsystem::CountCategoriesInBasket"));
+		if (Row == nullptr)
+		{
+			continue;
+		}
+		Counts.FindOrAdd(Row->Category)++;
+	}
+	return Counts;
+}
+
+TArray<float> UCSCustomerRuntimeSubsystem::GetAffinityStrengthsForTarget(
+	ECSProductCategory TargetCategory,
+	const TArray<FCSSelectProduct>& SelectProducts,
+	FString* OutAnchorSummary) const
+{
+	TArray<float> Strengths;
+	if (OutAnchorSummary != nullptr)
+	{
+		OutAnchorSummary->Reset();
+	}
+
+	if (!bCategoryAffinityActive || ValidatedAffinityRows.IsEmpty())
+	{
+		return Strengths;
+	}
+
+	const TMap<ECSProductCategory, int32> BasketCounts = CountCategoriesInBasket(SelectProducts);
+	TArray<FString> AnchorSummaryParts;
+
+	for (const FCSCategoryAffinityRow& Row : ValidatedAffinityRows)
+	{
+		if (Row.TargetCategory != TargetCategory)
+		{
+			continue;
+		}
+
+		const int32* AnchorCount = BasketCounts.Find(Row.AnchorCategory);
+		if (AnchorCount == nullptr || *AnchorCount <= 0)
+		{
+			continue;
+		}
+
+		for (int32 i = 0; i < *AnchorCount; i++)
+		{
+			Strengths.Add(Row.Strength);
+		}
+
+		if (OutAnchorSummary != nullptr)
+		{
+			AnchorSummaryParts.Add(FString::Printf(TEXT("%s×%d"),
+				*UEnum::GetDisplayValueAsText(Row.AnchorCategory).ToString(), *AnchorCount));
+		}
+	}
+
+	Strengths.Sort([](const float A, const float B) { return A > B; });
+
+	if (OutAnchorSummary != nullptr && !AnchorSummaryParts.IsEmpty())
+	{
+		*OutAnchorSummary = FString::Join(AnchorSummaryParts, TEXT(", "));
+	}
+
+	return Strengths;
+}
+
+TSet<ECSProductCategory> UCSCustomerRuntimeSubsystem::GetAffinityTargetCategories(const TArray<FCSSelectProduct>& SelectProducts) const
+{
+	TSet<ECSProductCategory> Targets;
+	if (!bCategoryAffinityActive || ValidatedAffinityRows.IsEmpty())
+	{
+		return Targets;
+	}
+
+	const TMap<ECSProductCategory, int32> BasketCounts = CountCategoriesInBasket(SelectProducts);
+	for (const FCSCategoryAffinityRow& Row : ValidatedAffinityRows)
+	{
+		if (BasketCounts.Contains(Row.AnchorCategory))
+		{
+			Targets.Add(Row.TargetCategory);
+		}
+	}
+	return Targets;
 }
 
 void UCSCustomerRuntimeSubsystem::SpawnTrashNearCustomer(ACSCustomerCharacter* Customer)

@@ -199,6 +199,13 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 				if (!HasCategoryMatchAnywhere(*Subsystem, UnvisitedShelves, *PlannedRow))
 				{
 					State->PlannedProductIds.RemoveAt(i);
+
+					// 대체품조차 없어서 조용히 포기하던 것을 플레이어가 알 수 있게 만든다 -
+					// 다만 지금은 다음 진열대로 걸어가기 전이라 여기서 바로 띄우면 진열대 앞이 아니라
+					// 매장에 막 들어온 위치에서 떠버린다. 실제 표시는 보류해뒀다가
+					// FCSTask_BrowseShelf가 다음 진열대에 도착한 첫 틱에 대신 띄운다
+					State->PendingPlannedCategoryMissingProductId = PlannedId;
+
 					if (Decision->RollChance(0.45f))
 					{
 						State->bForceStopShopping = true;
@@ -210,7 +217,9 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 
 	if (PickedShelf == nullptr)
 	{
-		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves);
+		// 계획이 없거나 다 정리된 상태 - 장바구니 기준 짝 대상 카테고리가 있으면 그 진열대를 우선한다
+		const TSet<ECSProductCategory> AffinityTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, AffinityTargets, Data.Actor);
 	}
 	if (PickedShelf == nullptr)
 	{
@@ -702,10 +711,60 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Succeeded;
 	}
 
+	// PickNextShelf가 보류해둔 "계획 카테고리가 매장에 없음" 표시가 있는지
+	const bool bHasPendingCategoryMissing = Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
+		Data.RoundCount == 0 && !State->HasVisited(ShelfActor) &&
+		!State->PendingPlannedCategoryMissingProductId.IsNone();
+
+	// 이 진열대가 마침 재고까지 없으면 아래 ShelfEmpty 분기와 겹쳐서 반응이 2개 동시에
+	// 뜨게 되므로, 그 경우엔 PlannedProductMissing 쪽을 우선해 여기서 대신 처리하고 ShelfEmpty
+	// 분기를 건너뛴다(재고 없음이라는 사실 자체는 같으므로 GlanceTime 대기·MarkVisited·
+	// 평가예산 차감은 ShelfEmpty와 동일하게 수행)
+	if (bHasPendingCategoryMissing && !Subsystem->HasShelfStock(ShelfActor))
+	{
+		if (Data.ElapsedTime < Data.GlanceTime)
+		{
+			return EStateTreeRunStatus::Running;
+		}
+
+		State->MarkVisited(ShelfActor);
+		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
+
+		FCSPurchaseRejectionInfo PlannedMissingInfo;
+		PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
+		PlannedMissingInfo.ProductId = State->PendingPlannedCategoryMissingProductId;
+		PlannedMissingInfo.Severity = 1.0f;
+		State->PendingPlannedCategoryMissingProductId = NAME_None; // 1회성 - 소비 즉시 비움
+
+		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, PlannedMissingInfo, Context.GetWorld());
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 재고는 있는 정상 케이스 - 도착한 첫 틱에 대신 띄우고 흐름은 그대로 이어간다(대기 없이 표시만)
+	if (bHasPendingCategoryMissing)
+	{
+		FCSPurchaseRejectionInfo PlannedMissingInfo;
+		PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
+		PlannedMissingInfo.ProductId = State->PendingPlannedCategoryMissingProductId;
+		PlannedMissingInfo.Severity = 1.0f;
+		State->PendingPlannedCategoryMissingProductId = NAME_None; // 1회성 - 소비 즉시 비움
+
+		const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
+		State->LastRejectionInfo = PlannedMissingInfo;
+		State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
+		DrawDebugString(
+			Context.GetWorld(),
+			Customer->GetActorLocation() + FVector(0.0f, 0.0f, Customer->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
+			Decision->GetRejectionDisplayTier(PlannedMissingInfo).DebugText.ToString(),
+			nullptr, FColor::White, DisplayDuration, true);
+		Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
+	}
+
 	// 첫 라운드(세션 진입)에 재고가 없으면 세션 자체를 시작하지 않고 GlanceTime만큼만 짧게 머물다 지나감
 	// RoundCount == 0으로 제한하는 이유: 세션 도중(라운드 1 이상)에 다른 손님이 재고를 다 사가서 없어진 경우는
 	// 여기로 다시 빠지지 않고, 아래 BuildPurchaseCandidates가 빈 배열을 만들어 DecidePurchase가 자연히
 	// false(미구매)를 반환하며 세션이 끝나도록 둔다
+	// bHasPendingCategoryMissing이면서 재고까지 없는 경우는 위에서 이미 처리되고 return돼서 여기 안 옴
 	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
 		Data.RoundCount == 0 && !Subsystem->HasShelfStock(ShelfActor))
 	{
