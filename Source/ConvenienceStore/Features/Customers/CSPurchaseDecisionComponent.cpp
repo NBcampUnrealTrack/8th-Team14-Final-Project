@@ -707,10 +707,6 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 
 		const FName PickedProduct = ProductsInPickedCategory[WeightedRandomIndex(ProductWeightsInPickedCategory, Stream)];
 		Result.Add(PickedProduct);
-
-		// [계획상품 확인용 로그]
-		UE_LOG(LogTemp, Log, TEXT("[계획상품 확인용] StoreLevel=%d | 카테고리=%s | 상품=%s"),
-			CurrentStoreLevel, *UEnum::GetDisplayValueAsText(PickedCategory).ToString(), *PickedProduct.ToString());
 	}
 
 	return Result;
