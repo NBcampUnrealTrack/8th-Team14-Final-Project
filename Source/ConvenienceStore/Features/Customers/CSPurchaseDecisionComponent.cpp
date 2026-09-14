@@ -682,8 +682,13 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 
 			// 선호도 맵에 없는 카테고리는 평균(0.5)으로 취급
 			const float* FoundPreference = Archetype ? Archetype->CategoryPreference.Find(Category) : nullptr;
+			const float RawPreference = FoundPreference ? *FoundPreference : 0.5f;
+
+			// GetCategoryAttractionWeights와 같은 지수를 적용
+			const float Weight = FMath::Pow(FMath::Max(RawPreference, 0.0f), CategoryAttractionExponent);
+
 			CandidateCategories.Add(Category);
-			CategoryWeights.Add(FoundPreference ? *FoundPreference : 0.5f);
+			CategoryWeights.Add(Weight);
 		}
 
 		if (CandidateCategories.Num() == 0)
@@ -710,6 +715,30 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 	}
 
 	return Result;
+}
+
+// 카테고리 선호를 손님 동선에 반영하기 위한 카테고리별 끌림 가중치
+TMap<ECSProductCategory, float> UCSPurchaseDecisionComponent::GetCategoryAttractionWeights() const
+{
+	TMap<ECSProductCategory, float> Weights;
+	Weights.Reserve(UE_ARRAY_COUNT(AllProductCategories));
+	for (const ECSProductCategory Category : AllProductCategories)
+	{
+		if (Archetype && Archetype->BlockedCategories.Contains(Category))
+		{
+			Weights.Add(Category, 0.0f);
+			continue;
+		}
+
+		// 선호도 맵에 없는 카테고리는 평균(0.5)으로 취급
+		const float* FoundPreference = Archetype ? Archetype->CategoryPreference.Find(Category) : nullptr;
+		const float Preference = FoundPreference ? *FoundPreference : 0.5f;
+
+		// 지수를 씌워 선호 차이를 확률 차이로 뚜렷하게 벌림
+		Weights.Add(Category, FMath::Pow(FMath::Max(Preference, 0.0f), CategoryAttractionExponent));
+	}
+
+	return Weights;
 }
 
 void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)

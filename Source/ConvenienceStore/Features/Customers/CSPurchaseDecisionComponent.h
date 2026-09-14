@@ -60,6 +60,10 @@ public:
 	// (레벨이 낮아 후보가 0개인 카테고리를 걸러내지 않으면 다음 단계에서 빈 배열을 가중 샘플링하게 됨)
 	TArray<FName> RollPlannedProducts(FRandomStream& Stream, int32 CurrentStoreLevel) const;
 
+	// 카테고리 선호를 손님 동선(PickNextShelf가 다음에 어느 진열대로 갈지 고르는 것)에 반영하기 위한
+	// 카테고리별 끌림 가중치
+	TMap<ECSProductCategory, float> GetCategoryAttractionWeights() const;
+
 	// 스포너가 스폰 직후 파생 시드를 주입할 때 사용
 	// 이미 굴림이 시작된 뒤에 다시 부르면 그 시점부터 시퀀스가 바뀌므로 스폰 직후 1회만 호출 전제
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
@@ -174,6 +178,11 @@ protected:
 	// 1 미만이면 보너스 상한은 (첫 보너스 ÷ (1 − 비율))
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AffinityDiminishingRatio = 0.5f;
+
+	// 카테고리 선호가 진열대 동선에 얼마나 뚜렷하게 드러날지 조절하는 지수(GetCategoryAttractionWeights에서 사용)
+	// 1이면 선호도 차이가 그대로 확률 차이, 클수록 좋아하는 진열대 쪽으로 훨씬 강하게 쏠림
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0"))
+	float CategoryAttractionExponent = 2.0f;
 
 	// 거절 즉시표시(디버그 텍스트)를 몇 초간 유지할지. 마법봉 시간 게이트도 같은 값을 참조함
 	// 손님마다 달라질 이유가 없는 값이라 Archetype/Fallback 이중화 대상이 아님

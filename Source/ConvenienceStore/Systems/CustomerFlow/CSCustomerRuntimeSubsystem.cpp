@@ -33,12 +33,6 @@ TAutoConsoleVariable<int32> CVarCS_FixedSeed(
 	TEXT("0 이상이면 이 값을 손님 관련 굴림(종족 배정/예산 추첨/진열대 선택)의 고정 시드로 사용. -1(기본값)이면 매번 다른 시드"),
 	ECVF_Default);
 
-TAutoConsoleVariable<int32> CVarCS_Affinity(
-	TEXT("cs.Affinity"),
-	1,
-	TEXT("카테고리 연관구매(점수 보너스·짝 진열대 끌어가기) 켜짐/꺼짐. PIE 시작 전에 입력. 0이면 끔, 기본 1"),
-	ECVF_Default);
-
 UCSCustomerRuntimeSubsystem::UCSCustomerRuntimeSubsystem()
 {
 	// UWorldSubsystem은 디테일 패널이 없어 TrashActorClass를 에디터에서 지정할 수 없으므로, 여기서 BP_Trash를 기본값으로 채운다.
@@ -172,12 +166,13 @@ bool UCSCustomerRuntimeSubsystem::IsShelfSelectable(const AActor* ShelfActor) co
 // 버전이 필요한 호출부를 위해 남겨두고, 아래 오버로드에 빈 집합을 넘겨 그대로 위임한다
 AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited) const
 {
-	return PickRandomUnvisitedShelf(Visited, TSet<ECSProductCategory>());
+	return PickRandomUnvisitedShelf(Visited, TSet<ECSProductCategory>(), TMap<ECSProductCategory, float>());
 }
 
 AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(
 	const TArray<TObjectPtr<AActor>>& Visited,
 	const TSet<ECSProductCategory>& AffinityTargetCategories,
+	const TMap<ECSProductCategory, float>& CategoryAttractionWeights,
 	const ACSCustomerCharacter* Customer) const
 {
 	//방문하지 않은 선택 가능 진열대 배열 - 아래 짝 진열대 목록은 반드시 이 목록의 부분집합이어야 한다
@@ -243,7 +238,68 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(
 	// 짝 진열대가 1개 이상이면 그 목록에서, 아니면 전체 목록에서 - 어느 경우든 굴림은 정확히 1회
 	const bool bPickedFromAffinity = AffinityCandidates.Num() > 0;
 	const TArray<AActor*>& FinalCandidates = bPickedFromAffinity ? AffinityCandidates : Candidates;
-	const int32 PickIndex = ShelfRandomStream.RandRange(0, FinalCandidates.Num() - 1);
+
+	// 위에서 정해진 후보 목록 안에서, 카테고리 선호 가중치가 있으면 균등이 아니라 그 가중치로 뽑는다
+	int32 PickIndex = 0;
+	if (CategoryAttractionWeights.Num() > 0)
+	{
+		constexpr float NeutralShelfAttractionWeight = 0.5f;
+
+		TArray<float> ShelfWeights;
+		ShelfWeights.Reserve(FinalCandidates.Num());
+		for (AActor* Shelf : FinalCandidates)
+		{
+			float BestWeight = -1.0f;
+			for (const AActor* ProductActor : GetProductsOnShelf(Shelf))
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				const FCSProductDataRow* ProductRow = Product != nullptr
+					? Product->GetProductRow().GetRow<FCSProductDataRow>(TEXT("UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(Attraction)"))
+					: nullptr;
+				if (ProductRow == nullptr)
+				{
+					continue;
+				}
+				if (const float* Weight = CategoryAttractionWeights.Find(ProductRow->Category))
+				{
+					BestWeight = FMath::Max(BestWeight, *Weight);
+				}
+			}
+			ShelfWeights.Add(BestWeight >= 0.0f ? BestWeight : NeutralShelfAttractionWeight);
+		}
+
+		float TotalWeight = 0.0f;
+		for (const float Weight : ShelfWeights)
+		{
+			TotalWeight += FMath::Max(Weight, 0.0f);
+		}
+
+		if (TotalWeight > 0.0f)
+		{
+			const float Roll = ShelfRandomStream.FRandRange(0.0f, TotalWeight);
+			float Cumulative = 0.0f;
+			PickIndex = ShelfWeights.Num() - 1; // 부동소수점 오차로 어느 구간에도 안 걸렸을 때의 폴백
+			for (int32 Index = 0; Index < ShelfWeights.Num(); ++Index)
+			{
+				Cumulative += FMath::Max(ShelfWeights[Index], 0.0f);
+				if (Roll <= Cumulative)
+				{
+					PickIndex = Index;
+					break;
+				}
+			}
+		}
+		else
+		{
+			// 후보 전원이 차단 카테고리뿐인 극단 상황 - 균등 폴백(굴림은 여전히 1회)
+			PickIndex = ShelfRandomStream.RandRange(0, FinalCandidates.Num() - 1);
+		}
+	}
+	else
+	{
+		PickIndex = ShelfRandomStream.RandRange(0, FinalCandidates.Num() - 1);
+	}
+
 	AActor* Picked = FinalCandidates[PickIndex];
 
 	if (bPickedFromAffinity)
@@ -376,9 +432,6 @@ void UCSCustomerRuntimeSubsystem::NotifyPurchaseRejected(ACSCustomerCharacter* C
 
 void UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable()
 {
-	// PIE 도중에 콘솔값이 바뀌어도 반영하지 않기 위해 여기서 한 번만 읽어 확정한다
-	bCategoryAffinityActive = CVarCS_Affinity.GetValueOnGameThread() != 0;
-
 	ValidatedAffinityRows.Reset();
 
 	const UDataTable* AffinityTable = CategoryAffinityDataTableAsset.LoadSynchronous();
@@ -452,14 +505,13 @@ void UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable()
 			ValidatedAffinityRows.Add(Candidate);
 		}
 
-		UE_LOG(LogTemp, Log, TEXT("[연관구매] 활성=%d 유효 쌍=%d 제외=%d"),
-			bCategoryAffinityActive ? 1 : 0, ValidatedAffinityRows.Num(), ExcludedCount);
+		UE_LOG(LogTemp, Log, TEXT("[연관구매] 유효 쌍=%d 제외=%d"),
+			ValidatedAffinityRows.Num(), ExcludedCount);
 		return;
 	}
 
-	// DT를 못 찾았거나 행 구조체가 다른 경우에도 활성 여부는 그대로 로그로 남긴다
-	UE_LOG(LogTemp, Log, TEXT("[연관구매] 활성=%d 유효 쌍=%d 제외=0"),
-		bCategoryAffinityActive ? 1 : 0, ValidatedAffinityRows.Num());
+	// DT를 못 찾았거나 행 구조체가 다른 경우에도 결과(0쌍)는 로그로 남긴다
+	UE_LOG(LogTemp, Log, TEXT("[연관구매] 유효 쌍=%d"), ValidatedAffinityRows.Num());
 }
 
 TMap<ECSProductCategory, int32> UCSCustomerRuntimeSubsystem::CountCategoriesInBasket(const TArray<FCSSelectProduct>& SelectProducts) const
@@ -489,7 +541,7 @@ TArray<float> UCSCustomerRuntimeSubsystem::GetAffinityStrengthsForTarget(
 		OutAnchorSummary->Reset();
 	}
 
-	if (!bCategoryAffinityActive || ValidatedAffinityRows.IsEmpty())
+	if (ValidatedAffinityRows.IsEmpty())
 	{
 		return Strengths;
 	}
@@ -535,7 +587,7 @@ TArray<float> UCSCustomerRuntimeSubsystem::GetAffinityStrengthsForTarget(
 TSet<ECSProductCategory> UCSCustomerRuntimeSubsystem::GetAffinityTargetCategories(const TArray<FCSSelectProduct>& SelectProducts) const
 {
 	TSet<ECSProductCategory> Targets;
-	if (!bCategoryAffinityActive || ValidatedAffinityRows.IsEmpty())
+	if (ValidatedAffinityRows.IsEmpty())
 	{
 		return Targets;
 	}

@@ -98,9 +98,13 @@ public:
 	// 위와 같지만 AffinityTargetCategories(장바구니 기준 짝 대상 카테고리 - GetAffinityTargetCategories 참고)가
 	// 있으면 "안 가본 선택 가능 진열대" 목록 안에서만 그 짝 진열대를 우선 고른다
 	// 거리/가격/강도/차단은 보지 않는다 - 짝 진열대 유무만 본다
-	// 굴림 횟수는 짝 진열대가 있든 없든 항상 1회로 같다(ShelfRandomStream이 모든 손님 공용 스트림이라
-	// 한 번만 어긋나도 이후 모든 손님의 결과가 밀리기 때문)
-	AActor* PickRandomUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited, const TSet<ECSProductCategory>& AffinityTargetCategories, const ACSCustomerCharacter* Customer = nullptr) const;
+	// CategoryAttractionWeights가 있으면 위에서 정해진 후보 목록 안에서 균등이 아니라 그 가중치로 뽑는다
+	// 짝 진열대가 "어느 진열대들이 후보가 될지"를 정하고, 선호 가중치는 "그 후보들 중 어디가 더 끌리는지"를 정하는 두 단계 구조
+	AActor* PickRandomUnvisitedShelf(
+		const TArray<TObjectPtr<AActor>>& Visited,
+		const TSet<ECSProductCategory>& AffinityTargetCategories,
+		const TMap<ECSProductCategory, float>& CategoryAttractionWeights,
+		const ACSCustomerCharacter* Customer = nullptr) const;
 
 	// [임시/테스트용] 안 가본 진열대가 남아있는가 판정 로직
 	bool HasUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited) const;
@@ -509,13 +513,9 @@ private:
 	TSoftObjectPtr<UDataTable> CategoryAffinityDataTableAsset = TSoftObjectPtr<UDataTable>(
 		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/DT_CategoryAffinity.DT_CategoryAffinity")));
 
-	// cs.Affinity로 OnWorldBeginPlay에서 한 번만 확정
-	bool bCategoryAffinityActive = true;
-
 	// 검증을 통과한 쌍만 남긴 배열
 	TArray<FCSCategoryAffinityRow> ValidatedAffinityRows;
 
-	// cs.Affinity를 읽어 bCategoryAffinityActive를 확정하고, DT_CategoryAffinity를 로드·검증해
-	// ValidatedAffinityRows를 채운다
+	// DT_CategoryAffinity를 로드·검증해 ValidatedAffinityRows를 채운다
 	void LoadAndValidateCategoryAffinityTable();
 };
