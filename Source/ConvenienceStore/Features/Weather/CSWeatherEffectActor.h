@@ -27,6 +27,15 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Weather")
 	void StopEffect();
 
+	// 캐릭터 주위 날씨 파티클의 표시 여부를 변경
+	// 파티클 활성화 상태와 사운드, 포스트프로세스는 변경하지 않음
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Weather")
+	void SetLocalEffectActive(bool bActive);
+
+	// 캐릭터 주위 날씨 파티클의 표시 설정을 반환
+	UFUNCTION(BlueprintPure, Category = "Weather")
+	bool IsLocalEffectActive() const { return bLocalEffectActive; }
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
@@ -34,4 +43,9 @@ protected:
 	// StopEffect가 두 번 불려도 Destroy를 두 번 부르지 않게 합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	bool bStopRequested = false;
+
+	// 캐릭터 주위 날씨 파티클의 표시 상태
+	// 생성 시 보이는 상태를 기준으로 true로 초기화
+	UPROPERTY(BlueprintReadOnly, Category = "Weather")
+	bool bLocalEffectActive = true;
 };

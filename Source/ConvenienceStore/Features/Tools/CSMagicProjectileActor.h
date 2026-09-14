@@ -58,5 +58,8 @@ protected:
 	float ProjectileLifetime = 4.0f;
 
 private:
+	void StartProjectileAfterEffectsReady();
+	float EffectsReadyDeadline = 0.0f;
+
 	FVector TravelDirection = FVector::ForwardVector;
 };

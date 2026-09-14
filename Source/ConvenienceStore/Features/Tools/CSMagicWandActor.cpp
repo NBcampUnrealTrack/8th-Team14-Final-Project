@@ -1,9 +1,12 @@
 #include "Features/Tools/CSMagicWandActor.h"
 
 #include "Features/Tools/CSMagicProjectileActor.h"
+#include "Features/Player/CSPlayerCharacter.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 
 namespace
@@ -35,6 +38,57 @@ ACSMagicWandActor::ACSMagicWandActor()
 	Muzzle->SetupAttachment(ToolMesh);
 	// 지팡이 모델이 없을 때도 발사 위치를 확인할 수 있도록 기본값을 앞쪽에 둡니다.
 	Muzzle->SetRelativeLocation(FVector(60.0f, 0.0f, 0.0f));
+}
+
+void ACSMagicWandActor::OnEquipped(ACSPlayerCharacter* NewOwner)
+{
+	Super::OnEquipped(NewOwner);
+	if (IsValid(NewOwner))
+	{
+		if (!CachedWorldScale.IsSet())
+		{
+			CachedWorldScale = GetActorScale3D();
+		}
+		SetActorScale3D(CachedWorldScale.GetValue() *
+			FMath::Max(0.01f, NewOwner->GetMagicWandHeldScaleMultiplier()));
+	}
+}
+
+void ACSMagicWandActor::OnUnequipped()
+{
+	RestoreWorldScale();
+	Super::OnUnequipped();
+}
+
+void ACSMagicWandActor::PrepareForPickupPhysics()
+{
+	Super::PrepareForPickupPhysics();
+	// Quickbar 보관과 Home Dock 반환도 이 기존 준비 경로를 거칩니다.
+	RestoreWorldScale();
+}
+
+FBox ACSMagicWandActor::GetUnheldBounds() const
+{
+	const FBox Bounds = GetComponentsBoundingBox(true);
+	const double CurrentScaleSize = GetActorScale3D().Size();
+	if (Bounds.IsValid && CachedWorldScale.IsSet() && CurrentScaleSize > UE_SMALL_NUMBER)
+	{
+		// 장착 배율은 균일 배율이므로 월드 AABB도 Actor 원점을 기준으로 복원할 수 있습니다.
+		const double RestoreRatio = CachedWorldScale.GetValue().Size() / CurrentScaleSize;
+		const FVector Origin = GetActorLocation();
+		return FBox(Origin + (Bounds.Min - Origin) * RestoreRatio,
+			Origin + (Bounds.Max - Origin) * RestoreRatio);
+	}
+	return Bounds;
+}
+
+void ACSMagicWandActor::RestoreWorldScale()
+{
+	if (CachedWorldScale.IsSet())
+	{
+		SetActorScale3D(CachedWorldScale.GetValue());
+		CachedWorldScale.Reset();
+	}
 }
 
 bool ACSMagicWandActor::RememberHomeDockFromCurrentAttachment()
@@ -84,7 +138,8 @@ AActor* ACSMagicWandActor::GetHomeDockOwner() const
 
 bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 {
-	if (!bIsEquipped || !IsValid(User) || MagicProjectileClass == nullptr || GetWorld() == nullptr)
+	if (!bIsEquipped || !IsValid(User) || !IsValid(Muzzle) ||
+		MagicProjectileClass == nullptr || GetWorld() == nullptr)
 	{
 		return false;
 	}
@@ -98,14 +153,33 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	FVector ViewLocation;
 	FRotator ViewRotation;
 	User->GetActorEyesViewPoint(ViewLocation, ViewRotation);
-	const FVector TravelDirection = ViewRotation.Vector().GetSafeNormal();
-	const FVector SpawnLocation = IsValid(Muzzle)
-		? Muzzle->GetComponentLocation()
-		: ViewLocation + TravelDirection * 60.0f;
+	APawn* UserPawn = Cast<APawn>(User);
+	if (IsValid(UserPawn))
+	{
+		if (APlayerController* PlayerController = Cast<APlayerController>(UserPawn->GetController()))
+		{
+			PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
+		}
+	}
+
+	const FVector ViewDirection = ViewRotation.Vector().GetSafeNormal();
+	constexpr float AimDistance = 10000.0f;
+	FVector AimPoint = ViewLocation + ViewDirection * AimDistance;
+	FCollisionQueryParams AimQuery(SCENE_QUERY_STAT(MagicWandAim), false, User);
+	AimQuery.AddIgnoredActor(this);
+	FHitResult AimHit;
+	if (GetWorld()->LineTraceSingleByChannel(AimHit, ViewLocation, AimPoint, ECC_Visibility, AimQuery))
+	{
+		AimPoint = AimHit.ImpactPoint;
+	}
+
+	// 카메라가 가리킨 지점으로 봉 끝에서 수렴시켜 시차에 의한 조준 오차를 없앱니다.
+	const FVector SpawnLocation = Muzzle->GetComponentLocation();
+	const FVector TravelDirection = (AimPoint - SpawnLocation).GetSafeNormal(UE_SMALL_NUMBER, ViewDirection);
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.Owner = User;
-	SpawnParameters.Instigator = Cast<APawn>(User);
+	SpawnParameters.Instigator = UserPawn;
 	SpawnParameters.SpawnCollisionHandlingOverride =
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -122,7 +196,7 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	// 지팡이 끝에서 생성된 투사체가 지팡이 자체 충돌에 막히지 않도록 제외합니다.
 	Projectile->AddIgnoredActor(this);
 
-	// 투사체가 카메라 조준 방향을 그대로 사용하도록 초기 속도와 방향을 전달합니다.
+	// Spawn 회전과 초기 속도에 같은 Muzzle -> AimPoint 방향을 사용합니다.
 	Projectile->InitializeProjectile(TravelDirection);
 	LastPrimaryUseTime = CurrentTime;
 	PlayMagicWandGameplaySFX(this, ECSAudioEvent::MagicAttack);

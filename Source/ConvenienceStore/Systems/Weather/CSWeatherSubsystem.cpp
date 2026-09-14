@@ -4,6 +4,11 @@
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
 #include "Features/Weather/CSWeatherEffectActor.h"
+#include "Features/Weather/CSWeatherIndoorArea.h"
+#include "Features/Weather/CSWeatherZoneActor.h"
+#include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraSystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UObject/Class.h"
@@ -52,6 +57,10 @@ void UCSWeatherSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 void UCSWeatherSubsystem::Deinitialize()
 {
+	Zones.Reset();
+	IndoorAreas.Reset();
+	ActiveZoneSystem = nullptr;
+
 	if (IsValid(StoreGameState))
 	{
 		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
@@ -800,7 +809,18 @@ void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather)
 		ActiveEffectActor = nullptr;
 	}
 
+	// 맑음처럼 이펙트가 없는 날씨도 문 연출 영역은 꺼야 하므로 두 단계를 따로 처리합니다.
 	const FCSWeatherRow* Row = FindWeatherRow(NewWeather);
+	SpawnEffectActor(Row);
+	ApplyZoneSystem(Row);
+
+	// 새 이펙트에 현재 보호 상태를 즉시 적용
+	// 판정 결과가 이전과 같아도 표시 여부를 다시 설정
+	UpdateShelterState(true);
+}
+
+void UCSWeatherSubsystem::SpawnEffectActor(const FCSWeatherRow* Row)
+{
 	if (Row == nullptr || Row->EffectActorClass.IsNull())
 	{
 		return;   // 맑음처럼 이펙트가 없는 날씨입니다. 정상 경로입니다.
@@ -826,5 +846,154 @@ void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather)
 	if (IsValid(ActiveEffectActor))
 	{
 		ActiveEffectActor->StartEffect();
+	}
+}
+
+void UCSWeatherSubsystem::ApplyZoneSystem(const FCSWeatherRow* Row)
+{
+	ActiveZoneSystem = nullptr;
+
+	// 날씨 행에 영역 에셋이 지정되어 있으면 동기 로드
+	if (Row != nullptr && !Row->ZoneNiagaraSystem.IsNull())
+	{
+		ActiveZoneSystem = Row->ZoneNiagaraSystem.LoadSynchronous();
+		if (ActiveZoneSystem == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Weather] %s의 ZoneNiagaraSystem을 로드하지 못했습니다."),
+				*Row->DisplayName.ToString());
+		}
+	}
+
+	// 유효한 모든 영역에 에셋을 전달
+	// nullptr을 전달받은 영역은 현재 파티클을 비활성화
+	for (const TWeakObjectPtr<ACSWeatherZoneActor>& Zone : Zones)
+	{
+		if (Zone.IsValid())
+		{
+			Zone->ApplyZoneSystem(ActiveZoneSystem);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 실내·문 앞 연출 영역
+// ---------------------------------------------------------------------------
+
+void UCSWeatherSubsystem::RegisterZone(ACSWeatherZoneActor* Zone)
+{
+	if (!IsValid(Zone))
+	{
+		return;
+	}
+	// 같은 영역이 중복 등록되지 않도록 약한 참조로 추가
+	Zones.AddUnique(TWeakObjectPtr<ACSWeatherZoneActor>(Zone));
+
+	// 등록 시점의 날씨 에셋과 보호 상태를 즉시 전달
+	Zone->ApplyZoneSystem(ActiveZoneSystem);
+	Zone->SetZoneVisible(bSheltered);
+
+	// 플레이어가 이미 박스 안에 있는 경우를 반영하도록 재판정
+	UpdateShelterState(false);
+}
+
+void UCSWeatherSubsystem::UnregisterZone(ACSWeatherZoneActor* Zone)
+{
+	Zones.RemoveAll([Zone](const TWeakObjectPtr<ACSWeatherZoneActor>& Item)
+	{
+		return !Item.IsValid() || Item.Get() == Zone;
+	});
+}
+
+void UCSWeatherSubsystem::RegisterIndoorArea(ACSWeatherIndoorArea* Area)
+{
+	if (!IsValid(Area))
+	{
+		return;
+	}
+	// 같은 영역이 중복 등록되지 않도록 약한 참조로 추가
+	IndoorAreas.AddUnique(TWeakObjectPtr<ACSWeatherIndoorArea>(Area));
+
+	// 플레이어가 이미 실내에 있는 경우를 반영하도록 재판정
+	UpdateShelterState(false);
+}
+
+void UCSWeatherSubsystem::UnregisterIndoorArea(ACSWeatherIndoorArea* Area)
+{
+	IndoorAreas.RemoveAll([Area](const TWeakObjectPtr<ACSWeatherIndoorArea>& Item)
+	{
+		return !Item.IsValid() || Item.Get() == Area;
+	});
+}
+
+void UCSWeatherSubsystem::NotifyShelterOverlapChanged(AActor* OtherActor)
+{
+	// 유효하지 않은 액터와 0번 플레이어 폰이 아닌 액터는 제외
+	if (!IsValid(OtherActor) || OtherActor != UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
+	{
+		return;
+	}
+
+	UpdateShelterState(false);
+}
+
+void UCSWeatherSubsystem::UpdateShelterState(bool bForceApply)
+{
+	// 플레이어 폰이 없으면 이전 판정 결과를 유지
+	bool bNewSheltered = bSheltered;
+
+	const APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
+	if (IsValid(PlayerPawn))
+	{
+		bNewSheltered = EvaluateSheltered(PlayerPawn);
+	}
+	// 상태가 같고 강제 적용도 아니면 추가 처리 없이 종료
+	if (bNewSheltered == bSheltered && !bForceApply)
+	{
+		return;
+	}
+	// 새 판정 결과를 저장하고 연출 표시를 갱신
+	bSheltered = bNewSheltered;
+	ApplyShelterState();
+}
+
+bool UCSWeatherSubsystem::EvaluateSheltered(const AActor* PlayerPawn) const
+{
+	// 등록된 문 앞 판정 박스의 현재 오버랩 상태를 확인
+	for (const TWeakObjectPtr<ACSWeatherZoneActor>& Zone : Zones)
+	{
+		if (Zone.IsValid() && Zone->IsActorInJudgeBox(PlayerPawn))
+		{
+			return true;
+		}
+	}
+	// 등록된 실내 박스의 현재 오버랩 상태를 확인
+	for (const TWeakObjectPtr<ACSWeatherIndoorArea>& Area : IndoorAreas)
+	{
+		if (Area.IsValid() && Area->IsActorInside(PlayerPawn))
+		{
+			return true;
+		}
+	}
+	// 어느 판정 영역에도 겹쳐 있지 않으면 실외로 처리
+	return false;
+}
+
+void UCSWeatherSubsystem::ApplyShelterState()
+{
+	if (IsValid(ActiveEffectActor))
+	{
+		// 실내면 플레이어 주위 파티클을 숨기고 실외이면 표시
+		ActiveEffectActor->SetLocalEffectActive(!bSheltered);
+	}
+
+	// 플레이어가 실내 또는 문 앞 판정 박스 안에 있으면
+	// 정문과 뒷마당 등 등록된 모든 문 앞 영역의 비·눈을 표시
+	for (const TWeakObjectPtr<ACSWeatherZoneActor>& Zone : Zones)
+	{
+		if (Zone.IsValid())
+		{
+			Zone->SetZoneVisible(bSheltered);
+		}
 	}
 }

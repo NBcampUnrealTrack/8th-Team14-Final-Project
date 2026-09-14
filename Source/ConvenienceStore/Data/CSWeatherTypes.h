@@ -5,6 +5,7 @@
 #include "CSWeatherTypes.generated.h"
 
 class ACSWeatherEffectActor;
+class UNiagaraSystem;
 
 // 날씨 종류
 // 새 날씨는 Max 앞에 추가하고, DT_Weather에 같은 이름의 행을 등록
@@ -48,6 +49,12 @@ struct CONVENIENCESTORE_API FCSWeatherRow : public FTableRowBase
 	// 비어 있으면 이펙트 없이 날씨를 적용
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Effect")
 	TSoftClassPtr<ACSWeatherEffectActor> EffectActorClass;
+
+	// 문 앞 연출 영역에서 사용할 날씨 나이아가라 에셋
+	// 비어 있으면 해당 날씨의 영역 파티클을 비활성화
+	// 사운드는 캐릭터 날씨 이펙트에서만 처리해 중복 재생을 방지
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Effect")
+	TSoftObjectPtr<UNiagaraSystem> ZoneNiagaraSystem;
 };
 
 // 날씨 종류별 가중치를 보관하는 표
