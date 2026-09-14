@@ -4,6 +4,10 @@
 #include "Engine/DataTable.h"
 #include "CSProductTypes.generated.h"
 
+// 새 카테고리는 반드시 맨 끝에 추가할 것 - 중간에 끼우면 DT_ProductMaster 46행과
+// 아키타입 6종에 이미 저장된 기존 카테고리 값이 전부 밀린다(uint8 값 기반 저장이라 순서가 곧 값)
+// 카테고리를 추가하면 CSPurchaseDecisionComponent.cpp의 AllProductCategories[] 배열도 같이 고칠 것 -
+// 안 고쳐도 컴파일 에러가 나지 않아서 빠뜨리기 쉽다
 UENUM(BlueprintType)
 enum class ECSProductCategory : uint8
 {
@@ -16,7 +20,8 @@ enum class ECSProductCategory : uint8
 	Snack,
 	Supply,
 	Toiletry,
-	Tool
+	Tool,
+	HangoverCure
 };
 
 UENUM(BlueprintType)

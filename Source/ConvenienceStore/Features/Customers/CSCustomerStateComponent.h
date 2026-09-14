@@ -191,6 +191,13 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	bool bForceStopShopping = false;
 
+	// PickNextShelf가 이 계획 카테고리는 매장 어디에도 없다고 판정했을 때, 그 사실을 손님이
+	// 실제로 다음 진열대에 도착할 때까지 잠깐 들고 있는 값. PickNextShelf 시점엔 아직 걸어가는 중이라
+	// 그 자리에서 바로 표시하면 진열대 앞이 아니라 매장에 막 들어온 위치에서 떠버리므로,
+	// BrowseShelf가 다음 진열대에 도착한 첫 틱에 표시하고 즉시 NAME_None으로 비운다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	FName PendingPlannedCategoryMissingProductId = NAME_None;
+
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
 

@@ -109,3 +109,25 @@ struct FCSPurchaseRejectionDisplayRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	TArray<FCSPurchaseRejectionTier> Tiers;
 };
+
+// 카테고리 연관구매 한 쌍
+// Strength 0은 "쌍 끄기"다 - 점수 보너스와 진열대 끌어가기가 둘 다 꺼진다(로드 시점에 걸러짐)
+// 행 이름(RowName)은 코드가 읽지 않으므로 아무 이름이나 붙여도 됨
+USTRUCT(BlueprintType)
+struct FCSCategoryAffinityRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	// 장바구니에 먼저 담긴 카테고리
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Affinity")
+	ECSProductCategory AnchorCategory = ECSProductCategory::Alcohol;
+
+	// 위 카테고리가 담기면 끌어올려지는 카테고리
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Affinity")
+	ECSProductCategory TargetCategory = ECSProductCategory::Snack;
+
+	// 쌍 사이의 상대 강도
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Affinity",
+		meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float Strength = 0.5f;
+};

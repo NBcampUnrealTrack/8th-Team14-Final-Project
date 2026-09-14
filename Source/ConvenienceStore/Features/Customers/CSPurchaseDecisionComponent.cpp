@@ -4,7 +4,15 @@
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "GameFramework/Actor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	// 가격 반응("비싸다")이 시작되는 선이자 연관구매 보너스를 허용하는 선
+	// 두 선이 어긋나면 "비싸다고 느끼는데 연관구매로 사는" 손님이 생긴다
+	constexpr float PriceReactionNeutralPoint = 0.5f;
+}
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 {
@@ -205,7 +213,11 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	const float WeightSum = W_Price + W_Category + W_Budget;
 	const float Normalized = (WeightSum > 0.f) ? (Weighted / WeightSum) : 0.f;
 
-	return FMath::Clamp(Normalized, 0.f, 1.f);
+	// 연관구매 보너스는 여기(모든 -1.0 반환을 통과한 뒤, 기존 Clamp 안)에서만 더한다
+	// 이보다 앞에 두면 구매 불가 판정을 받았어야 할 상품이 보너스로 되살아날 수 있다
+	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceScore);
+
+	return FMath::Clamp(Normalized + AffinityBonus, 0.f, 1.f);
 }
 
 // 전달받은 후보 전체에 점수를 매긴 뒤 점수가 높은 순으로 정렬하고
@@ -343,9 +355,13 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 	}
 
 	const float WeightSum = W_Price + W_Category + W_Budget;
-	const float ScoreWithoutRepeatPenalty = (WeightSum > 0.f)
-		? FMath::Clamp((W_Price * PriceEval.PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum, 0.f, 1.f)
+	const float NormalizedWithoutRepeatPenalty = (WeightSum > 0.f)
+		? (W_Price * PriceEval.PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum
 		: 0.f;
+
+	// ScoreCandidate와 같은 헬퍼로 같은 보너스를 더한다
+	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceEval.PriceScore);
+	const float ScoreWithoutRepeatPenalty = FMath::Clamp(NormalizedWithoutRepeatPenalty + AffinityBonus, 0.f, 1.f);
 
 	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
 	{
@@ -401,6 +417,29 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 
 	// 구매에 성공해도 가격이 어느 정도 부담스러웠으면 반응을 남김
 	OutRejectionInfo = BuildPriceReactionInfo(OutSelected);
+
+	// 연관구매 보너스가 있었을 때만 로그
+	if (const FCSProductDataRow* SelectedRow = GetProductRow(OutSelected))
+	{
+		const FCSPriceEvaluation SelectedPriceEval = EvaluatePrice(OutSelected, *SelectedRow);
+		FString AnchorSummary;
+		const float AffinityBonus = ComputeAffinityBonus(SelectedRow->Category, SelectedPriceEval.PriceScore, &AnchorSummary);
+		if (AffinityBonus > 0.f)
+		{
+			const float FinalScore = OutSelected.Score;
+			const float OriginalScore = FinalScore - AffinityBonus;
+			// 최종 점수가 상한(1.0)에 잘렸으면 원래 점수를 정확히 역산할 수 없다는 표시
+			const bool bClampedAtCap = FinalScore >= 1.0f - KINDA_SMALL_NUMBER;
+			const AActor* Owner = GetOwner();
+			UE_LOG(LogTemp, Log,
+				TEXT("[연관구매] 담기 손님=%s 상품=%s 가격점수=%.2f 원래=%.2f +보너스=%.2f → 최종=%.2f%s 앵커=[%s]"),
+				Owner != nullptr ? *Owner->GetName() : TEXT("?"),
+				*OutSelected.ProductRowHandle.RowName.ToString(),
+				SelectedPriceEval.PriceScore, OriginalScore, AffinityBonus, FinalScore,
+				bClampedAtCap ? TEXT("(상한)") : TEXT(""), *AnchorSummary);
+		}
+	}
+
 	return true;
 }
 
@@ -524,12 +563,13 @@ int32 UCSPurchaseDecisionComponent::RollPlannedBasketTarget(FRandomStream& Strea
 namespace
 {
 	// RollPlannedProducts 전용 - ECSProductCategory 전체 값을 순회하기 위한 목록
-	// (UENUM 리플렉션으로 순회하지 않고 배열로 나열 - 카테고리가 10종으로 고정돼 있고 자주 안 바뀜)
+	// (UENUM 리플렉션으로 순회하지 않고 배열로 나열)
+	// 카테고리를 추가/삭제하면 이 배열도 반드시 같이 고칠 것
 	const ECSProductCategory AllProductCategories[] = {
 		ECSProductCategory::Alcohol, ECSProductCategory::Beverage, ECSProductCategory::FreshFood,
 		ECSProductCategory::FrozenFood, ECSProductCategory::Potion, ECSProductCategory::Scroll,
 		ECSProductCategory::Snack, ECSProductCategory::Supply, ECSProductCategory::Toiletry,
-		ECSProductCategory::Tool
+		ECSProductCategory::Tool, ECSProductCategory::HangoverCure
 	};
 
 	// Category에 속하면서 CurrentStoreLevel에서 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 상품만 모아
@@ -793,7 +833,7 @@ UCSPurchaseDecisionComponent::FCSPriceEvaluation UCSPurchaseDecisionComponent::E
 // PriceScore로 가격에 대한 반응 강도를 0(무반응)~1(최고 강도)로 환산
 float UCSPurchaseDecisionComponent::ComputePriceReactionSeverity(float PriceScore) const
 {
-	if (PriceScore >= 0.5f)
+	if (PriceScore >= PriceReactionNeutralPoint)
 	{
 		return 0.0f; // 데드존 이내이거나 더 저렴함 - 반응 없음
 	}
@@ -807,8 +847,56 @@ float UCSPurchaseDecisionComponent::ComputePriceReactionSeverity(float PriceScor
 	}
 
 	// 데드존 밖 ~ 하드컷 문턱 사이 - [0, 0.6) 구간에 배정
-	const float SafeSpan = FMath::Max(0.5f - Threshold, KINDA_SMALL_NUMBER);
-	return 0.6f * FMath::Clamp((0.5f - PriceScore) / SafeSpan, 0.0f, 1.0f);
+	const float SafeSpan = FMath::Max(PriceReactionNeutralPoint - Threshold, KINDA_SMALL_NUMBER);
+	return 0.6f * FMath::Clamp((PriceReactionNeutralPoint - PriceScore) / SafeSpan, 0.0f, 1.0f);
+}
+
+// 카테고리 연관구매 점수 보너스
+// PriceScore가 중립점보다 낮으면(비싸다고 느끼는 중) 보너스를 주지 않는다 - 안 그러면
+// 가격에 불만인 손님이 연관구매로 그냥 사버리는 모순이 생긴다
+float UCSPurchaseDecisionComponent::ComputeAffinityBonus(ECSProductCategory TargetCategory, float PriceScore, FString* OutAnchorSummary) const
+{
+	if (OutAnchorSummary != nullptr)
+	{
+		OutAnchorSummary->Reset();
+	}
+
+	if (PriceScore < PriceReactionNeutralPoint)
+	{
+		return 0.0f;
+	}
+
+	// 서브시스템 3단 체크
+	const UWorld* World = GetWorld();
+	const UCSCustomerRuntimeSubsystem* RuntimeSubsystem = World != nullptr
+		? World->GetSubsystem<UCSCustomerRuntimeSubsystem>()
+		: nullptr;
+	if (!IsValid(RuntimeSubsystem))
+	{
+		return 0.0f; // 연관구매가 없던 기존 동작과 동일
+	}
+
+	const UCSCustomerStateComponent* State = GetCustomerState();
+	if (State == nullptr)
+	{
+		return 0.0f;
+	}
+
+	const TArray<float> Strengths = RuntimeSubsystem->GetAffinityStrengthsForTarget(TargetCategory, State->SelectProducts, OutAnchorSummary);
+	if (Strengths.IsEmpty())
+	{
+		return 0.0f;
+	}
+
+	// 같은 대상을 올리는 앵커가 늘어날수록 추가분이 AffinityDiminishingRatio 비율로 줄어듦
+	float Bonus = 0.0f;
+	float RatioPower = 1.0f;
+	for (const float Strength : Strengths)
+	{
+		Bonus += W_Affinity * Strength * RatioPower;
+		RatioPower *= AffinityDiminishingRatio;
+	}
+	return Bonus;
 }
 
 // 구매 성공 여부와 무관하게 후보 하나의 가격 반응 정보를 만든다
