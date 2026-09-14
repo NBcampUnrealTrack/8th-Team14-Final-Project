@@ -19,6 +19,8 @@
 #include "TimerManager.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Components/WidgetComponent.h"
+#include "Features/Customers/CSCustomerHeadIconWidget.h"
 
 namespace
 {
@@ -70,6 +72,15 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	DropOriginRight->SetRelativeLocation(FVector(0.0f, 35.0f, -83.0f));
 	DropOriginRight->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
 	DropOriginRight->SetHiddenInGame(true);
+
+	// 구매 거절/가격 반응 시 머리 위에 뜨는 아이콘
+	HeadIconWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("HeadIconWidgetComponent"));
+	HeadIconWidgetComponent->SetupAttachment(GetCapsuleComponent());
+	HeadIconWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 40.0f));
+	HeadIconWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	HeadIconWidgetComponent->SetDrawSize(FVector2D(64.0f, 64.0f));
+	// HeadIconWidgetClass가 지정되기 전까지는 빈 위젯을 띄우지 않도록 꺼둠
+	HeadIconWidgetComponent->SetVisibility(false);
 }
 
 void ACSCustomerCharacter::Tick(float DeltaSeconds)
@@ -83,6 +94,7 @@ void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
+		World->GetTimerManager().ClearTimer(HeadIconHideTimerHandle);
 	}
 	bActionAnimationPlaying = false;
 	bHoldActionTransformOnFinish = false;
@@ -90,6 +102,49 @@ void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	RestoreActionMeshRotation();
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACSCustomerCharacter::ShowHeadIcon(UTexture2D* Icon, float Duration)
+{
+	if (!IsValid(HeadIconWidgetComponent))
+	{
+		return;
+	}
+
+	// Icon 미설정(Tiers.Icon이 None) - 표시할 게 없으니 기존 표시만 정리
+	if (Icon == nullptr)
+	{
+		HideHeadIcon();
+		return;
+	}
+
+	UCSCustomerHeadIconWidget* Widget = Cast<UCSCustomerHeadIconWidget>(HeadIconWidgetComponent->GetUserWidgetObject());
+	if (Widget == nullptr)
+	{
+		// 컴포넌트의 Widget Class가 아직 지정 안 됨(디자이너가 WBP 제작 전) - 무시
+		return;
+	}
+
+	Widget->SetIcon(Icon);
+	HeadIconWidgetComponent->SetVisibility(true);
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			HeadIconHideTimerHandle,
+			this,
+			&ACSCustomerCharacter::HideHeadIcon,
+			FMath::Max(Duration, 0.01f),
+			false);
+	}
+}
+
+void ACSCustomerCharacter::HideHeadIcon()
+{
+	if (IsValid(HeadIconWidgetComponent))
+	{
+		HeadIconWidgetComponent->SetVisibility(false);
+	}
 }
 
 void ACSCustomerCharacter::InitializeFallbackAnimations(

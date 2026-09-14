@@ -82,7 +82,8 @@ struct FCSPurchaseRejectionTier
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float SeverityThreshold = 0.f;
 
-	// 거절 즉시 손님 머리 위에 5초간 뜨는 디버그 텍스트 (예: "너무 비쌈")
+	// 실제 화면 표시는 Icon이 담당함(ACSCustomerCharacter::ShowHeadIcon) - 이 텍스트는 아이콘 WBP가
+	// 아직 없거나 확인용 로그가 필요할 때를 위한 개발자용 표기
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	FText DebugText;
 
@@ -91,7 +92,8 @@ struct FCSPurchaseRejectionTier
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	FText InnerThoughtTemplate;
 
-	// 지금은 비워둠 - 나중에 아이콘 연출을 붙일 자리
+	// 거절 즉시 손님 머리 위에 DisplayDuration(GetInstantDisplayDuration)초 동안 뜨는 아이콘
+	// (ACSCustomerCharacter::ShowHeadIcon가 소비). 비워두면 아무것도 표시되지 않음
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	TObjectPtr<UTexture2D> Icon = nullptr;
 };

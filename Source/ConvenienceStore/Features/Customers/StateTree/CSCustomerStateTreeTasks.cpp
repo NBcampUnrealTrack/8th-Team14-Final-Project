@@ -12,7 +12,6 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
-#include "DrawDebugHelpers.h"
 
 // =====================================================================
 // PickNextShelf
@@ -458,7 +457,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 	return EStateTreeRunStatus::Running;
 }
 
-// 거절 즉시표시(DrawDebugString) + LastRejectionInfo/LastRejectionTime 기록 +
+// 거절 즉시표시(머리 위 아이콘) + LastRejectionInfo/LastRejectionTime 기록 +
 // NotifyPurchaseRejected 방송을 한 번에 처리하는 공용 절차. 빈 진열대 분기와 정상 거절 분기가 동일하게 씀
 static void CS_HandlePurchaseRejection(
 	FCSTask_BrowseShelfInstanceData& Data,
@@ -473,11 +472,7 @@ static void CS_HandlePurchaseRejection(
 	State.LastRejectionInfo = RejectionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
 
-	DrawDebugString(
-		World,
-		Customer.GetActorLocation() + FVector(0.0f, 0.0f, Customer.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
-		Decision.GetRejectionDisplayTier(RejectionInfo).DebugText.ToString(),
-		nullptr, FColor::White, DisplayDuration, true);
+	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(RejectionInfo).Icon, DisplayDuration);
 
 	Subsystem.NotifyPurchaseRejected(&Customer, RejectionInfo);
 
@@ -488,7 +483,7 @@ static void CS_HandlePurchaseRejection(
 }
 
 // 구매는 결정됐지만 가격에 대한 반응이 있을 때
-// 즉시 담지 않고 멈춰서 디버그 텍스트 먼저 보여준 뒤 대기가 끝나면 그때 담음
+// 즉시 담지 않고 멈춰서 머리 위 아이콘 먼저 보여준 뒤 대기가 끝나면 그때 담음
 static void CS_HandlePriceReactionThenBuy(
 	FCSTask_BrowseShelfInstanceData& Data,
 	ACSCustomerCharacter& Customer,
@@ -502,11 +497,7 @@ static void CS_HandlePriceReactionThenBuy(
 	State.LastRejectionInfo = ReactionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
 
-	DrawDebugString(
-		World,
-		Customer.GetActorLocation() + FVector(0.0f, 0.0f, Customer.GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
-		Decision.GetRejectionDisplayTier(ReactionInfo).DebugText.ToString(),
-		nullptr, FColor::White, DisplayDuration, true);
+	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(ReactionInfo).Icon, DisplayDuration);
 
 	// 가격 반응은 구매 성공 여부와 무관하게 평판에 영향을 준다 - 구매가 성사돼도 이 방송은 그대로 나가야 함
 	if (UCSCustomerRuntimeSubsystem* Subsystem = World != nullptr ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
@@ -752,11 +743,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
 		State->LastRejectionInfo = PlannedMissingInfo;
 		State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
-		DrawDebugString(
-			Context.GetWorld(),
-			Customer->GetActorLocation() + FVector(0.0f, 0.0f, Customer->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
-			Decision->GetRejectionDisplayTier(PlannedMissingInfo).DebugText.ToString(),
-			nullptr, FColor::White, DisplayDuration, true);
+		Customer->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon, DisplayDuration);
 		Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
 	}
 
@@ -862,11 +849,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
 			State->LastRejectionInfo = PlannedMissingInfo;
 			State->LastRejectionTime = Context.GetWorld() != nullptr ? Context.GetWorld()->GetTimeSeconds() : 0.0f;
-			DrawDebugString(
-				Context.GetWorld(),
-				Customer->GetActorLocation() + FVector(0.0f, 0.0f, Customer->GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 5.0f),
-				Decision->GetRejectionDisplayTier(PlannedMissingInfo).DebugText.ToString(),
-				nullptr, FColor::White, DisplayDuration, true);
+			Customer->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon, DisplayDuration);
 			Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
 			break;
 		}
