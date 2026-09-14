@@ -2,6 +2,7 @@
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Data/CSProductTypes.h"
 
 void UCSPurchaseVerificationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
@@ -54,6 +55,20 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 	if (ItemCount == 1)
 	{
 		SingleItemCheckouts++;
+	}
+
+	// 같은 배열을 순회해 카테고리별로도 집계 - 짝이 없는 카테고리가 연관구매에 밀려 덜 팔려도
+	// 합계만으로는 드러나지 않아서 필요
+	for (const FCSSelectProduct& Selected : State->SelectProducts)
+	{
+		const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted"));
+		if (Row == nullptr)
+		{
+			++UnknownCategoryPurchases;
+			continue;
+		}
+		CategoryPurchaseCounts.FindOrAdd(Row->Category)++;
 	}
 
 	// 개별 손님 로그는 Log 레벨로 아래 요약과 구분되게 표시
@@ -112,4 +127,27 @@ void UCSPurchaseVerificationSubsystem::LogSummary() const
 	UE_LOG(LogTemp, Warning,
 	TEXT("[구매검증 요약] 누적 %d명 | 평균 장바구니=%.2f개 (목표 2.5~3.0) | 1개만 구매 비율=%.1f%% (목표 37~50%%) | 빈손 퇴장률=%.1f%% (목표 10~15%%) | 계산포기율=%.1f%%"),
 	TotalCheckouts, AverageBasketSize, SingleItemRatio, EmptyHandedRatio, CheckoutAbandonedRatio);
+
+	// 카테고리별 판매 개수 - 하드코딩 나열 대신 enum 전체를 리플렉션으로 순회한다
+	if (const UEnum* CategoryEnum = StaticEnum<ECSProductCategory>())
+	{
+		FString CategoryLine = TEXT("[구매검증 요약] 카테고리별 판매");
+
+		// NumEnums()는 자동 생성되는 _MAX 항목을 포함하므로 하나 뺀 개수만 순회한다
+		const int32 NumRealCategories = CategoryEnum->NumEnums() - 1;
+		for (int32 Index = 0; Index < NumRealCategories; Index++)
+		{
+			const int64 Value = CategoryEnum->GetValueByIndex(Index);
+			const int32* Count = CategoryPurchaseCounts.Find(static_cast<ECSProductCategory>(Value));
+			CategoryLine += FString::Printf(TEXT(" | %s=%d"),
+				*CategoryEnum->GetNameStringByValue(Value), Count != nullptr ? *Count : 0);
+		}
+
+		if (UnknownCategoryPurchases > 0)
+		{
+			CategoryLine += FString::Printf(TEXT(" | 카테고리불명=%d"), UnknownCategoryPurchases);
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("%s"), *CategoryLine);
+	}
 }

@@ -166,6 +166,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float PriceSteepnessMultiplier = 1.4f;
 
+	// 카테고리 연관구매 점수 보너스 세기
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_Affinity = 0.25f;
+
+	// 같은 대상을 끌어올리는 앵커가 여러 개일 때 두 번째부터 추가분을 줄이는 비율
+	// 1 미만이면 보너스 상한은 (첫 보너스 ÷ (1 − 비율))
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float AffinityDiminishingRatio = 0.5f;
+
 	// 거절 즉시표시(디버그 텍스트)를 몇 초간 유지할지. 마법봉 시간 게이트도 같은 값을 참조함
 	// 손님마다 달라질 이유가 없는 값이라 Archetype/Fallback 이중화 대상이 아님
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
@@ -237,6 +246,12 @@ private:
 	// 구매에 성공한 후보를 대상으로 가격 반응 정보를 만든다
 	// Severity가 0이면(데드존 이내) Reason=None인 기본값을 그대로 반환해 무반응을 표현
 	FCSPurchaseRejectionInfo BuildPriceReactionInfo(const FCSPurchaseCandidate& Candidate) const;
+
+	// 카테고리 연관구매 점수 보너스를 계산한다. TargetCategory는 지금 채점 중인 후보의 카테고리
+	// (장바구니에 이미 담긴 앵커 카테고리들이 이 카테고리를 끌어올리는가를 본다)
+	// PriceScore가 가격 반응 중립점보다 낮으면(비싸다고 느끼는 중이면) 0을 돌려준다 -
+	// 비싸서 망설이는 손님이 연관구매로 그냥 사버리는 모순을 막기 위함
+	float ComputeAffinityBonus(ECSProductCategory TargetCategory, float PriceScore, FString* OutAnchorSummary = nullptr) const;
 
 	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼들
 	// Archetype이 연결되어 있으면 그 안의 값을 쓰고

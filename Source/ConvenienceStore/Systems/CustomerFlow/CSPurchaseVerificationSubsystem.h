@@ -6,6 +6,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Data/CSProductTypes.h"
 #include "CSPurchaseVerificationSubsystem.generated.h"
 
 class ACSCustomerCharacter;
@@ -57,4 +58,11 @@ private:
 
 	// 결제는 못 했지만 계산 포기(대기열 시간 초과)로 나간 손님 수
 	int32 CheckoutAbandonedDepartures = 0;
+
+	// 카테고리별 판매 개수 - 짝이 없는 카테고리(물약·주문서·도구 등)가 연관구매에 밀려
+	// 덜 팔려도 합계 로그만으로는 드러나지 않아서 별도로 집계한다
+	TMap<ECSProductCategory, int32> CategoryPurchaseCounts;
+
+	// 상품 마스터에서 행을 못 찾은 원소 수(카테고리 불명). 데이터 무결성 문제라 카테고리별 집계와 분리
+	int32 UnknownCategoryPurchases = 0;
 };

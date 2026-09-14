@@ -25,7 +25,9 @@ class ACSProductPickupActor;
 class ACSTrashActor;
 class ACSStoreInteriorActor;
 class UCSInnerThoughtWidget;
+class UDataTable;
 struct FCSSelectProduct;
+struct FCSCategoryAffinityRow;
 
 // 계산 완료 시 방송. 손님의 SelectProducts(상품 행 정보 목록)로 매출을 집계하면 됨
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCheckoutCompleted, ACSCustomerCharacter*, Customer);
@@ -88,10 +90,17 @@ public:
 	// 진열대를 고르는 세 곳이 같은 조건을 쓰도록 모음
 	bool IsShelfSelectable(const AActor* ShelfActor) const;
 
-	// [임시 테스트용] 아직 안 가본 진열대 중 하나를 랜덤 반환. 없으면 nullptr
+	// 계획이 없거나 계획에 맞는 진열대를 찾지 못했을 때의 폴백. 안 가본 선택 가능 진열대 중 하나를
+	// 랜덤 반환(없으면 nullptr). 아래 오버로드에 빈 짝 대상 집합을 넘겨 위임한다
 	// 방문 기록은 손님 개인 데이터라 UCSCustomerStateComponent가 가지고 있기 때문에 서브시스템은 손님 목록이 없으므로 호출할 때 같이 넘겨줘야 한다
-	// 어디갈지를 정하는 파트이기 때문에 ["백록담"]님 파트가 구현되면 교체 예정
 	AActor* PickRandomUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited) const;
+
+	// 위와 같지만 AffinityTargetCategories(장바구니 기준 짝 대상 카테고리 - GetAffinityTargetCategories 참고)가
+	// 있으면 "안 가본 선택 가능 진열대" 목록 안에서만 그 짝 진열대를 우선 고른다
+	// 거리/가격/강도/차단은 보지 않는다 - 짝 진열대 유무만 본다
+	// 굴림 횟수는 짝 진열대가 있든 없든 항상 1회로 같다(ShelfRandomStream이 모든 손님 공용 스트림이라
+	// 한 번만 어긋나도 이후 모든 손님의 결과가 밀리기 때문)
+	AActor* PickRandomUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited, const TSet<ECSProductCategory>& AffinityTargetCategories, const ACSCustomerCharacter* Customer = nullptr) const;
 
 	// [임시/테스트용] 안 가본 진열대가 남아있는가 판정 로직
 	bool HasUnvisitedShelf(const TArray<TObjectPtr<AActor>>& Visited) const;
@@ -123,6 +132,23 @@ public:
 	// 이 래퍼를 거치게 해 캡슐화
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	void NotifyPurchaseRejected(ACSCustomerCharacter* Customer, const FCSPurchaseRejectionInfo& Info);
+
+	// =====================================================================
+	// 카테고리 연관구매
+	// =====================================================================
+	// 공유 데이터(DT_CategoryAffinity 로드 결과)는 서브시스템이 갖고, 개인 데이터(장바구니)는 인수로 받는다
+
+	// 손님의 장바구니(SelectProducts)를 카테고리별 개수로 집계한다. 행을 못 찾은 원소는 건너뜀
+	TMap<ECSProductCategory, int32> CountCategoriesInBasket(const TArray<FCSSelectProduct>& SelectProducts) const;
+
+	// TargetCategory를 끌어올리는 유효 쌍 중, 장바구니에 실제로 있는 앵커의 Strength를
+	// (앵커 개수만큼 중복 포함해) 내림차순으로 모아 반환 - 점수 보너스(W_Affinity) 계산용
+	// 연관구매가 비활성이거나 유효 쌍이 없으면 빈 배열을 반환한다
+	TArray<float> GetAffinityStrengthsForTarget(ECSProductCategory TargetCategory, const TArray<FCSSelectProduct>& SelectProducts, FString* OutAnchorSummary = nullptr) const;
+
+	// 장바구니에 앵커가 1개 이상 있는 쌍의 TargetCategory를 전부 모은 집합
+	// 연관구매가 비활성이면 빈 집합을 반환한다
+	TSet<ECSProductCategory> GetAffinityTargetCategories(const TArray<FCSSelectProduct>& SelectProducts) const;
 
 	// =====================================================================
 	// 청결도 (버리는 손님 / 보는 손님)
@@ -475,4 +501,21 @@ private:
 	// DroppedTrashCache는 손님이 흘린 것만 등록되고 레벨에 사전 배치된 쓰레기는 빠지므로,
 	// 충진율과 같은 기준("눈에 보이는 것")에 맞추려고 매 판정마다 월드를 직접 순회한다
 	int32 CountTrashInWorld() const;
+
+	// 카테고리 연관구매 -------
+	// DT_ProductMaster와 같은 폴더의 고정 경로. UWorldSubsystem은 디테일 패널이 없어
+	// 에디터에서 할당할 수 없으므로 CSNoticeEventSubsystem과 같은 방식으로 코드에 경로를 박아둔다
+	UPROPERTY()
+	TSoftObjectPtr<UDataTable> CategoryAffinityDataTableAsset = TSoftObjectPtr<UDataTable>(
+		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/DT_CategoryAffinity.DT_CategoryAffinity")));
+
+	// cs.Affinity로 OnWorldBeginPlay에서 한 번만 확정
+	bool bCategoryAffinityActive = true;
+
+	// 검증을 통과한 쌍만 남긴 배열
+	TArray<FCSCategoryAffinityRow> ValidatedAffinityRows;
+
+	// cs.Affinity를 읽어 bCategoryAffinityActive를 확정하고, DT_CategoryAffinity를 로드·검증해
+	// ValidatedAffinityRows를 채운다
+	void LoadAndValidateCategoryAffinityTable();
 };
