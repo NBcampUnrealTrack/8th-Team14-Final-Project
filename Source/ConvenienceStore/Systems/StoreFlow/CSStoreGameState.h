@@ -7,6 +7,7 @@
 #include "Data/CSStorePhaseTypes.h"
 // RecordShopliftLoss가 FCSStolenProductRecord 배열을 받으므로 전방 선언으로는 부족합니다.
 #include "Data/CSVillainTypes.h"
+#include "Data/CSEmployeeHiringTypes.h"
 #include "CSStoreGameState.generated.h"
 
 class UCSStoreProgressionDataAsset;
@@ -102,6 +103,17 @@ class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyEmployeeHireExpenseGold = 0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|Sales")
+	int32 DailyEmployeeWageGold = 0;
+	UFUNCTION(BlueprintPure, Category = "Store|Employees")
+	int32 GetEmployeeHireCost(ECSEmployeeHireSlot Slot) const;
+	UFUNCTION(BlueprintPure, Category = "Store|Employees")
+	int32 GetEmployeeDailyWage(ECSEmployeeHireSlot Slot) const;
+	bool TryPayEmployeeHireCost(int32 Amount);
+	bool ProcessDailyEmployeeWages();
+
 	// 현재 진행 중인 편의점 단계입니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Store")
 	ECStorePhase CurrentPhase = ECStorePhase::Preparation;
@@ -443,6 +455,8 @@ protected:
 	TObjectPtr<UCSStoreEconomyDataAsset> StoreEconomyDataAsset;
 
 private:
+	int32 LastPayrollProcessedBusinessDay = INDEX_NONE;
+	bool bPayrollInProgress = false;
 	// 임대료처럼 잔액과 관계없이 확정되는 비용에만 사용하는 내부 지출 경로입니다.
 	bool ApplyForcedExpense(int32 Amount);
 

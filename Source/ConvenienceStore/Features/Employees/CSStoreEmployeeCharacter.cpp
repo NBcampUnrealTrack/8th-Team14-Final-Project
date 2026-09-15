@@ -20,12 +20,20 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "UI/Store/CSEmployeeHiringWidget.h"
 
 ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	AIControllerClass = ACSStoreEmployeeAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+	HiringNameplate = CreateDefaultSubobject<UTextRenderComponent>(TEXT("HiringNameplate"));
+	HiringNameplate->SetupAttachment(GetRootComponent());
+	HiringNameplate->SetRelativeLocation(FVector(0.0f, 0.0f, 125.0f));
+	HiringNameplate->SetHorizontalAlignment(EHTA_Center);
+	HiringNameplate->SetWorldSize(20.0f);
+	HiringNameplate->SetHiddenInGame(true);
 
 	// 역할 에셋을 연결하지 않아도 신규 직원 블루프린트가 즉시 동작하도록 기본 업무를 모두 허용합니다.
 	FallbackSupportedTaskTypes = {
@@ -63,6 +71,7 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 void ACSStoreEmployeeCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	RefreshEmploymentPresentation();
 
 	if (UWorld* World = GetWorld())
 	{
@@ -91,6 +100,7 @@ void ACSStoreEmployeeCharacter::BeginPlay()
 
 void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(ActiveHiringWidget)) ActiveHiringWidget->Close();
 	CancelIdleReturn();
 	RestoreWorkRotationSettings();
 
@@ -109,6 +119,8 @@ void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason
 void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	// 지원자와 다음 날 출근 예정자는 고용소 자리를 지킵니다.
+	if (!CanWork()) return;
 
 	if (!bHasActiveTask)
 	{

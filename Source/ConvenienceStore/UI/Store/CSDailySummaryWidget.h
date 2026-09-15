@@ -63,6 +63,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> QuickFacilityOrderExpenseText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> RentExpenseRow;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RentExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> EmployeeHireExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> EmployeeHireExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> EmployeeWageExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> EmployeeWageExpenseText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseTotalRow;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ExpenseTotalText;
