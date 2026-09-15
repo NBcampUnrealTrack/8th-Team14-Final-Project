@@ -30,6 +30,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
 
+	// 오늘 뉴스의 RowName만 반환. 뉴스가 없는 날은 NAME_None
+	// 행 내용까지는 필요 없고 이름만 필요한 쪽을 위해 둠
+	UFUNCTION(BlueprintPure, Category = "Notice Events|News")
+	FName GetTodayNewsRowName() const;
+
 	UFUNCTION(BlueprintPure, Category = "Notice Events|Holiday")
 	bool HasTodayHoliday() const;
 
@@ -52,6 +57,9 @@ private:
 	void LoadEventDataTables();
 	void ProcessBusinessDay(int32 BusinessDay);
 	void SelectDailyNews();
+
+	// 디버그용 강제 뉴스(cs.news)를 적용. 덮어썼으면 true
+	bool ApplyForcedNewsOverride();
 	void CollectDailyHolidays(int32 DayOfMonth);
 	bool IsEffectSourceActive(const FCSNoticeEventEffectRuleRow& Rule) const;
 

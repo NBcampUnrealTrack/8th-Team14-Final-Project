@@ -174,6 +174,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_Affinity = 0.25f;
 
+	// 오늘의 뉴스·기념일 수요 보정이 점수에 반영되는 세기
+	// 뉴스는 종족 성향이 아니라 가게에 걸린 외부 사건이라 종족 차등 없이 컴포넌트 고정값으로 둠
+	// 0으로 두면 뉴스 영향이 꺼져서 검증 대조군으로 쓸 수 있음
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_NewsDemand = 0.3f;
+
 	// 같은 대상을 끌어올리는 앵커가 여러 개일 때 두 번째부터 추가분을 줄이는 비율
 	// 1 미만이면 보너스 상한은 (첫 보너스 ÷ (1 − 비율))
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -262,6 +268,21 @@ private:
 	// 비싸서 망설이는 손님이 연관구매로 그냥 사버리는 모순을 막기 위함
 	float ComputeAffinityBonus(ECSProductCategory TargetCategory, float PriceScore, FString* OutAnchorSummary = nullptr) const;
 
+	// 오늘의 뉴스·기념일이 이 상품 수요를 얼마나 바꾸는지 (가중치 곱하기 전 원시 수치)
+	// 뉴스가 없거나 규칙이 안 걸리면 0
+	float GetNewsDemandModifier(const FDataTableRowHandle& ProductRow) const;
+
+	// 위 수치에 W_NewsDemand를 곱한 실제 점수 보정분
+	float ComputeNewsDemandBonus(const FDataTableRowHandle& ProductRow) const;
+
+	// 장바구니에 담긴 같은 카테고리 개수만큼 카테고리 점수를 지수적으로 깎음
+	// 채점과 거절 원인 판정이 같은 값을 봐야 해서 한 곳에 모아둠
+	float ComputeRepeatAdjustedCategoryScore(const FCSProductDataRow& ProductRow, float CategoryScore) const;
+
+	// 가격/카테고리/예산 점수를 가중합해 0~1로 정규화 (보너스 더하기 전 단계)
+	// 위와 같은 이유로 헬퍼로 빼둠
+	float ComputeNormalizedScore(float PriceScore, float CategoryScore, float BudgetScore) const;
+
 	// Archetype 유무에 따라 실제 쓸 값을 결정하는 헬퍼들
 	// Archetype이 연결되어 있으면 그 안의 값을 쓰고
 	// 없으면 기본값(Fallback)을 대신 쓴다는 판단 해주는 함수들
@@ -274,7 +295,12 @@ private:
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	// 살아남은 후보가 하나도 없으면(전부 -1.0) OutBestRejectionInfo에 대표 거절 사유를 채움
 	// CategoryBlocked가 하나라도 있으면 그게 대표, 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) 것
-	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo) const;
+	// 뉴스 때문에 기준선 아래로 떨어진 후보는 여기서 아예 빼고 OutNewsSuppressedInfo에 담아 내보냄
+	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo, FCSPurchaseRejectionInfo& OutNewsSuppressedInfo) const;
+
+	// 뉴스 보정만 아니었으면 샀을 후보인지 판정. 맞으면 OutInfo에 뉴스 거절 정보를 채우고 true
+	// 이 후보는 softmax 대상에서 빠진다 - 안 산다고 판정해놓고 확률로 뽑아 사버리면 말이 안 되기 때문
+	bool TryBuildNewsSuppressionInfo(const FCSPurchaseCandidate& Candidate, float ActualScore, FCSPurchaseRejectionInfo& OutInfo) const;
 
 	// 상위 후보들 중 softmax 확률로 하나의 인덱스 뽑기
 	int32 SoftmaxSelectIndex(const TArray<FCSPurchaseCandidate>& TopCandidates) const;
@@ -284,7 +310,8 @@ private:
 	// 총점 미달의 진짜 원인이 가격/선호 자체인지, 반복구매로 인한 카테고리 감쇠(RepeatCategoryPenalty)인지
 	// 반복구매 감쇠를 걷어내도 기준선을 못 넘었을까?로 재계산해서 구분함
 	// 안 그러면 이미 장바구니에 담은 물품을 똑같은 상품인데 갑자기 너무 비싸다고 함 같은 사유 오분류가 생김
-	FCSPurchaseRejectionInfo BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate) const;
+	// OutScoreWithoutNews를 넘기면 뉴스 보정을 뺀 점수를 함께 돌려준다(로그용)
+	FCSPurchaseRejectionInfo BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float* OutScoreWithoutNews = nullptr) const;
 
 	// 이 컴포넌트가 붙어있는 액터에서 CSCustomerStateComponent를 찾아옴
 	UCSCustomerStateComponent* GetCustomerState() const;

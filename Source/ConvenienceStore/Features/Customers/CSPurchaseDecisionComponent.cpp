@@ -5,6 +5,7 @@
 #include "GameFramework/Actor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
@@ -164,25 +165,7 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 한계효용 체감: 이미 장바구니에 같은 카테고리 상품이 담겨 있으면
 	// 반복 횟수만큼 카테고리 점수를 지수적으로 깎음 (예: 음료를 3개째 보면 선호도가 확 낮아짐)
 	// -1.0 특수신호가 아니라 0~1 점수를 줄이는 방식이라 위의 구매 불가 판정과는 별개
-	float AdjustedCategoryScore = CategoryScore;
-	if (const UCSCustomerStateComponent* State = GetCustomerState())
-	{
-		int32 RepeatCount = 0;
-		for (const FCSSelectProduct& Selected : State->SelectProducts)
-		{
-			const FCSProductDataRow* SelectedRow = Selected.ProductRow.GetRow<FCSProductDataRow>(
-				TEXT("UCSPurchaseDecisionComponent::ScoreCandidate(RepeatCategoryPenalty)"));
-			if (SelectedRow != nullptr && SelectedRow->Category == ProductRow->Category)
-			{
-				RepeatCount++;
-			}
-		}
-
-		if (RepeatCount > 0)
-		{
-			AdjustedCategoryScore *= FMath::Pow(GetEffectiveRepeatCategoryPenalty(), static_cast<float>(RepeatCount));
-		}
-	}
+	const float AdjustedCategoryScore = ComputeRepeatAdjustedCategoryScore(*ProductRow, CategoryScore);
 
 	// 예산 점수 계산
 	float BudgetScore = 1.0f; // 손님 상태를 못 찾으면 예산 판단 없이 통과시킴 (안전 폴백)
@@ -209,22 +192,57 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 가중합을 가중치 합계로 나눠 정규화
 	// 이렇게 해두면 나중에 예산 점수 항(W_Budget 등)이 추가되어도
 	// 항상 0~1 범위를 벗어나지 않게 자동으로 맞춰짐
-	const float Weighted = (W_Price * PriceScore) + (W_Category * AdjustedCategoryScore) + (W_Budget * BudgetScore);
-	const float WeightSum = W_Price + W_Category + W_Budget;
-	const float Normalized = (WeightSum > 0.f) ? (Weighted / WeightSum) : 0.f;
+	const float Normalized = ComputeNormalizedScore(PriceScore, AdjustedCategoryScore, BudgetScore);
 
-	// 연관구매 보너스는 여기(모든 -1.0 반환을 통과한 뒤, 기존 Clamp 안)에서만 더한다
+	// 보너스 항은 여기(모든 -1.0 반환을 통과한 뒤, 기존 Clamp 안)에서만 더한다
 	// 이보다 앞에 두면 구매 불가 판정을 받았어야 할 상품이 보너스로 되살아날 수 있다
 	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceScore);
 
-	return FMath::Clamp(Normalized + AffinityBonus, 0.f, 1.f);
+	// 뉴스 보정은 음수일 수 있지만 아래 Clamp에서 0으로 잘릴 뿐 -1.0(구매 불가)이 되지는 않는다
+	const float NewsBonus = ComputeNewsDemandBonus(Candidate.ProductRowHandle);
+
+	// Clamp는 모두 더한 뒤 한 번만 - 항마다 자르면 음수 보정이 양수 보너스에 묻힌다
+	return FMath::Clamp(Normalized + AffinityBonus + NewsBonus, 0.f, 1.f);
 }
 
 // 전달받은 후보 전체에 점수를 매긴 뒤 점수가 높은 순으로 정렬하고
 // 상위 몇개(Archetype의 TopCandidateCount)만 남겨서 반환
 // 여기서 잘려나간 후보들은 이후 softmax 선택 대상에서 아예 제외됨
 // 살아남은 후보가 하나도 없으면 OutBestRejectionInfo에 대표 거절 사유를 채운다
-TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo) const
+// 뉴스 보정만 아니었으면 샀을 후보인지 판정
+// 뉴스가 수요를 올리는 쪽이거나, 뉴스를 맞고도 기준선을 넘으면 대상이 아니다
+bool UCSPurchaseDecisionComponent::TryBuildNewsSuppressionInfo(const FCSPurchaseCandidate& Candidate, float ActualScore, FCSPurchaseRejectionInfo& OutInfo) const
+{
+	if (ActualScore >= GetEffectiveMinPurchaseUtility())
+	{
+		return false;
+	}
+
+	if (ComputeNewsDemandBonus(Candidate.ProductRowHandle) >= 0.f)
+	{
+		return false;
+	}
+
+	float ScoreWithoutNews = 0.f;
+	const FCSPurchaseRejectionInfo Info = BuildScoreShortfallRejectionInfo(Candidate, &ScoreWithoutNews);
+	if (Info.Reason != ECSPurchaseRejectReason::NewsDemandRejected)
+	{
+		return false;
+	}
+
+	const AActor* Owner = GetOwner();
+	UE_LOG(LogTemp, Log,
+		TEXT("[뉴스수요] 거절 손님=%s 상품=%s 뉴스=%s 뉴스뺀점수=%.2f 실제=%.2f"),
+		Owner != nullptr ? *Owner->GetName() : TEXT("?"),
+		*Candidate.ProductRowHandle.RowName.ToString(),
+		Info.NewsRowName.IsNone() ? TEXT("없음") : *Info.NewsRowName.ToString(),
+		ScoreWithoutNews, ActualScore);
+
+	OutInfo = Info;
+	return true;
+}
+
+TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo, FCSPurchaseRejectionInfo& OutNewsSuppressedInfo) const
 {
 	// 후보 하나하나에 점수를 매기되, 구매 불가 신호(-1.0)를 받은 후보는
 	// 애초에 배열에 넣지 않음 → softmax 대상에서 아예 제외되어 선택 확률이 정확히 0%가 됨
@@ -235,6 +253,9 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 	// 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) PriceRejected/HardWalletExceeded를 대표로 삼음
 	bool bFoundBlocked = false;
 	bool bFoundAnyRejection = false;
+
+	// 뉴스로 밀려난 후보가 여럿이면 가장 높은 점수(=가장 아깝게 놓친 것)를 대표로 삼는다
+	float BestSuppressedScore = -1.f;
 
 	for (FCSPurchaseCandidate& Candidate : Candidates)
 	{
@@ -263,6 +284,20 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 			continue;
 		}
 		Candidate.Score = Score;
+
+		// 뉴스로 기준선 아래로 떨어진 후보는 여기서 걸러낸다
+		// 남겨두면 softmax가 확률로 뽑아버려서 "뉴스 때문에 안 샀다"고 해놓고 사는 일이 생긴다
+		FCSPurchaseRejectionInfo NewsInfo;
+		if (TryBuildNewsSuppressionInfo(Candidate, Score, NewsInfo))
+		{
+			if (Score > BestSuppressedScore)
+			{
+				OutNewsSuppressedInfo = NewsInfo;
+				BestSuppressedScore = Score;
+			}
+			continue;
+		}
+
 		Viable.Add(Candidate);
 	}
 
@@ -327,10 +362,16 @@ int32 UCSPurchaseDecisionComponent::SoftmaxSelectIndex(const TArray<FCSPurchaseC
 // ScoreCandidate는 이 경우 정상 점수(0~1)를 반환해 OutRejectionInfo를 안 채우므로 여기서 별도로 채운다
 //
 // 총점 미달의 원인이 항상 가격은 아님
-// 진짜 원인 판정 기준: 반복구매 감쇠를 걷어내도(RepeatCount=0 가정) 여전히 기준선을 못 넘었을까?
-// 못 넘었으면(=애초부터 안 살 상품이었음) 진짜 가격/선호 문제라 PriceRejected로 표시
-// 넘었으면(=반복구매가 이번에만 결정타) 플레이어에게 알릴 이유가 없는 조용한 미구매라고 판단해 Reason=None으로 남겨둔다(연출 안 함)
-FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate) const
+// 항을 하나씩 걷어내 "그것만 없었으면 샀을까?"를 차례로 물어 진짜 원인을 가른다
+//   1) 뉴스 보정을 빼면 기준선을 넘는가 → 오늘의 뉴스가 결정타 (NewsDemandRejected)
+//   2) 반복구매 감쇠를 걷어내면 넘는가 → 질려서 안 산 것이라 연출하지 않음 (Reason=None)
+//   3) 둘 다 아니면 애초부터 안 살 상품 → 가격/선호 문제 (PriceRejected)
+// 뉴스를 먼저 보는 이유: 가격 거절로 잘못 분류되면 멀쩡한 가격에 가격 불만 말풍선이 뜬다
+//
+// 전제: GetProductDemandModifier는 뉴스+기념일 합산이고 현재 기념일 규칙은 전부 양수라
+// 수요 보정 때문에 못 산 원인은 오늘의 뉴스뿐이다
+// 음수 기념일이 생기면 이 전제가 깨지고, 그 경우 기본 문구 행으로 떨어진다
+FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallRejectionInfo(const FCSPurchaseCandidate& Candidate, float* OutScoreWithoutNews) const
 {
 	FCSPurchaseRejectionInfo Info;
 
@@ -342,10 +383,14 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 
 	const FCSPriceEvaluation PriceEval = EvaluatePrice(Candidate, *ProductRow);
 
-	// 반복구매 감쇠를 걷어낸(RepeatCount=0 가정) 원래 카테고리 점수로 가상 총점을 다시 계산
+	// 반복구매 감쇠를 걷어낸(RepeatCount=0 가정) 원래 카테고리 점수
 	// CategoryScore/BudgetScore가 여기서 -1일 수 없음 - 그랬다면 ScoreCandidate가 그 단계에서
 	// 이미 -1.0f를 반환해 이 함수(정상 0~1 점수 케이스 전용)까지 오지도 못했을 것이기 때문
 	const float RawCategoryScore = ComputeCategoryScore(*ProductRow);
+
+	// 같은 DecidePurchase 안에서 연달아 호출되고 그 사이에 장바구니가 안 바뀌므로
+	// ScoreCandidate가 본 값과 같다
+	const float AdjustedCategoryScore = ComputeRepeatAdjustedCategoryScore(*ProductRow, RawCategoryScore);
 
 	float BudgetScore = 1.0f;
 	if (UCSCustomerStateComponent* State = GetCustomerState())
@@ -354,14 +399,47 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 		BudgetScore = ComputeBudgetScore(PriceEval.ActualPrice, State->GetRemainingSoftBudget(), State->SoftBudgetGold, State->GetRemainingHardWallet(), OverrunPenalty);
 	}
 
-	const float WeightSum = W_Price + W_Category + W_Budget;
-	const float NormalizedWithoutRepeatPenalty = (WeightSum > 0.f)
-		? (W_Price * PriceEval.PriceScore + W_Category * RawCategoryScore + W_Budget * BudgetScore) / WeightSum
-		: 0.f;
-
 	// ScoreCandidate와 같은 헬퍼로 같은 보너스를 더한다
 	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceEval.PriceScore);
-	const float ScoreWithoutRepeatPenalty = FMath::Clamp(NormalizedWithoutRepeatPenalty + AffinityBonus, 0.f, 1.f);
+	const float NewsBonus = ComputeNewsDemandBonus(Candidate.ProductRowHandle);
+
+	// 1) 뉴스 보정만 빼고 실제 점수와 같은 식으로 다시 계산
+	// "뉴스가 있을 때만" 조건은 두지 않음 - 보정이 0 이상이면 빼도 점수가 안 올라 어차피 통과 못 한다
+	const float ScoreWithoutNews = FMath::Clamp(
+		ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore) + AffinityBonus,
+		0.f, 1.f);
+	if (OutScoreWithoutNews != nullptr)
+	{
+		*OutScoreWithoutNews = ScoreWithoutNews;
+	}
+
+	if (ScoreWithoutNews >= GetEffectiveMinPurchaseUtility())
+	{
+		Info.Reason = ECSPurchaseRejectReason::NewsDemandRejected;
+		Info.ProductId = Candidate.ProductRowHandle.RowName;
+		Info.ActualPrice = PriceEval.ActualPrice;
+		Info.ReferencePrice = PriceEval.ReferencePrice;
+		// 가격이 문제가 아니라는 판정이라 가격 기반 Severity를 쓰지 않음
+		// 뉴스 행은 Tier가 하나뿐이라 0이 그대로 그 Tier를 고른다
+		Info.Severity = 0.f;
+
+		// 서브시스템을 못 찾으면 NAME_None이 되고, 그때는 기본 문구 행으로 떨어진다
+		const UWorld* World = GetWorld();
+		const UCSNoticeEventSubsystem* NoticeSubsystem = World != nullptr
+			? World->GetSubsystem<UCSNoticeEventSubsystem>()
+			: nullptr;
+		if (IsValid(NoticeSubsystem))
+		{
+			Info.NewsRowName = NoticeSubsystem->GetTodayNewsRowName();
+		}
+
+		return Info;
+	}
+
+	// 2) 반복구매 감쇠까지 걷어내고 본다. 뉴스 항은 실제 점수와 같게 그대로 둠
+	const float ScoreWithoutRepeatPenalty = FMath::Clamp(
+		ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore) + AffinityBonus + NewsBonus,
+		0.f, 1.f);
 
 	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
 	{
@@ -394,20 +472,32 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	}
 
 	// 점수 매기고 상위 후보만 추림 (구매 불가 후보들의 대표 거절 사유는 OutRejectionInfo에 누적됨)
-	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates, OutRejectionInfo);
+	FCSPurchaseRejectionInfo NewsSuppressedInfo;
+	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates, OutRejectionInfo, NewsSuppressedInfo);
+
+	// 뉴스 반응은 다른 반응보다 우선한다 - 가격 불만은 언제든 다시 볼 수 있지만
+	// 뉴스는 그날 하루뿐이라 다른 반응에 가려지면 플레이어가 영영 못 본다
+	const bool bHasNewsSuppression = NewsSuppressedInfo.Reason == ECSPurchaseRejectReason::NewsDemandRejected;
 
 	// 진열대에 구매 불가 상품(차단 카테고리/예산 초과)만 있으면 Viable이 비어있을 수 있음
 	// 이 방어가 없으면 다음 줄에서 TopCandidates[0] 접근 시 배열 범위 초과로 크래시함
 	// OutRejectionInfo는 위 ScoreAndSelectTopCandidates 호출에서 이미 채워져 있음
 	if (TopCandidates.IsEmpty())
 	{
+		// 진열대에 있던 게 전부 뉴스로 밀려난 경우 - 위 호출은 -1.0 후보만 집계하므로 여기서 채운다
+		if (bHasNewsSuppression)
+		{
+			OutRejectionInfo = NewsSuppressedInfo;
+		}
 		return false;
 	}
 
 	// 1등 점수가 최소 구매 임계치보다 낮으면 손님이 살 게 없다고 판단하고 지나감
 	if (TopCandidates[0].Score < GetEffectiveMinPurchaseUtility())
 	{
-		OutRejectionInfo = BuildScoreShortfallRejectionInfo(TopCandidates[0]);
+		OutRejectionInfo = bHasNewsSuppression
+			? NewsSuppressedInfo
+			: BuildScoreShortfallRejectionInfo(TopCandidates[0]);
 		return false;
 	}
 
@@ -416,7 +506,11 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	OutSelected = TopCandidates[SelectedIndex];
 
 	// 구매에 성공해도 가격이 어느 정도 부담스러웠으면 반응을 남김
-	OutRejectionInfo = BuildPriceReactionInfo(OutSelected);
+	// 뉴스로 밀려난 상품이 있었으면 그쪽을 띄운다 - 다른 걸 집어 들면서 "저건 좀 꺼림칙해"
+	// 하는 장면이라, 물건을 샀다는 것과 어긋나지 않는다
+	OutRejectionInfo = bHasNewsSuppression
+		? NewsSuppressedInfo
+		: BuildPriceReactionInfo(OutSelected);
 
 	// 연관구매 보너스가 있었을 때만 로그
 	if (const FCSProductDataRow* SelectedRow = GetProductRow(OutSelected))
@@ -438,6 +532,21 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 				SelectedPriceEval.PriceScore, OriginalScore, AffinityBonus, FinalScore,
 				bClampedAtCap ? TEXT("(상한)") : TEXT(""), *AnchorSummary);
 		}
+	}
+
+	// 뉴스 보정이 걸린 상품을 담았을 때만 로그
+	// 가중치 곱한 값이 아니라 원시 수치로 판정 - W_NewsDemand=0 대조군에서도 찍혀야 판매 개수를 비교할 수 있다
+	const float NewsModifier = GetNewsDemandModifier(OutSelected.ProductRowHandle);
+	if (!FMath::IsNearlyZero(NewsModifier))
+	{
+		const AActor* Owner = GetOwner();
+		UE_LOG(LogTemp, Log,
+			TEXT("[뉴스수요] 담기 손님=%s 상품=%s 수치=%+.2f 반영=%+.2f 최종=%.2f"),
+			Owner != nullptr ? *Owner->GetName() : TEXT("?"),
+			*OutSelected.ProductRowHandle.RowName.ToString(),
+			NewsModifier,
+			W_NewsDemand * NewsModifier,
+			OutSelected.Score);
 	}
 
 	return true;
@@ -782,6 +891,16 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 	case ECSPurchaseRejectReason::PlannedProductMissing:
 		RowName = TEXT("PlannedProductMissing");
 		break;
+	case ECSPurchaseRejectReason::NewsDemandRejected:
+		// 뉴스별 전용 문구가 있으면 그걸, 없으면 기본 문구를 쓴다
+		// 전용 행은 선택이라 없는 게 정상이므로 조회 경고는 끔
+		RowName = TEXT("NewsDemandRejected");
+		if (!Info.NewsRowName.IsNone() &&
+			RejectionDisplayDataTable->FindRow<FCSPurchaseRejectionDisplayRow>(Info.NewsRowName, TEXT(""), false) != nullptr)
+		{
+			RowName = Info.NewsRowName;
+		}
+		break;
 	default:
 		return FCSPurchaseRejectionTier();
 	}
@@ -922,6 +1041,67 @@ float UCSPurchaseDecisionComponent::ComputeAffinityBonus(ECSProductCategory Targ
 		RatioPower *= AffinityDiminishingRatio;
 	}
 	return Bonus;
+}
+
+// 오늘의 뉴스·기념일 수요 보정 원시 수치
+// ComputeAffinityBonus와 달리 가격 게이트를 두지 않음 - 가격이 싸졌다고 기사가 없던 일이 되지는 않는다
+float UCSPurchaseDecisionComponent::GetNewsDemandModifier(const FDataTableRowHandle& ProductRow) const
+{
+	// 서브시스템 3단 체크 - 없으면 보정 0(뉴스 도입 전과 같은 동작)
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeSubsystem = World != nullptr
+		? World->GetSubsystem<UCSNoticeEventSubsystem>()
+		: nullptr;
+	if (!IsValid(NoticeSubsystem))
+	{
+		return 0.0f;
+	}
+
+	return NoticeSubsystem->GetProductDemandModifier(ProductRow);
+}
+
+float UCSPurchaseDecisionComponent::ComputeNewsDemandBonus(const FDataTableRowHandle& ProductRow) const
+{
+	return W_NewsDemand * GetNewsDemandModifier(ProductRow);
+}
+
+// 반복구매 감쇠를 적용한 카테고리 점수
+// 채점과 거절 원인 판정이 같은 값을 봐야 해서 함수로 뽑아둠
+// 복사본을 두면 한쪽만 고쳤을 때 "왜 안 샀는가"의 답이 실제 점수와 어긋난다
+float UCSPurchaseDecisionComponent::ComputeRepeatAdjustedCategoryScore(const FCSProductDataRow& ProductRow, float CategoryScore) const
+{
+	const UCSCustomerStateComponent* State = GetCustomerState();
+	if (State == nullptr)
+	{
+		return CategoryScore;
+	}
+
+	int32 RepeatCount = 0;
+	for (const FCSSelectProduct& Selected : State->SelectProducts)
+	{
+		const FCSProductDataRow* SelectedRow = Selected.ProductRow.GetRow<FCSProductDataRow>(
+			TEXT("UCSPurchaseDecisionComponent::ComputeRepeatAdjustedCategoryScore"));
+		if (SelectedRow != nullptr && SelectedRow->Category == ProductRow.Category)
+		{
+			RepeatCount++;
+		}
+	}
+
+	if (RepeatCount <= 0)
+	{
+		return CategoryScore;
+	}
+
+	return CategoryScore * FMath::Pow(GetEffectiveRepeatCategoryPenalty(), static_cast<float>(RepeatCount));
+}
+
+// 보너스를 더하기 전의 정규화 총점
+// 두 점수를 서로 비교하는 용도라 채점과 판정이 같은 식을 써야 한다
+float UCSPurchaseDecisionComponent::ComputeNormalizedScore(float PriceScore, float CategoryScore, float BudgetScore) const
+{
+	const float Weighted = (W_Price * PriceScore) + (W_Category * CategoryScore) + (W_Budget * BudgetScore);
+	const float WeightSum = W_Price + W_Category + W_Budget;
+	return (WeightSum > 0.f) ? (Weighted / WeightSum) : 0.f;
 }
 
 // 구매 성공 여부와 무관하게 후보 하나의 가격 반응 정보를 만든다

@@ -9,6 +9,13 @@ DEFINE_LOG_CATEGORY_STATIC(LogCSNoticeEvents, Log, All);
 // 다른 시스템과 난수 소비 순서를 공유하지 않되 프로젝트의 디버그 고정 시드 규칙은 따릅니다.
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
 
+// 랜덤에 맡기면 검증하려는 뉴스가 뜰 때까지 영업일을 반복해야 해서 둔 디버그 스위치
+TAutoConsoleVariable<FString> CVarCS_ForcedNews(
+	TEXT("cs.news"),
+	TEXT("-1"),
+	TEXT("cs.news <검색어> — RowName에 검색어가 들어간 뉴스가 딱 1개면 매 영업일 그 뉴스를 강제한다. -1이면 해제. PIE 시작 전에 입력"),
+	ECVF_Default);
+
 namespace
 {
 constexpr float NewsOccurrenceProbability = 0.5f;
@@ -81,6 +88,11 @@ bool UCSNoticeEventSubsystem::GetTodayNews(FCSNewsEventDataRow& OutNews) const
 
 	OutNews = *NewsRow;
 	return true;
+}
+
+FName UCSNoticeEventSubsystem::GetTodayNewsRowName() const
+{
+	return CurrentNewsRowName;
 }
 
 bool UCSNoticeEventSubsystem::HasTodayHoliday() const
@@ -232,11 +244,91 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 	CurrentNewsRowName = NAME_None;
 	ActiveHolidayRowNames.Reset();
 
+	// 굴림을 건너뛰지 않고 결과만 덮어씀
 	SelectDailyNews();
+	const bool bNewsForced = ApplyForcedNewsOverride();
+
 	const int32 DayOfMonth = ((SafeBusinessDay - 1) % DaysPerMonth) + 1;
 	CollectDailyHolidays(DayOfMonth);
 
+	{
+		TArray<FString> HolidayNames;
+		HolidayNames.Reserve(ActiveHolidayRowNames.Num());
+		for (const FName HolidayRowName : ActiveHolidayRowNames)
+		{
+			HolidayNames.Add(HolidayRowName.ToString());
+		}
+
+		UE_LOG(LogCSNoticeEvents, Log,
+			TEXT("[NoticeEvents] %d일차 뉴스=%s%s 기념일=[%s]"),
+			SafeBusinessDay,
+			CurrentNewsRowName.IsNone() ? TEXT("없음") : *CurrentNewsRowName.ToString(),
+			bNewsForced ? TEXT(" (cs.news 강제)") : TEXT(""),
+			HolidayNames.IsEmpty() ? TEXT("없음") : *FString::Join(HolidayNames, TEXT(", ")));
+	}
+
 	OnNoticeEventsChanged.Broadcast();
+}
+
+bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
+{
+	const FString SearchTerm = CVarCS_ForcedNews.GetValueOnGameThread().TrimStartAndEnd();
+	if (SearchTerm.IsEmpty() || SearchTerm == TEXT("-1"))
+	{
+		return false;
+	}
+
+	if (!IsValid(NewsEventDataTable))
+	{
+		return false;
+	}
+
+	// SelectDailyNews와 같은 후보 조건 사용
+	TArray<FName> MatchedRowNames;
+	for (const FName RowName : NewsEventDataTable->GetRowNames())
+	{
+		const FCSNewsEventDataRow* NewsRow = NewsEventDataTable->FindRow<FCSNewsEventDataRow>(
+			RowName,
+			TEXT("UCSNoticeEventSubsystem::ApplyForcedNewsOverride"),
+			false);
+		if (NewsRow == nullptr || !NewsRow->bEnabled || NewsRow->SelectionWeight <= 0.0f)
+		{
+			continue;
+		}
+
+		if (RowName.ToString().Contains(SearchTerm, ESearchCase::IgnoreCase))
+		{
+			MatchedRowNames.Add(RowName);
+		}
+	}
+
+	if (MatchedRowNames.Num() == 1)
+	{
+		CurrentNewsRowName = MatchedRowNames[0];
+		return true;
+	}
+
+	if (MatchedRowNames.IsEmpty())
+	{
+		UE_LOG(LogCSNoticeEvents, Warning,
+			TEXT("[NoticeEvents] cs.news \"%s\"와 일치하는 뉴스가 없어 랜덤 선택을 유지합니다."),
+			*SearchTerm);
+		return false;
+	}
+
+	TArray<FString> MatchedNames;
+	MatchedNames.Reserve(MatchedRowNames.Num());
+	for (const FName RowName : MatchedRowNames)
+	{
+		MatchedNames.Add(RowName.ToString());
+	}
+
+	UE_LOG(LogCSNoticeEvents, Warning,
+		TEXT("[NoticeEvents] cs.news \"%s\"에 %d개가 일치합니다: [%s]. 더 길게 입력하세요. 랜덤 선택을 유지합니다."),
+		*SearchTerm,
+		MatchedRowNames.Num(),
+		*FString::Join(MatchedNames, TEXT(", ")));
+	return false;
 }
 
 void UCSNoticeEventSubsystem::SelectDailyNews()
