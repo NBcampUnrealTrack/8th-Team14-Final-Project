@@ -356,7 +356,7 @@ bool UCSStoreEmployeeSubsystem::TryClaimBestTask(
 	FCSStoreEmployeeTask& OutTask,
 	FString* OutNoClaimReason)
 {
-	if (!IsValid(Employee))
+	if (!IsValid(Employee) || !Employee->CanWork())
 	{
 		if (OutNoClaimReason != nullptr)
 		{
