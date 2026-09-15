@@ -2,6 +2,7 @@
 
 
 #include "Features/Customers/CSCustomerCharacter.h"
+#include "Features/Customers/CSCustomerAnimInstance.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Features/Customers/CSCustomerAIController.h"
 #include "Features/Customers/CSCustomerBasketActor.h"
@@ -161,6 +162,11 @@ void ACSCustomerCharacter::InitializeFallbackAnimations(
 	FallbackPickAnimation = Visual->FallbackPickAnimation;
 	ActionMeshWorldZOffset = Visual->ActionMeshWorldZOffset;
 	bFallbackAnimationsInitialized = true;
+	if (USkeletalMeshComponent* MeshComponent = GetMesh())
+	{
+		// Native SingleNode subclass: sequence selection and action timers remain in this character.
+		MeshComponent->SetAnimInstanceClass(UCSCustomerAnimInstance::StaticClass());
+	}
 	UpdateLocomotionAnimation(true);
 }
 
@@ -208,8 +214,8 @@ void ACSCustomerCharacter::ReleaseActionTransitionHold()
 	}
 
 	UpdateLocomotionAnimation(true);
-	RefreshLocomotionAnimationPose();
 	RestoreActionMeshRotation();
+	RefreshLocomotionAnimationPose();
 }
 
 void ACSCustomerCharacter::UpdateLocomotionAnimation(bool bForce)
@@ -251,7 +257,18 @@ void ACSCustomerCharacter::UpdateLocomotionAnimation(bool bForce)
 
 	if (USkeletalMeshComponent* MeshComponent = GetMesh())
 	{
-		MeshComponent->PlayAnimation(DesiredAnimation, true);
+		if (UCSCustomerAnimInstance* Instance = Cast<UCSCustomerAnimInstance>(MeshComponent->GetAnimInstance()))
+		{
+			// A forced refresh must not restart an already playing Idle/Walk loop.
+			if (Instance->GetAnimationAsset() != DesiredAnimation)
+			{
+				Instance->PlaySequence(DesiredAnimation, true, AnimationTransitionBlendSeconds);
+			}
+		}
+		else
+		{
+			MeshComponent->PlayAnimation(DesiredAnimation, true);
+		}
 		CurrentFallbackLoopAnimation = DesiredAnimation;
 	}
 }
@@ -265,7 +282,6 @@ void ACSCustomerCharacter::RefreshLocomotionAnimationPose()
 
 	if (USkeletalMeshComponent* MeshComponent = GetMesh(); IsValid(MeshComponent))
 	{
-		MeshComponent->SetPosition(0.0f, false);
 		MeshComponent->TickAnimation(0.0f, false);
 		MeshComponent->RefreshBoneTransforms();
 	}
@@ -290,17 +306,24 @@ bool ACSCustomerCharacter::PlayActionAnimation(
 	bActionTransitionHoldActive = false;
 	bHoldActionTransformOnFinish = bHoldTransformAfterFinish;
 	bActionAnimationPlaying = true;
-	MeshComponent->PlayAnimation(Animation, false);
+	if (UCSCustomerAnimInstance* Instance = Cast<UCSCustomerAnimInstance>(MeshComponent->GetAnimInstance()))
+	{
+		Instance->PlaySequence(Animation, false, AnimationTransitionBlendSeconds);
+	}
+	else
+	{
+		MeshComponent->PlayAnimation(Animation, false);
+	}
 	const float PlayLength = FMath::Max(0.0f, Animation->GetPlayLength());
 	const float SafeStartOffset = FMath::Clamp(
 		ActionAnimationStartOffsetSeconds,
 		0.0f,
 		PlayLength);
 	MeshComponent->SetPosition(SafeStartOffset, false);
-	// Single Node의 첫 Pose를 같은 게임 프레임에 평가한 뒤 Mesh Transform을 보정합니다.
+	// Apply the existing mesh correction before evaluating the rebased transition pose.
+	ApplyActionMeshRotation();
 	MeshComponent->TickAnimation(0.0f, false);
 	MeshComponent->RefreshBoneTransforms();
-	ApplyActionMeshRotation();
 
 	const float RemainingPlayLength = PlayLength - SafeStartOffset;
 	if (RemainingPlayLength <= 0.0f)

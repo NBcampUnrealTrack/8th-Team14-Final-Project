@@ -4,6 +4,68 @@
 #include "Data/CSStoreEconomyDataAsset.h"
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Systems/Employees/CSEmployeeHiringSubsystem.h"
+#include "Engine/World.h"
+
+int32 ACSStoreGameState::GetEmployeeHireCost(ECSEmployeeHireSlot Slot) const
+{
+	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset.Get() : GetDefault<UCSStoreEconomyDataAsset>();
+	// 에디터 값이 잘못 입력되어도 가격 순서와 합계의 정수 범위를 지킵니다.
+	const int32 First = FMath::Clamp(Settings->FirstRestockHireCost, 1, 100000000);
+	const int32 Checkout = FMath::Clamp(Settings->CheckoutHireCost, First + 1, 100000001);
+	const int32 Second = FMath::Clamp(Settings->SecondRestockHireCost, Checkout + 1, 100000002);
+	switch (Slot)
+	{
+	case ECSEmployeeHireSlot::FirstRestock: return First;
+	case ECSEmployeeHireSlot::Checkout: return Checkout;
+	case ECSEmployeeHireSlot::SecondRestock: return Second;
+	default: return 0;
+	}
+}
+
+int32 ACSStoreGameState::GetEmployeeDailyWage(ECSEmployeeHireSlot Slot) const
+{
+	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset.Get() : GetDefault<UCSStoreEconomyDataAsset>();
+	const double Percent = FMath::IsFinite(Settings->EmployeeDailyWagePercent)
+		? FMath::Clamp(static_cast<double>(Settings->EmployeeDailyWagePercent), 1.0, 5.0) : 2.0;
+	return FMath::CeilToInt(static_cast<double>(GetEmployeeHireCost(Slot)) * Percent / 100.0);
+}
+
+bool ACSStoreGameState::TryPayEmployeeHireCost(int32 Amount)
+{
+	if (!HasAuthority() || Amount <= 0 || !CanAfford(Amount) ||
+		static_cast<int64>(DailyEmployeeHireExpenseGold) + Amount > MAX_int32) return false;
+	// 총지출은 TrySpendFunds만 변경하고 이 필드는 내역 분류에만 사용합니다.
+	DailyEmployeeHireExpenseGold += Amount;
+	if (!TrySpendFunds(Amount))
+	{
+		DailyEmployeeHireExpenseGold -= Amount;
+		return false;
+	}
+	return true;
+}
+
+bool ACSStoreGameState::ProcessDailyEmployeeWages()
+{
+	if (!HasAuthority() || bPayrollInProgress) return false;
+	if (LastPayrollProcessedBusinessDay == CurrentBusinessDay) return true;
+	UCSEmployeeHiringSubsystem* Hiring = GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>();
+	if (!IsValid(Hiring)) return false;
+	TGuardValue<bool> Guard(bPayrollInProgress, true);
+	const int32 Wage = Hiring->GetWageForBusinessDay(CurrentBusinessDay);
+	const int32 PreviousWage = DailyEmployeeWageGold;
+	DailyEmployeeWageGold = Wage;
+	if (!ApplyForcedExpense(Wage))
+	{
+		DailyEmployeeWageGold = PreviousWage;
+		return false;
+	}
+	LastPayrollProcessedBusinessDay = CurrentBusinessDay;
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
 
 void ACSStoreGameState::BeginPlay()
 {
@@ -849,6 +911,8 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailyWasteLossGold = 0;
 	DailyRentGold = 0;
 	DailyExpenseGold = 0;
+	DailyEmployeeHireExpenseGold = 0;
+	DailyEmployeeWageGold = 0;
 	DailyProductOrderExpenseGold = 0;
 	DailyFacilityOrderExpenseGold = 0;
 	DailyQuickProductOrderExpenseGold = 0;

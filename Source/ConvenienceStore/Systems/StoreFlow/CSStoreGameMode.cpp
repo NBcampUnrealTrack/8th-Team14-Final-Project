@@ -324,6 +324,7 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 
 	// 마감 자유 활동에 들어가기 전에 오늘 임대료를 실제 지출로 확정합니다.
 	StoreGameState->ProcessDailyRent();
+	StoreGameState->ProcessDailyEmployeeWages();
 
 	// 통계는 자동으로 열지 않고 플레이어가 마감종을 확인할 때 요청합니다.
 	StoreGameState->SetStorePhase(MakePhaseData(

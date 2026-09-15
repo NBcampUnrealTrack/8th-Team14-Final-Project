@@ -5,7 +5,6 @@
 #include "Components/Widget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/Store/CSProductAnalysisWidget.h"
-
 void UCSDailySummaryWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -138,8 +137,14 @@ void UCSDailySummaryWidget::RefreshSummary()
 	const bool bHasQuickProductExpense = State->DailyQuickProductOrderExpenseGold > 0;
 	const bool bHasQuickFacilityExpense = State->DailyQuickFacilityOrderExpenseGold > 0;
 	const bool bHasRentExpense = State->DailyRentGold > 0;
+	const bool bHasHireExpense = State->DailyEmployeeHireExpenseGold > 0;
+	const bool bHasWageExpense = State->DailyEmployeeWageGold > 0;
+	if (IsValid(EmployeeHireExpenseRow)) EmployeeHireExpenseRow->SetVisibility(bHasHireExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(EmployeeWageExpenseRow)) EmployeeWageExpenseRow->SetVisibility(bHasWageExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(EmployeeHireExpenseText)) EmployeeHireExpenseText->SetText(FText::AsNumber(State->DailyEmployeeHireExpenseGold));
+	if (IsValid(EmployeeWageExpenseText)) EmployeeWageExpenseText->SetText(FText::AsNumber(State->DailyEmployeeWageGold));
 	const bool bHasAnyExpense = bHasProductOrderExpense || bHasFacilityOrderExpense ||
-		bHasQuickProductExpense || bHasQuickFacilityExpense || bHasRentExpense;
+		bHasQuickProductExpense || bHasQuickFacilityExpense || bHasRentExpense || bHasHireExpense || bHasWageExpense;
 
 	if (IsValid(ProductOrderExpenseRow)) ProductOrderExpenseRow->SetVisibility(bHasProductOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (IsValid(FacilityOrderExpenseRow)) FacilityOrderExpenseRow->SetVisibility(bHasFacilityOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
