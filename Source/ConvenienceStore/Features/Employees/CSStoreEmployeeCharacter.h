@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Data/CSStoreEmployeeTypes.h"
 #include "GameFramework/Character.h"
+#include "Data/CSEmployeeHiringTypes.h"
+#include "Features/Interaction/CSInteractable.h"
 #include "CSStoreEmployeeCharacter.generated.h"
 
 class UCSStoreEmployeeRoleDataAsset;
@@ -11,6 +13,8 @@ class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSFreshnessSafeZoneActor;
 class ACSCheckoutCounterActor;
+class UCSEmployeeHiringWidget;
+class UTextRenderComponent;
 
 // 진열 업무를 재고 위치부터 진열 완료까지 세분화한 내부 작업 단계입니다.
 enum class ECSStoreEmployeeRestockPhase : uint8
@@ -28,7 +32,7 @@ enum class ECSStoreEmployeeRestockPhase : uint8
 
 // 매장 업무 하나를 수령해 이동하고 완료하는 공통 직원 캐릭터입니다.
 UCLASS()
-class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter
+class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter, public ICSInteractable
 {
 	GENERATED_BODY()
 
@@ -37,6 +41,15 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void Interact_Implementation(AActor* Interactor) override;
+	virtual FText GetInteractionText_Implementation() const override;
+	UFUNCTION(BlueprintPure, Category = "Employee|Hiring") bool RequiresHiring() const { return bRequiresHiring; }
+	UFUNCTION(BlueprintPure, Category = "Employee|Hiring") ECSEmployeeHireSlot GetHiringSlot() const { return HiringSlot; }
+	UFUNCTION(BlueprintPure, Category = "Employee|Hiring") bool CanWork() const;
+	FText GetHiringRoleName() const;
+	// 고용소에서 지연 생성한 직원의 BeginPlay 전에 설정합니다.
+	void ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSoftClassPtr<UCSEmployeeHiringWidget> WidgetClass = nullptr);
+	void RefreshEmploymentPresentation();
 
 	// 현재 역할이 처리할 수 있는 업무인지 서브시스템이 확인할 수 있도록 제공합니다.
 	bool CanHandleTask(ECSStoreEmployeeTaskType TaskType) const;
@@ -65,6 +78,15 @@ public:
 	void SetIgnoreEmployeeMovement(ACSStoreEmployeeCharacter* OtherEmployee, bool bIgnore);
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring")
+	TSoftClassPtr<UCSEmployeeHiringWidget> HiringWidgetClass = TSoftClassPtr<UCSEmployeeHiringWidget>(FSoftObjectPath(
+		TEXT("/Game/ConvenienceStore/UI/Employee/WBP_EmployeeHiring.WBP_EmployeeHiring_C")));
+	// 기존 업무 전용 배치 직원은 그대로 동작합니다. 고용소가 생성하는 지원자는 true입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") bool bRequiresHiring = false;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring", meta = (EditCondition = "bRequiresHiring"))
+	ECSEmployeeHireSlot HiringSlot = ECSEmployeeHireSlot::FirstRestock;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") TObjectPtr<UTextRenderComponent> HiringNameplate;
+	UPROPERTY(Transient) TObjectPtr<UCSEmployeeHiringWidget> ActiveHiringWidget;
 	// 역할별 처리 가능 업무와 작업 시간을 지정하는 데이터 에셋입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Role")
 	TObjectPtr<UCSStoreEmployeeRoleDataAsset> RoleData;
