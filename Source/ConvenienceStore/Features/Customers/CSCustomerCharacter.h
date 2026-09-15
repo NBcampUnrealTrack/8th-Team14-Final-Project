@@ -155,6 +155,11 @@ protected:
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float ActionAnimationStartOffsetSeconds = 0.04f;
 
+	// Visual crossfade only; does not change action completion or AI timing.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Animation",
+		meta = (ClampMin = "0.0", ClampMax = "0.5", Units = "s"))
+	float AnimationTransitionBlendSeconds = 0.18f;
+
 private:
 	void UpdateLocomotionAnimation(bool bForce = false);
 	void RefreshLocomotionAnimationPose();
