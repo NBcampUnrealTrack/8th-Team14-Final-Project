@@ -921,11 +921,6 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	FCSPurchaseRejectionInfo RejectionInfo;
 	const bool bPicked = Decision->DecidePurchase(Candidates, Selected, RejectionInfo);
 
-	UE_LOG(LogTemp, Log, TEXT("[카테고리 선호 파악용] %s | %s | %s"),
-		*Customer->GetName(),
-		Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("종족없음"),
-		bPicked ? *Selected.ProductRowHandle.RowName.ToString() : TEXT("미구매"));
-
 	if (!bPicked)
 	{
 		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 플레이어에게 딱히 알릴 이유가 없는 조용한 미구매

@@ -38,7 +38,8 @@ enum class ECSPurchaseRejectReason : uint8
 	CategoryBlocked,     // 이 종족이 절대 안 사는 카테고리
 	HardWalletExceeded,  // 하드 지갑(물리적으로 낼 수 있는 최대 금액) 초과
 	ShelfEmpty,          // 진열대에 재고가 없음
-	PlannedProductMissing // 계획 상품이 이 진열대에 없고, 같은 카테고리 대체품만 있음(대체품 자체가 없으면 조용히 포기 처리되므로 이 사유가 뜨지 않음)
+	PlannedProductMissing, // 계획 상품이 이 진열대에 없고, 같은 카테고리 대체품만 있음(대체품 자체가 없으면 조용히 포기 처리되므로 이 사유가 뜨지 않음)
+	NewsDemandRejected   // 오늘의 뉴스로 수요 보정이 깎여 총점 미달. 플레이어가 통제할 수 없는 외부 사건이라 가격 거절과 분리했고 평판 감점 대상도 아님
 };
 
 // 거절 사유 상세 정보. UI 연출(디버그 텍스트/속마음 위젯)이 이 값을 읽어 문구를 조합한다
@@ -67,6 +68,12 @@ struct FCSPurchaseRejectionInfo
 	// 0=아슬아슬, 1=터무니없음. CategoryBlocked는 항상 1.0 고정(대표 사유 비교에 안 쓰임)
 	UPROPERTY(BlueprintReadOnly, Category = "Purchase|Rejection")
 	float Severity = 0.f;
+
+	// NewsDemandRejected일 때 원인이 된 뉴스 RowName. 그 외에는 NAME_None
+	// 속마음 문구는 나중에 저장된 거절 정보로 표시되는데, 그때 뉴스를 다시 조회하면
+	// 영업일이 넘어간 뒤 엉뚱한 뉴스의 문구가 뜬다. 그래서 판정 시점 값을 여기 박아둠
+	UPROPERTY(BlueprintReadOnly, Category = "Purchase|Rejection")
+	FName NewsRowName = NAME_None;
 };
 
 // 거절 사유 하나가 강도(Severity)에 따라 여러 단계로 나뉠 때 한 단계를 표현
