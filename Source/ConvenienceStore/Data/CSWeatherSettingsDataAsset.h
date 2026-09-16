@@ -19,6 +19,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather")
 	TObjectPtr<UDataTable> WeatherTable;
 
+	// 날씨별 상품 수요 보정 규칙 테이블 (행 구조 FCSWeatherDemandRuleRow)
+	// 비워두면 시작 로그에 경고가 뜨고 날씨 수요 보정이 전부 0이 됩니다.
+	// 조용히 0이 되면 "코드는 붙었는데 왜 안 팔리지"를 코드에서 찾게 되므로 경고로 드러냅니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather")
+	TObjectPtr<UDataTable> WeatherDemandRuleTable;
+
 	// 날씨별 기본 확률입니다. (총합 1.0)
 	// 비워두면 경고 로그를 남기고 날씨가 맑음으로 유지
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Roll")

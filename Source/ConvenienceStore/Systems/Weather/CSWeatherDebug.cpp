@@ -92,6 +92,13 @@ void UCSWeatherSubsystem::DebugSetTodayWeather(ECSWeatherType NewWeather)
 	OnWeatherChanged.Broadcast(CurrentWeather, Previous);
 	OnWeatherForecastUpdated.Broadcast();
 
+	// 강제 지정도 오늘 날씨가 정해지는 지점입니다.
+	// ApplyBusinessDay와 같은 형식으로 남겨야 로그만 보고 "이 런의 날씨가 무엇이었는지"를 셀 수 있습니다.
+	UE_LOG(LogTemp, Log,
+		TEXT("[날씨수요] 오늘 날씨=%s 적용 규칙 %d건 (%d일차, 강제 지정)"),
+		*StaticEnum<ECSWeatherType>()->GetNameStringByValue(static_cast<int64>(CurrentWeather)),
+		GetActiveDemandRuleCount(), CurrentBusinessDay);
+
 	DebugPrintForecast();
 }
 

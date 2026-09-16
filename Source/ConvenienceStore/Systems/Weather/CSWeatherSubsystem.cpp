@@ -1,5 +1,6 @@
 ﻿#include "Systems/Weather/CSWeatherSubsystem.h"
 
+#include "Data/CSProductTypes.h"
 #include "Data/CSWeatherSettingsDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
@@ -42,6 +43,9 @@ void UCSWeatherSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// DT_Weather 테이블을 캐싱해서 미리 읽어둡니다
 	BuildWeatherRowCache();
 
+	// 수요 규칙도 날씨별로 나눠 미리 담아둡니다
+	BuildWeatherDemandRuleCache();
+
 	// 확률표는 사본으로 들고 갑니다. 원본 데이터 에셋을 런타임에 고치면
 	// 로드된 인스턴스가 변조되어 PIE를 껐다 켜기 전까지 값이 남습니다.
 	RuntimeWeights = Settings->BaseWeights;
@@ -51,6 +55,9 @@ void UCSWeatherSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	StoreGameState->OnBusinessDayStarted.AddDynamic(
 		this, &UCSWeatherSubsystem::HandleBusinessDayStarted);
 
+	// 확률표·규칙표가 모두 갖춰진 뒤에 찍어야 실제로 쓰일 값이 나옵니다
+	LogWeatherStartupSummary();
+
 	// 1일차는 OnBusinessDayStarted가 방송되지 않으므로(++ 이후에만 방송) 여기서 직접 적용
 	ApplyBusinessDay(StoreGameState->CurrentBusinessDay);
 }
@@ -59,6 +66,7 @@ void UCSWeatherSubsystem::Deinitialize()
 {
 	Zones.Reset();
 	IndoorAreas.Reset();
+	WeatherDemandRuleCache.Reset();
 	ActiveZoneSystem = nullptr;
 
 	if (IsValid(StoreGameState))
@@ -107,6 +115,13 @@ void UCSWeatherSubsystem::ApplyBusinessDay(int32 BusinessDay)
 	// 소비 측이 "새 날이 시작됐다 + 날씨는 이거다"를 한 번에 받아야 하기 때문입니다.
 	OnWeatherChanged.Broadcast(CurrentWeather, Previous);
 	OnWeatherForecastUpdated.Broadcast();
+
+	// 오늘 날씨가 정해지는 지점입니다. 판매 로그를 볼 때 "그날이 무슨 날씨였는지"를
+	// 로그 파일 안에서 바로 맞춰볼 수 있어야 해서 남깁니다.
+	UE_LOG(LogTemp, Log,
+		TEXT("[날씨수요] 오늘 날씨=%s 적용 규칙 %d건 (%d일차)"),
+		*StaticEnum<ECSWeatherType>()->GetNameStringByValue(static_cast<int64>(CurrentWeather)),
+		GetActiveDemandRuleCount(), CurrentBusinessDay);
 
 #if CS_WEATHER_DEBUG
 	// UI가 없으므로 하루 시작 시 화면에 한 번 띄웁니다.
@@ -795,6 +810,144 @@ void UCSWeatherSubsystem::BuildWeatherRowCache()
 const FCSWeatherRow* UCSWeatherSubsystem::FindWeatherRow(ECSWeatherType Type) const
 {
 	return WeatherRowCache.Find(Type);
+}
+
+// ---------------------------------------------------------------------------
+// 날씨별 상품 수요
+// ---------------------------------------------------------------------------
+
+void UCSWeatherSubsystem::BuildWeatherDemandRuleCache()
+{
+	WeatherDemandRuleCache.Reset();
+
+	if (!IsValid(Settings) || !IsValid(Settings->WeatherDemandRuleTable))
+	{
+		// 경고는 LogWeatherStartupSummary가 한 번에 냅니다. 여기서 또 내면 같은 말이 두 줄 찍힙니다.
+		return;
+	}
+
+	TArray<FCSWeatherDemandRuleRow*> Rules;
+	Settings->WeatherDemandRuleTable->GetAllRows(
+		TEXT("UCSWeatherSubsystem::BuildWeatherDemandRuleCache"), Rules);
+
+	for (const FCSWeatherDemandRuleRow* Rule : Rules)
+	{
+		if (Rule == nullptr)
+		{
+			continue;
+		}
+
+		// bEnabled는 여기서 거르지 않고 조회 시점에 봅니다.
+		// 미리 걸러내면 "표에는 행이 있는데 시작 로그의 행 수에는 안 잡힌다"가 되어
+		// 규칙을 꺼둔 것과 행을 빠뜨린 것을 로그만 보고는 구분할 수 없습니다.
+		WeatherDemandRuleCache.FindOrAdd(Rule->WeatherType).Add(*Rule);
+	}
+}
+
+int32 UCSWeatherSubsystem::GetActiveDemandRuleCount() const
+{
+	const TArray<FCSWeatherDemandRuleRow>* Rules = WeatherDemandRuleCache.Find(CurrentWeather);
+	return Rules != nullptr ? Rules->Num() : 0;
+}
+
+void UCSWeatherSubsystem::LogWeatherStartupSummary() const
+{
+	const UEnum* WeatherEnum = StaticEnum<ECSWeatherType>();
+
+	// DT_Weather에 행이 있고 가중치가 양수인 날씨만 실제로 뜹니다.
+	// 둘 중 하나만 갖춰지면 조용히 후보에서 빠지므로 둘을 같은 줄에 붙여 찍습니다.
+	FString CandidateSummary;
+	for (int32 Index = static_cast<int32>(ECSWeatherType::None) + 1;
+		Index < static_cast<int32>(ECSWeatherType::Max); ++Index)
+	{
+		const ECSWeatherType Type = static_cast<ECSWeatherType>(Index);
+		if (FindWeatherRow(Type) == nullptr)
+		{
+			continue;
+		}
+
+		const TArray<FCSWeatherDemandRuleRow>* Rules = WeatherDemandRuleCache.Find(Type);
+		CandidateSummary += FString::Printf(
+			TEXT("%s%s(가중치 %.2f, 규칙 %d행)"),
+			CandidateSummary.IsEmpty() ? TEXT("") : TEXT(", "),
+			*WeatherEnum->GetNameStringByValue(static_cast<int64>(Type)),
+			RuntimeWeights.GetWeight(Type),
+			Rules != nullptr ? Rules->Num() : 0);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[날씨수요] 시작 - 날씨 후보: %s"),
+		CandidateSummary.IsEmpty() ? TEXT("없음") : *CandidateSummary);
+
+	if (!IsValid(Settings) || !IsValid(Settings->WeatherDemandRuleTable))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[날씨수요] WeatherDemandRuleTable이 연결되지 않아 날씨 수요 보정이 전부 0입니다. "
+			     "DA_WeatherSetting에 DT_WeatherDemandRule을 지정해야 합니다."));
+	}
+}
+
+float UCSWeatherSubsystem::GetProductWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const
+{
+	if (!IsValid(Settings) ||
+		!IsValid(Settings->WeatherDemandRuleTable) ||
+		!IsValid(ProductRow.DataTable) ||
+		ProductRow.RowName.IsNone())
+	{
+		return 0.0f;
+	}
+
+	// 오늘 날씨는 반드시 여기서 읽습니다. 캐싱하면 cs.WeatherSet으로 강제한 뒤에도
+	// 이전 날씨 기준으로 계산됩니다(강제 커맨드는 CurrentWeather만 덮어씁니다).
+	// GetCurrentWeatherEntry/GetForecastWeather처럼 EnsureDecidedThrough를 타는 함수를 부르면
+	// 채점 한 번마다 날씨 추첨이 앞당겨질 수 있으므로 인라인 게터만 씁니다.
+	const ECSWeatherType Weather = GetCurrentWeather();
+	if (Weather == ECSWeatherType::None)
+	{
+		return 0.0f;
+	}
+
+	const TArray<FCSWeatherDemandRuleRow>* Rules = WeatherDemandRuleCache.Find(Weather);
+	if (Rules == nullptr)
+	{
+		return 0.0f;
+	}
+
+	const FCSProductDataRow* ProductData = ProductRow.GetRow<FCSProductDataRow>(
+		TEXT("UCSWeatherSubsystem::GetProductWeatherDemandModifier"));
+	if (ProductData == nullptr)
+	{
+		return 0.0f;
+	}
+
+	FName ProductCategoryName = NAME_None;
+	if (const UEnum* ProductCategoryEnum = StaticEnum<ECSProductCategory>())
+	{
+		ProductCategoryName = FName(*ProductCategoryEnum->GetNameStringByValue(
+			static_cast<int64>(ProductData->Category)));
+	}
+
+	// 같은 날씨에 여러 규칙이 걸리면 전부 더합니다. 상품 규칙과 카테고리 규칙이 겹쳐도 마찬가지입니다.
+	float TotalModifier = 0.0f;
+	for (const FCSWeatherDemandRuleRow& Rule : *Rules)
+	{
+		if (!Rule.bEnabled)
+		{
+			continue;
+		}
+
+		const bool bTargetMatches =
+			(Rule.TargetType == ECSWeatherDemandTargetType::Product &&
+				ProductRow.RowName == Rule.TargetId) ||
+			(Rule.TargetType == ECSWeatherDemandTargetType::Category &&
+				!ProductCategoryName.IsNone() &&
+				ProductCategoryName == Rule.TargetId);
+		if (bTargetMatches)
+		{
+			TotalModifier += Rule.DemandModifier;
+		}
+	}
+
+	return TotalModifier;
 }
 
 // ---------------------------------------------------------------------------

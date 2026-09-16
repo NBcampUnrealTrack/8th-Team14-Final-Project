@@ -180,6 +180,30 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_NewsDemand = 0.3f;
 
+	// 오늘 날씨가 상품 수요에 반영되는 세기
+	// 뉴스와 같은 이유로 종족 차등을 두지 않는다
+	// 0으로 두면 날씨 영향이 완전히 꺼져서 검증 대조군으로 쓸 수 있음
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_WeatherDemand = 0.3f;
+
+	// 뉴스·날씨 수요 보정이 "무엇을 사러 올지"(RollPlannedProducts)에 반영되는 세기
+	// 진열대 앞 채점(W_NewsDemand/W_WeatherDemand)과 따로 두는 이유:
+	// 채점은 이미 진열대에 도착한 손님의 판단이고, 이쪽은 애초에 그 진열대로 갈지를 정한다.
+	// 진열대가 20개를 넘으면 손님이 도는 3곳 안에 날씨 상품 진열대가 들어갈 일이 거의 없어서
+	// 채점만으로는 효과가 매장에 드러나지 않는다 - 그 격차를 메우는 값이라 세기가 다를 수밖에 없다
+	// 0으로 두면 계획 추첨이 수요 보정을 무시해 연동 전과 같은 동작이 된다(검증 대조군)
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0"))
+	float W_PlannedDemand = 2.0f;
+
+	// 한 손님이 이번 방문에 한 개까지만 담는 상품 (우산처럼 하나 있으면 더 살 이유가 없는 내구재)
+	// 가루·음료 같은 소모품은 여러 개 사는 게 자연스러워서 대상이 아니다
+	// 반복구매 감쇠(RepeatCategoryPenalty)는 카테고리 단위라 이걸 막지 못한다 -
+	// 날씨 보너스가 감쇠를 이기면 우산을 세 개씩 사는 손님이 나온다(실측됨)
+	// 본래는 상품 표에 "내구재" 플래그로 있어야 맞지만 DT_ProductMaster는 다른 파트 소관이라
+	// 우선 여기 둔다. 상품 표에 필드가 생기면 그쪽으로 옮길 것
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Limits")
+	TSet<FName> SingleUnitProductIds;
+
 	// 같은 대상을 끌어올리는 앵커가 여러 개일 때 두 번째부터 추가분을 줄이는 비율
 	// 1 미만이면 보너스 상한은 (첫 보너스 ÷ (1 − 비율))
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -274,6 +298,39 @@ private:
 
 	// 위 수치에 W_NewsDemand를 곱한 실제 점수 보정분
 	float ComputeNewsDemandBonus(const FDataTableRowHandle& ProductRow) const;
+
+	// 오늘 날씨가 이 상품 수요를 얼마나 바꾸는지 (가중치 곱하기 전 원시 수치)
+	// 날씨 서브시스템이 없거나 규칙이 안 걸리면 0
+	float GetWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const;
+
+	// 위 수치에 W_WeatherDemand를 곱한 실제 점수 보정분
+	float ComputeWeatherDemandBonus(const FDataTableRowHandle& ProductRow) const;
+
+	// 검증 로그에 찍을 오늘 날씨 이름. 서브시스템을 못 찾으면 "?"
+	FString GetWeatherNameForLog() const;
+
+	// 날씨 규칙이 걸린 후보 하나의 채점 결과를 남긴다
+	// Disposition은 이 후보가 어떻게 처리됐는지(제외/후보유지 등)
+	void LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate, float WeatherModifier,
+		float Score, const TCHAR* Disposition) const;
+
+	// 이 상품이 1개 제한 대상이고 이미 장바구니에 들어 있는지
+	bool IsSingleUnitLimitReached(const FDataTableRowHandle& ProductRow) const;
+
+	// 계획 상품 추첨에 쓰는 수요 보정 원시 수치 = 뉴스 + 날씨 합산
+	// 상품 마스터 행 이름만 받아서 내부에서 핸들을 만든다(추첨 단계에는 핸들이 없고 RowName만 있다)
+	float GetPlannedDemandModifier(FName ProductRowName) const;
+
+	// 위 수치를 가중치 배율로 바꾼다. 하한이 있어 0이 되지 않는다
+	// 하한이 없으면 가중치 총합이 0이 되는 경우가 생기고, 그때 WeightedRandomIndex가
+	// 난수를 굴리지 않고 반환해서 같은 시드인데 그 지점부터 결과가 통째로 밀린다
+	float GetPlannedDemandMultiplier(float DemandModifier) const;
+
+	// 상품 가중치 배열에 위 배율을 곱한다. OutMaxModifier에는 이 목록의 최대 보정값을 채운다
+	// (카테고리 가중치에는 합이 아니라 최댓값을 쓴다 - 비 오는 날 Supply는 우산 +1, 가루 −1 ×2라
+	//  합하면 음수가 되어 우산이 있는데도 그 카테고리를 안 고르게 된다)
+	void ApplyPlannedDemandWeights(const TArray<FName>& ProductRowNames,
+		TArray<float>& InOutWeights, float& OutMaxModifier) const;
 
 	// 장바구니에 담긴 같은 카테고리 개수만큼 카테고리 점수를 지수적으로 깎음
 	// 채점과 거절 원인 판정이 같은 값을 봐야 해서 한 곳에 모아둠

@@ -88,6 +88,35 @@ namespace
 
 	// PlannedId가 안 가본 진열대 어딘가에 같은 카테고리 상품을 하나라도 갖고 있는지 확인
 	// ("카테고리 텅 빔" 판정 전용 - EvaluateShelfForPlannedProducts와 별도로 계획 상품 하나만 검사)
+	// 계획 상품 그 자체가 아직 안 가본 진열대 어딘가에 남아 있는지
+	// 도착한 진열대에 "같은 카테고리 다른 상품"만 있다고 바로 계획을 지우면,
+	// 정작 그 상품이 있는 진열대가 아직 남아 있어도 손님이 영영 그리로 가지 않는다
+	// 한 카테고리가 호환 안 되는 두 진열대로 갈릴 때 반드시 생긴다
+	// (잎 우산은 ToolRack 전용인데 같은 Supply인 횃불·화살은 ScrollRack에 있는 식)
+	bool HasExactProductAnywhereUnvisited(
+		const UCSCustomerRuntimeSubsystem& Subsystem,
+		const UCSCustomerStateComponent& State,
+		const FName PlannedId)
+	{
+		for (const TObjectPtr<AActor>& Shelf : Subsystem.GetShelves())
+		{
+			if (!Subsystem.IsShelfSelectable(Shelf) || State.HasVisited(Shelf))
+			{
+				continue;
+			}
+
+			for (const AActor* ProductActor : Subsystem.GetProductsOnShelf(Shelf))
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				if (Product != nullptr && Product->GetProductId() == PlannedId)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	bool HasCategoryMatchAnywhere(
 		const UCSCustomerRuntimeSubsystem& Subsystem,
 		const TArray<TObjectPtr<AActor>>& UnvisitedSelectableShelves,
@@ -821,6 +850,15 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 				return CandidateRow != nullptr && CandidateRow->Category == PlannedRow->Category;
 			});
 			if (!bCategoryMatch)
+			{
+				continue;
+			}
+
+			// 이 진열대에 계획 상품이 없다고 해서 매장에 없는 게 아니다 -
+			// 아직 안 가본 진열대에 실제로 남아 있으면 계획을 살려두고 반응도 띄우지 않는다
+			// 이 검사가 없으면 계획을 2개 가진 손님이 한쪽 진열대에 도착하는 순간
+			// 나머지 하나를 잃는다(같은 카테고리인데 진열대가 갈려 있을 때)
+			if (HasExactProductAnywhereUnvisited(*Subsystem, *State, PlannedId))
 			{
 				continue;
 			}
