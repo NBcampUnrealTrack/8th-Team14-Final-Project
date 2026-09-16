@@ -97,12 +97,27 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	NewReputationGrade);
 
 // 게임플레이 액터와 UI가 읽는 편의점의 현재 상태를 보관합니다.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnMagicCircleUpgraded, int32, NewLevel);
+
 UCLASS()
 class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase
 {
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
+	int32 GetMagicCircleLevel() const { return MagicCircleLevel; }
+	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
+	int32 GetMagicCircleUpgradeCost() const;
+	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
+	bool CanUpgradeMagicCircle(FText& OutReason) const;
+	UFUNCTION(BlueprintCallable, Category = "Store|MagicCircle")
+	bool TryUpgradeMagicCircle(FText& OutMessage);
+	UPROPERTY(BlueprintAssignable, Category = "Store|MagicCircle")
+	FCSOnMagicCircleUpgraded OnMagicCircleUpgraded;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|Economy")
+	int32 DailyMagicCircleUpgradeExpenseGold = 0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|Sales")
 	int32 DailyEmployeeHireExpenseGold = 0;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|Sales")
@@ -455,6 +470,9 @@ protected:
 	TObjectPtr<UCSStoreEconomyDataAsset> StoreEconomyDataAsset;
 
 private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Store|MagicCircle", meta = (AllowPrivateAccess = "true"))
+	int32 MagicCircleLevel = 1;
+	bool bMagicCircleUpgradeInProgress = false;
 	int32 LastPayrollProcessedBusinessDay = INDEX_NONE;
 	bool bPayrollInProgress = false;
 	// 임대료처럼 잔액과 관계없이 확정되는 비용에만 사용하는 내부 지출 경로입니다.
