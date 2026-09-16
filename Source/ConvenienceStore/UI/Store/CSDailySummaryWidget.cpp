@@ -139,12 +139,15 @@ void UCSDailySummaryWidget::RefreshSummary()
 	const bool bHasRentExpense = State->DailyRentGold > 0;
 	const bool bHasHireExpense = State->DailyEmployeeHireExpenseGold > 0;
 	const bool bHasWageExpense = State->DailyEmployeeWageGold > 0;
+	const bool bHasMagicUpgradeExpense = State->DailyMagicCircleUpgradeExpenseGold > 0;
+	if (IsValid(MagicCircleUpgradeExpenseRow)) MagicCircleUpgradeExpenseRow->SetVisibility(bHasMagicUpgradeExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	if (IsValid(MagicCircleUpgradeExpenseText)) MagicCircleUpgradeExpenseText->SetText(FText::AsNumber(State->DailyMagicCircleUpgradeExpenseGold));
 	if (IsValid(EmployeeHireExpenseRow)) EmployeeHireExpenseRow->SetVisibility(bHasHireExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (IsValid(EmployeeWageExpenseRow)) EmployeeWageExpenseRow->SetVisibility(bHasWageExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (IsValid(EmployeeHireExpenseText)) EmployeeHireExpenseText->SetText(FText::AsNumber(State->DailyEmployeeHireExpenseGold));
 	if (IsValid(EmployeeWageExpenseText)) EmployeeWageExpenseText->SetText(FText::AsNumber(State->DailyEmployeeWageGold));
 	const bool bHasAnyExpense = bHasProductOrderExpense || bHasFacilityOrderExpense ||
-		bHasQuickProductExpense || bHasQuickFacilityExpense || bHasRentExpense || bHasHireExpense || bHasWageExpense;
+		bHasQuickProductExpense || bHasQuickFacilityExpense || bHasRentExpense || bHasHireExpense || bHasWageExpense || bHasMagicUpgradeExpense;
 
 	if (IsValid(ProductOrderExpenseRow)) ProductOrderExpenseRow->SetVisibility(bHasProductOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	if (IsValid(FacilityOrderExpenseRow)) FacilityOrderExpenseRow->SetVisibility(bHasFacilityOrderExpense ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);

@@ -52,6 +52,9 @@ public:
 	int32 GetTodayGeneratedOrderCount() const;
 
 	UFUNCTION(BlueprintPure, Category = "Notice Board|Delivery")
+	int32 GetDailyOrderLimit() const;
+
+	UFUNCTION(BlueprintPure, Category = "Notice Board|Delivery")
 	int32 GetAcceptedOrderCount() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Notice Board|Delivery")

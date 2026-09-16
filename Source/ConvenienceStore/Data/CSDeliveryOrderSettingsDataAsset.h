@@ -14,6 +14,17 @@ class CONVENIENCESTORE_API UCSDeliveryOrderSettingsDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Order|Timing", meta = (ClampMin = "1"))
+	float MinimumOrderIntervalMinutes = 45.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Order|Timing", meta = (ClampMin = "1"))
+	float MaximumOrderIntervalMinutes = 90.0f;
+	// 두 번째 주문부터 남은 영업시간을 주문 수만큼 나눈 기준 시각에서 흔들 수 있는 비율입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Order|Timing", meta = (ClampMin = "0.0", ClampMax = "0.45"))
+	float DistributedOrderTimeJitterPercent = 0.2f;
+	// 마감 직전 처리할 시간이 없는 주문을 생성하지 않습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Order|Timing", meta = (ClampMin = "1"))
+	float StopOrdersBeforeClosingMinutes = 60.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery Order")
 	TObjectPtr<UDataTable> ProductDataTable;
 

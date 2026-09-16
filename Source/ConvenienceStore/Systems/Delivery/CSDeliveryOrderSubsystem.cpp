@@ -30,7 +30,9 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 		const FCSDeliveryOrderRuntime& Order = DeliveryOrders[Index];
 		if (Order.Status == ECSDeliveryOrderStatus::PendingAcceptance && CurrentMinutes >= Order.AcceptanceDeadlineMinutes)
 		{
+			const FCSDeliveryOrderRuntime ExpiredOrder = Order;
 			RemoveOrderAt(Index, ECSDeliveryOrderStatus::Expired);
+			ShowAcceptanceExpiredToast(ExpiredOrder);
 		}
 		else if (Order.Status == ECSDeliveryOrderStatus::Accepted &&
 			(CurrentMinutes >= Order.DeliveryDeadlineMinutes || !IsStoreOperating()))
@@ -43,10 +45,21 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 			{
 				ShowDeadlineExpiredToast(FailedOrder);
 			}
+			else
+			{
+				ShowStoreClosedFailureToast(FailedOrder);
+			}
 		}
 	}
 
-	if (!IsStoreOperating() || GeneratedOrderCountToday >= GetDailyOrderLimit()) return;
+	const int32 DailyOrderLimit = GetDailyOrderLimit();
+	if (!IsStoreOperating() || GeneratedOrderCountToday >= DailyOrderLimit) return;
+	// 당일 강화는 이미 도착한 주문을 되돌리지 않으며, 다음 주문만 새 한도에 맞춰 분산합니다.
+	if (LastScheduledDailyOrderLimit != DailyOrderLimit)
+	{
+		if (GeneratedOrderCountToday > 0) NextOrderGenerationMinutes = -1.0f;
+		LastScheduledDailyOrderLimit = DailyOrderLimit;
+	}
 	if (NextOrderGenerationMinutes < 0.0f) ScheduleNextOrder(CurrentMinutes);
 	if (CurrentMinutes >= NextOrderGenerationMinutes)
 	{
@@ -333,6 +346,13 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	}
 
 	TArray<FName> EligibleRowNames;
+	const float ClosingBuffer = FMath::IsFinite(OrderSettings->StopOrdersBeforeClosingMinutes)
+		? FMath::Max(1.0f, OrderSettings->StopOrdersBeforeClosingMinutes) : 60.0f;
+	if (!IsStoreOperating() || StoreGameState->CurrentGameMinutes >= StoreGameState->AutomaticClosingTimeMinutes - ClosingBuffer)
+	{
+		OutMessage = NSLOCTEXT("Delivery", "OutsideOrderHours", "현재는 배달 주문이 도착할 수 있는 시간이 아닙니다.");
+		return false;
+	}
 	TArray<FName> InStockRowNames;
 	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
@@ -405,25 +425,52 @@ void UCSDeliveryOrderSubsystem::RefreshBusinessDayState()
 	LastObservedBusinessDay = StoreGameState->CurrentBusinessDay;
 	GeneratedOrderCountToday = 0;
 	NextOrderGenerationMinutes = -1.0f;
+	LastScheduledDailyOrderLimit = INDEX_NONE;
 	for (int32 Index = DeliveryOrders.Num() - 1; Index >= 0; --Index) RemoveOrderAt(Index, ECSDeliveryOrderStatus::Failed);
 }
 
 void UCSDeliveryOrderSubsystem::ScheduleNextOrder(const float CurrentGameMinutes)
 {
-	NextOrderGenerationMinutes = CurrentGameMinutes + FMath::FRandRange(MinimumOrderIntervalMinutes, MaximumOrderIntervalMinutes);
+	const UCSDeliveryOrderSettingsDataAsset* Settings = IsValid(OrderSettings) ? OrderSettings.Get() : GetDefault<UCSDeliveryOrderSettingsDataAsset>();
+	const float FirstOrderMinimum = FMath::IsFinite(Settings->MinimumOrderIntervalMinutes) ? FMath::Max(1.0f, Settings->MinimumOrderIntervalMinutes) : 45.0f;
+	const float FirstOrderMaximum = FMath::IsFinite(Settings->MaximumOrderIntervalMinutes) ? FMath::Max(FirstOrderMinimum, Settings->MaximumOrderIntervalMinutes) : FMath::Max(FirstOrderMinimum, 90.0f);
+
+	// 첫 주문은 개점 후 준비 시간을 보장합니다. 그 뒤에는 하루 전체에 주문을 배치합니다.
+	if (GeneratedOrderCountToday == 0)
+	{
+		NextOrderGenerationMinutes = CurrentGameMinutes + FMath::FRandRange(FirstOrderMinimum, FirstOrderMaximum);
+		return;
+	}
+
+	const ACSStoreGameState* StoreGameState = GetWorld() == nullptr ? nullptr : GetWorld()->GetGameState<ACSStoreGameState>();
+	if (!IsValid(StoreGameState))
+	{
+		NextOrderGenerationMinutes = -1.0f;
+		return;
+	}
+	const float ClosingBuffer = FMath::IsFinite(Settings->StopOrdersBeforeClosingMinutes)
+		? FMath::Max(1.0f, Settings->StopOrdersBeforeClosingMinutes) : 60.0f;
+	const float LastOrderTime = StoreGameState->AutomaticClosingTimeMinutes - ClosingBuffer;
+	const int32 RemainingOrderCount = FMath::Max(0, GetDailyOrderLimit() - GeneratedOrderCountToday);
+	if (RemainingOrderCount <= 0 || CurrentGameMinutes >= LastOrderTime)
+	{
+		NextOrderGenerationMinutes = -1.0f;
+		return;
+	}
+
+	// 마지막 주문을 마감 제한 직전에 몰지 않도록 남은 구간 하나를 여유 시간으로 남깁니다.
+	const float TargetInterval = (LastOrderTime - CurrentGameMinutes) / static_cast<float>(RemainingOrderCount + 1);
+	const float JitterPercent = FMath::IsFinite(Settings->DistributedOrderTimeJitterPercent)
+		? FMath::Clamp(Settings->DistributedOrderTimeJitterPercent, 0.0f, 0.45f) : 0.2f;
+	const float Jitter = TargetInterval * JitterPercent;
+	const float ScheduledInterval = FMath::Max(FirstOrderMinimum, TargetInterval + FMath::FRandRange(-Jitter, Jitter));
+	NextOrderGenerationMinutes = FMath::Min(CurrentGameMinutes + ScheduledInterval, LastOrderTime - KINDA_SMALL_NUMBER);
 }
 
 int32 UCSDeliveryOrderSubsystem::GetDailyOrderLimit() const
 {
 	const ACSStoreGameState* StoreGameState = GetWorld() == nullptr ? nullptr : GetWorld()->GetGameState<ACSStoreGameState>();
-	if (!IsValid(StoreGameState)) return 0;
-	switch (StoreGameState->GetReputationGrade())
-	{
-	case ECSReputationGrade::Excellent: return MaxOrdersExcellent;
-	case ECSReputationGrade::Good: return MaxOrdersGood;
-	case ECSReputationGrade::Normal: return MaxOrdersNormal;
-	default: return MaxOrdersVeryBadOrBad;
-	}
+	return IsValid(StoreGameState) ? StoreGameState->GetMagicCircleLevel() : 0;
 }
 
 int32 UCSDeliveryOrderSubsystem::GetMaximumLineCount() const
@@ -514,6 +561,19 @@ void UCSDeliveryOrderSubsystem::RemoveOrderAt(const int32 OrderIndex, const ECSD
 	BroadcastOrdersChanged(FinishedOrder);
 }
 
+void UCSDeliveryOrderSubsystem::ShowAcceptanceExpiredToast(
+	const FCSDeliveryOrderRuntime& ExpiredOrder)
+{
+	const FText Recipient = ExpiredOrder.RecipientDisplayName.IsEmpty()
+		? NSLOCTEXT("Delivery", "UnknownRecipient", "수신처")
+		: ExpiredOrder.RecipientDisplayName;
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "AcceptanceExpiredTitle", "배달 주문 만료"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "AcceptanceExpiredToast", "{0} 주문을 수락하지 않아 만료되었습니다."),
+			Recipient));
+}
+
 void UCSDeliveryOrderSubsystem::ShowDeadlineExpiredToast(
 	const FCSDeliveryOrderRuntime& ExpiredOrder)
 {
@@ -532,6 +592,19 @@ void UCSDeliveryOrderSubsystem::ShowDeadlineExpiredToast(
 		NSLOCTEXT("Delivery", "DeliveryDeadlineExpiredTitle", "배달 기한 초과"),
 		FText::Format(
 			NSLOCTEXT("Delivery", "DeliveryDeadlineExpiredToast", "{0} 주문의 배달 기한을 초과했습니다.\n평판이 2 감소했습니다."),
+			Recipient));
+}
+
+void UCSDeliveryOrderSubsystem::ShowStoreClosedFailureToast(
+	const FCSDeliveryOrderRuntime& FailedOrder)
+{
+	const FText Recipient = FailedOrder.RecipientDisplayName.IsEmpty()
+		? NSLOCTEXT("Delivery", "UnknownRecipient", "수신처")
+		: FailedOrder.RecipientDisplayName;
+	ShowDeliveryToast(
+		NSLOCTEXT("Delivery", "StoreClosedFailureTitle", "배달 주문 실패"),
+		FText::Format(
+			NSLOCTEXT("Delivery", "StoreClosedFailureToast", "영업 종료로 {0} 주문을 발송하지 못했습니다.\n평판이 2 감소했습니다."),
 			Recipient));
 }
 

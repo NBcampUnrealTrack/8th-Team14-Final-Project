@@ -7,6 +7,61 @@
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
 #include "Engine/World.h"
 
+int32 ACSStoreGameState::GetMagicCircleUpgradeCost() const
+{
+	if (MagicCircleLevel >= 5) return 0;
+	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset.Get() : GetDefault<UCSStoreEconomyDataAsset>();
+	const int32 Index = MagicCircleLevel - 1;
+	return Settings->MagicCircleUpgradeCosts.IsValidIndex(Index)
+		? FMath::Max(1, Settings->MagicCircleUpgradeCosts[Index])
+		: GetDefault<UCSStoreEconomyDataAsset>()->MagicCircleUpgradeCosts[Index];
+}
+
+bool ACSStoreGameState::CanUpgradeMagicCircle(FText& OutReason) const
+{
+	OutReason = FText::GetEmpty();
+	if (!HasAuthority())
+		OutReason = NSLOCTEXT("MagicCircle", "Busy", "지금은 강화할 수 없습니다.");
+	else if (MagicCircleLevel >= 5)
+		OutReason = NSLOCTEXT("MagicCircle", "Maximum", "최대 단계 달성");
+	else if (bIsDailySummaryPending || CurrentPhase == ECStorePhase::Settlement || CurrentPhase == ECStorePhase::Finished)
+		OutReason = NSLOCTEXT("MagicCircle", "Settlement", "정산 중에는 강화할 수 없습니다.");
+	else if (!CanAfford(GetMagicCircleUpgradeCost()))
+		OutReason = NSLOCTEXT("MagicCircle", "InsufficientFunds", "골드가 부족합니다.");
+	return OutReason.IsEmpty();
+}
+
+bool ACSStoreGameState::TryUpgradeMagicCircle(FText& OutMessage)
+{
+	if (bMagicCircleUpgradeInProgress)
+	{
+		OutMessage = NSLOCTEXT("MagicCircle", "Busy", "지금은 강화할 수 없습니다.");
+		return false;
+	}
+	if (!CanUpgradeMagicCircle(OutMessage)) return false;
+	TGuardValue<bool> UpgradeGuard(bMagicCircleUpgradeInProgress, true);
+	const int32 Cost = GetMagicCircleUpgradeCost();
+	if (static_cast<int64>(DailyMagicCircleUpgradeExpenseGold) + Cost > MAX_int32)
+	{
+		OutMessage = NSLOCTEXT("MagicCircle", "ExpenseOverflow", "강화 비용을 처리할 수 없습니다.");
+		return false;
+	}
+	// 잔액 변경 이벤트에서도 강화된 단계와 지출 내역을 함께 읽도록 먼저 갱신합니다.
+	++MagicCircleLevel;
+	DailyMagicCircleUpgradeExpenseGold += Cost;
+	if (!TrySpendFunds(Cost))
+	{
+		--MagicCircleLevel;
+		DailyMagicCircleUpgradeExpenseGold -= Cost;
+		OutMessage = NSLOCTEXT("MagicCircle", "PaymentFailed", "강화 비용 결제에 실패했습니다.");
+		return false;
+	}
+	OutMessage = FText::Format(NSLOCTEXT("MagicCircle", "Upgraded", "마법진이 {0}단계로 강화되었습니다."), FText::AsNumber(MagicCircleLevel));
+	OnMagicCircleUpgraded.Broadcast(MagicCircleLevel);
+	return true;
+}
+
 int32 ACSStoreGameState::GetEmployeeHireCost(ECSEmployeeHireSlot Slot) const
 {
 	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
@@ -911,6 +966,7 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	DailyWasteLossGold = 0;
 	DailyRentGold = 0;
 	DailyExpenseGold = 0;
+	DailyMagicCircleUpgradeExpenseGold = 0;
 	DailyEmployeeHireExpenseGold = 0;
 	DailyEmployeeWageGold = 0;
 	DailyProductOrderExpenseGold = 0;

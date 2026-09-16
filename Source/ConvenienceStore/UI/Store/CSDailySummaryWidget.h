@@ -67,6 +67,8 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> EmployeeHireExpenseText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> EmployeeWageExpenseRow;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> EmployeeWageExpenseText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> MagicCircleUpgradeExpenseRow;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MagicCircleUpgradeExpenseText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseDivider;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> ExpenseTotalRow;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ExpenseTotalText;
