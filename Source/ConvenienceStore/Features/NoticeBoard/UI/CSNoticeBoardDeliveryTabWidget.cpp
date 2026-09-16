@@ -159,6 +159,11 @@ int32 UCSNoticeBoardDeliveryTabWidget::GetAcceptedOrderCount() const
 		: 0;
 }
 
+int32 UCSNoticeBoardDeliveryTabWidget::GetDailyOrderLimit() const
+{
+	return IsValid(DeliveryOrderSubsystem) ? DeliveryOrderSubsystem->GetDailyOrderLimit() : 0;
+}
+
 bool UCSNoticeBoardDeliveryTabWidget::AcceptDisplayedOrder(FText& OutMessage)
 {
 	const FCSDeliveryOrderRuntime DisplayedOrder = GetDisplayedOrder();

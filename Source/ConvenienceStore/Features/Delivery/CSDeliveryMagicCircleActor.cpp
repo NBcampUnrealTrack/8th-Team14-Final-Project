@@ -12,12 +12,19 @@
 #include "GameFramework/Pawn.h"
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
 
 ACSDeliveryMagicCircleActor::ACSDeliveryMagicCircleActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
+	LevelVFX.SetNum(5);
+	MagicCircleVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("MagicCircleVFX"));
+	MagicCircleVFX->SetupAttachment(SceneRoot);
+	MagicCircleVFX->SetAutoActivate(false);
 
 	MagicCircleMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MagicCircleMesh"));
 	MagicCircleMesh->SetupAttachment(SceneRoot);
@@ -52,11 +59,41 @@ ACSDeliveryMagicCircleActor::ACSDeliveryMagicCircleActor()
 void ACSDeliveryMagicCircleActor::BeginPlay()
 {
 	Super::BeginPlay();
+	StoreState = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (IsValid(StoreState))
+	{
+		StoreState->OnMagicCircleUpgraded.AddUniqueDynamic(this, &ThisClass::HandleMagicCircleUpgraded);
+		UpdateLevelVFX(StoreState->GetMagicCircleLevel(), false);
+	}
 	if (UCSDeliveryOrderSubsystem* DeliverySubsystem = GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>())
 	{
 		DeliverySubsystem->ConfigureOrderSettings(OrderSettings);
 	}
 }
+
+void ACSDeliveryMagicCircleActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (IsValid(StoreState)) StoreState->OnMagicCircleUpgraded.RemoveDynamic(this, &ThisClass::HandleMagicCircleUpgraded);
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACSDeliveryMagicCircleActor::PlayOneShotVFX(UNiagaraSystem* Effect)
+{
+	if (IsValid(Effect)) UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), Effect,
+		MagicCircleVFX->GetComponentLocation(), MagicCircleVFX->GetComponentRotation(), MagicCircleVFX->GetComponentScale());
+}
+
+void ACSDeliveryMagicCircleActor::UpdateLevelVFX(int32 Level, bool bPlayUpgrade)
+{
+	MagicCircleVFX->DeactivateImmediate();
+	const FCSMagicCircleLevelVFX* Effects = LevelVFX.IsValidIndex(Level - 1) ? &LevelVFX[Level - 1] : nullptr;
+	MagicCircleVFX->SetAsset(Effects ? Effects->IdleEffect.Get() : nullptr);
+	if (Effects && IsValid(Effects->IdleEffect)) MagicCircleVFX->Activate(true);
+	if (bPlayUpgrade && Effects) PlayOneShotVFX(Effects->UpgradeEffect);
+	OnMagicCircleVisualUpdated(Level);
+}
+
+void ACSDeliveryMagicCircleActor::HandleMagicCircleUpgraded(int32 Level) { UpdateLevelVFX(Level, true); }
 
 void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 {
@@ -91,6 +128,12 @@ void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 	}
 
 	const APawn* Pawn = Cast<APawn>(Interactor);
+	if (bSucceeded)
+	{
+		const int32 Index = IsValid(StoreState) ? StoreState->GetMagicCircleLevel() - 1 : 0;
+		if (LevelVFX.IsValidIndex(Index)) PlayOneShotVFX(LevelVFX[Index].DispatchEffect);
+		OnDeliveryDispatched();
+	}
 	ACSStorePlayerController* Controller = Pawn == nullptr ? nullptr : Cast<ACSStorePlayerController>(Pawn->GetController());
 	if (IsValid(Controller) && IsValid(DeliverySettlementWidgetClass))
 	{

@@ -191,22 +191,34 @@ void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText
 	{
 		return;
 	}
+	QueuedDeliveryToasts.Add({ Title, Message });
+	TryShowQueuedDeliveryToast();
+}
 
-	if (!IsValid(ActiveDeliveryToastWidget))
+void ACSStorePlayerController::TryShowQueuedDeliveryToast()
+{
+	if (!IsLocalPlayerController() || DeliveryToastWidgetClass == nullptr ||
+		IsValid(ActiveDeliveryToastWidget) || QueuedDeliveryToasts.IsEmpty() ||
+		IsCriticalDeliveryToastUIOpen())
 	{
-		ActiveDeliveryToastWidget = CreateWidget<UCSDeliveryToastWidget>(this, DeliveryToastWidgetClass);
-		if (!IsValid(ActiveDeliveryToastWidget))
-		{
-			return;
-		}
-
-		ActiveDeliveryToastWidget->OnToastFinished.AddUniqueDynamic(
-			this, &ThisClass::HandleDeliveryToastFinished);
-		ActiveDeliveryToastWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
-		ActiveDeliveryToastWidget->AddToPlayerScreen(150);
+		return;
 	}
 
-	ActiveDeliveryToastWidget->ShowToast(Title, Message);
+	const FCSQueuedDeliveryToast NextToast = QueuedDeliveryToasts[0];
+	QueuedDeliveryToasts.RemoveAt(0);
+
+	ActiveDeliveryToastWidget = CreateWidget<UCSDeliveryToastWidget>(this, DeliveryToastWidgetClass);
+	if (!IsValid(ActiveDeliveryToastWidget))
+	{
+		return;
+	}
+	ActiveDeliveryToastWidget->OnToastFinished.AddUniqueDynamic(
+		this, &ThisClass::HandleDeliveryToastFinished);
+	ActiveDeliveryToastWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	// 발주창은 Viewport 1100번 레이어를 사용하므로, 같은 Viewport의 더 앞 레이어에 표시합니다.
+	// Player Screen 레이어에 추가하면 발주창이 토스트보다 앞에 그려질 수 있습니다.
+	ActiveDeliveryToastWidget->AddToViewport(1200);
+	ActiveDeliveryToastWidget->ShowToast(NextToast.Title, NextToast.Message);
 }
 
 void ACSStorePlayerController::HandleDeliveryToastFinished()
@@ -220,6 +232,7 @@ void ACSStorePlayerController::HandleDeliveryToastFinished()
 		this, &ThisClass::HandleDeliveryToastFinished);
 	ActiveDeliveryToastWidget->RemoveFromParent();
 	ActiveDeliveryToastWidget = nullptr;
+	TryShowQueuedDeliveryToast();
 }
 
 void ACSStorePlayerController::HandleClosingWarningRequested(int32 RemainingMinutes)
@@ -390,6 +403,11 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 
 	// 이 함수를 거쳐가는 모든 UI 열림/닫힘을 방송
 	OnGameplayUIInputLockChanged.Broadcast(RequestingWidget, bShouldLock);
+	// 정산 창이 닫히는 순간, 그동안 보류했던 배달 알림을 순서대로 표시합니다.
+	if (!bShouldLock)
+	{
+		TryShowQueuedDeliveryToast();
+	}
 
 	// 마감 순간 결제 완료 연출이 재생 중이었다면 계산 UI의 잠금이 풀린 뒤 종료 공지를 띄웁니다.
 	if (!bShouldLock)
@@ -458,6 +476,15 @@ bool ACSStorePlayerController::HasGameplayUIInputLock() const
 		[](const TObjectPtr<UUserWidget>& Widget)
 		{
 			return IsValid(Widget);
+		});
+}
+
+bool ACSStorePlayerController::IsCriticalDeliveryToastUIOpen() const
+{
+	return GameplayUIInputLockWidgets.ContainsByPredicate(
+		[](const TObjectPtr<UUserWidget>& Widget)
+		{
+			return IsValid(Widget) && Widget->IsA(UCSDailySummaryWidget::StaticClass());
 		});
 }
 
