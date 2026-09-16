@@ -32,6 +32,9 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 
 	RandomStream.Initialize(FMath::Rand());
 
+	// 잎 우산은 내구재라 한 방문에 하나면 충분하다. 에디터에서 목록을 늘릴 수 있다
+	SingleUnitProductIds.Add(TEXT("SUP_RainUmbrella"));
+
 	static ConstructorHelpers::FObjectFinder<UDataTable> ProductMasterDataTableFinder(
 		TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster"));
 	if (ProductMasterDataTableFinder.Succeeded())
@@ -138,6 +141,15 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	if (!ProductRow)
 	{
 		// 상품 데이터를 못 찾으면 이 후보는 아예 고려하지 않음 (데이터 무결성 문제라 거절 연출 대상이 아님)
+		return -1.0f;
+	}
+
+	// 이미 하나 담은 내구재는 더 담지 않는다
+	// OutRejectionInfo를 채우지 않는 이유: 거절 연출 대상이 아니라 조용한 미구매다
+	// (ScoreAndSelectTopCandidates가 Reason=None인 -1.0 후보를 대표 사유 집계에서 빼주므로
+	//  이 후보 때문에 엉뚱한 거절 문구가 뜨지 않는다)
+	if (IsSingleUnitLimitReached(Candidate.ProductRowHandle))
+	{
 		return -1.0f;
 	}
 
@@ -820,6 +832,12 @@ namespace
 		}
 	}
 
+	// 수요 보정을 가중치 배율로 바꿀 때의 하한
+	// 배율이 0이 되면 가중치 총합도 0이 될 수 있고, 그러면 아래 WeightedRandomIndex가
+	// 난수를 굴리지 않고 빠져나가 같은 시드인데 그 지점 이후 결과가 전부 밀린다
+	// 0.1은 "거의 안 뽑히지만 굴림 횟수는 유지된다"를 만족하는 값
+	constexpr float MinPlannedDemandMultiplier = 0.1f;
+
 	// 누적 가중치 방식으로 인덱스 하나를 뽑음. Weights가 비어있지 않다는 건 호출부가 보장함
 	int32 WeightedRandomIndex(const TArray<float>& Weights, FRandomStream& Stream)
 	{
@@ -898,8 +916,14 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 			// GetCategoryAttractionWeights와 같은 지수를 적용
 			const float Weight = FMath::Pow(FMath::Max(RawPreference, 0.0f), CategoryAttractionExponent);
 
+			// 이 카테고리 안에서 가장 크게 오른 상품 하나가 카테고리 전체를 끌어올린다
+			// 상품 가중치만 바꾸면 "Supply 안에서 우산 비중"만 올라갈 뿐
+			// Supply를 고르는 손님 수는 그대로여서 매장에서는 거의 티가 안 난다
+			float MaxModifier = 0.0f;
+			ApplyPlannedDemandWeights(ProductsInCategory, ProductWeights, MaxModifier);
+
 			CandidateCategories.Add(Category);
-			CategoryWeights.Add(Weight);
+			CategoryWeights.Add(Weight * GetPlannedDemandMultiplier(MaxModifier));
 		}
 
 		if (CandidateCategories.Num() == 0)
@@ -921,8 +945,27 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 			continue;
 		}
 
+		// 카테고리 안에서도 같은 배율을 먹인다. 여기까지 해야 "비 오는 날 Supply를 고른 손님이
+		// 그 안에서 우산을 고른다"가 된다 - 카테고리만 올리면 횃불·화살이 대신 뽑힌다
+		float PickedCategoryMaxModifier = 0.0f;
+		ApplyPlannedDemandWeights(ProductsInPickedCategory, ProductWeightsInPickedCategory, PickedCategoryMaxModifier);
+
 		const FName PickedProduct = ProductsInPickedCategory[WeightedRandomIndex(ProductWeightsInPickedCategory, Stream)];
 		Result.Add(PickedProduct);
+
+		// 수요 보정이 걸린 상품을 계획했을 때만 로그
+		// 가중치를 곱하기 전 원시 수치로 판정 - W_PlannedDemand=0 대조군에서도 찍혀야 비교가 된다
+		const float PickedModifier = GetPlannedDemandModifier(PickedProduct);
+		if (!FMath::IsNearlyZero(PickedModifier))
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[계획수요] 시드=%d 종족=%s 계획상품=%s 수치=%+.2f 배율=%.2f"),
+				GetCustomerSeed(),
+				Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
+				*PickedProduct.ToString(),
+				PickedModifier,
+				GetPlannedDemandMultiplier(PickedModifier));
+		}
 	}
 
 	return Result;
@@ -1202,6 +1245,73 @@ FString UCSPurchaseDecisionComponent::GetWeatherNameForLog() const
 
 	return StaticEnum<ECSWeatherType>()->GetNameStringByValue(
 		static_cast<int64>(WeatherSubsystem->GetCurrentWeather()));
+}
+
+bool UCSPurchaseDecisionComponent::IsSingleUnitLimitReached(const FDataTableRowHandle& ProductRow) const
+{
+	if (!SingleUnitProductIds.Contains(ProductRow.RowName))
+	{
+		return false;
+	}
+
+	// 손님 상태를 못 찾으면 장바구니를 확인할 수 없으므로 막지 않는다(기존 동작 유지)
+	const UCSCustomerStateComponent* State = GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	for (const FCSSelectProduct& Selected : State->SelectProducts)
+	{
+		if (Selected.ProductRow.RowName == ProductRow.RowName)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// 계획 상품 추첨용 수요 보정 = 뉴스 + 날씨
+// 둘을 합산하는 이유: 같은 상품에 둘 다 걸릴 수 있고, 한쪽만 반영하면
+// "진열대 앞에서는 둘 다 보는데 사러 올 때는 하나만 본다"가 되어 두 축의 처리가 어긋난다
+float UCSPurchaseDecisionComponent::GetPlannedDemandModifier(FName ProductRowName) const
+{
+	if (!IsValid(ProductMasterDataTable) || ProductRowName.IsNone())
+	{
+		return 0.0f;
+	}
+
+	// 추첨 단계에는 상품 액터가 없어서 핸들이 없다. 마스터 테이블 + 행 이름으로 직접 만든다
+	FDataTableRowHandle Handle;
+	Handle.DataTable = ProductMasterDataTable;
+	Handle.RowName = ProductRowName;
+
+	return GetNewsDemandModifier(Handle) + GetWeatherDemandModifier(Handle);
+}
+
+float UCSPurchaseDecisionComponent::GetPlannedDemandMultiplier(float DemandModifier) const
+{
+	return FMath::Max(1.0f + W_PlannedDemand * DemandModifier, MinPlannedDemandMultiplier);
+}
+
+void UCSPurchaseDecisionComponent::ApplyPlannedDemandWeights(const TArray<FName>& ProductRowNames,
+	TArray<float>& InOutWeights, float& OutMaxModifier) const
+{
+	OutMaxModifier = 0.0f;
+
+	// 호출부가 두 배열을 나란히 채우지만, 어긋난 채로 들어오면 엉뚱한 상품에 배율이 붙는다
+	if (ProductRowNames.Num() != InOutWeights.Num())
+	{
+		return;
+	}
+
+	for (int32 Index = 0; Index < ProductRowNames.Num(); ++Index)
+	{
+		const float Modifier = GetPlannedDemandModifier(ProductRowNames[Index]);
+		OutMaxModifier = FMath::Max(OutMaxModifier, Modifier);
+		InOutWeights[Index] *= GetPlannedDemandMultiplier(Modifier);
+	}
 }
 
 void UCSPurchaseDecisionComponent::LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate,
