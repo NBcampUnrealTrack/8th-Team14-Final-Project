@@ -180,6 +180,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
 	float W_NewsDemand = 0.3f;
 
+	// 오늘 날씨가 상품 수요에 반영되는 세기
+	// 뉴스와 같은 이유로 종족 차등을 두지 않는다
+	// 0으로 두면 날씨 영향이 완전히 꺼져서 검증 대조군으로 쓸 수 있음
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights")
+	float W_WeatherDemand = 0.3f;
+
 	// 같은 대상을 끌어올리는 앵커가 여러 개일 때 두 번째부터 추가분을 줄이는 비율
 	// 1 미만이면 보너스 상한은 (첫 보너스 ÷ (1 − 비율))
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -274,6 +280,21 @@ private:
 
 	// 위 수치에 W_NewsDemand를 곱한 실제 점수 보정분
 	float ComputeNewsDemandBonus(const FDataTableRowHandle& ProductRow) const;
+
+	// 오늘 날씨가 이 상품 수요를 얼마나 바꾸는지 (가중치 곱하기 전 원시 수치)
+	// 날씨 서브시스템이 없거나 규칙이 안 걸리면 0
+	float GetWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const;
+
+	// 위 수치에 W_WeatherDemand를 곱한 실제 점수 보정분
+	float ComputeWeatherDemandBonus(const FDataTableRowHandle& ProductRow) const;
+
+	// 검증 로그에 찍을 오늘 날씨 이름. 서브시스템을 못 찾으면 "?"
+	FString GetWeatherNameForLog() const;
+
+	// 날씨 규칙이 걸린 후보 하나의 채점 결과를 남긴다
+	// Disposition은 이 후보가 어떻게 처리됐는지(제외/후보유지 등)
+	void LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate, float WeatherModifier,
+		float Score, const TCHAR* Disposition) const;
 
 	// 장바구니에 담긴 같은 카테고리 개수만큼 카테고리 점수를 지수적으로 깎음
 	// 채점과 거절 원인 판정이 같은 값을 봐야 해서 한 곳에 모아둠
