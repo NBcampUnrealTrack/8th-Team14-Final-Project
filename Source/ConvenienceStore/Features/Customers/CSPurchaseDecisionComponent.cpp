@@ -6,6 +6,7 @@
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
+#include "Systems/Weather/CSWeatherSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
@@ -13,6 +14,15 @@ namespace
 	// 가격 반응("비싸다")이 시작되는 선이자 연관구매 보너스를 허용하는 선
 	// 두 선이 어긋나면 "비싸다고 느끼는데 연관구매로 사는" 손님이 생긴다
 	constexpr float PriceReactionNeutralPoint = 0.5f;
+
+	// 검증 로그용 진열대 이름
+	// 후보 구조체는 진열대를 들고 있지 않지만, 상품 액터는 진열대에 Attach된 상태라
+	// 부모를 거슬러 올라가면 어느 진열대 앞에서 내린 판단인지 알 수 있다
+	FString GetShelfNameForLog(const AActor* ProductActor)
+	{
+		const AActor* Shelf = ProductActor != nullptr ? ProductActor->GetAttachParentActor() : nullptr;
+		return Shelf != nullptr ? Shelf->GetName() : TEXT("?");
+	}
 }
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
@@ -21,6 +31,9 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 
 	RandomStream.Initialize(FMath::Rand());
+
+	// 잎 우산은 내구재라 한 방문에 하나면 충분하다. 에디터에서 목록을 늘릴 수 있다
+	SingleUnitProductIds.Add(TEXT("SUP_RainUmbrella"));
 
 	static ConstructorHelpers::FObjectFinder<UDataTable> ProductMasterDataTableFinder(
 		TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster"));
@@ -131,6 +144,15 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 		return -1.0f;
 	}
 
+	// 이미 하나 담은 내구재는 더 담지 않는다
+	// OutRejectionInfo를 채우지 않는 이유: 거절 연출 대상이 아니라 조용한 미구매다
+	// (ScoreAndSelectTopCandidates가 Reason=None인 -1.0 후보를 대표 사유 집계에서 빼주므로
+	//  이 후보 때문에 엉뚱한 거절 문구가 뜨지 않는다)
+	if (IsSingleUnitLimitReached(Candidate.ProductRowHandle))
+	{
+		return -1.0f;
+	}
+
 	const FCSPriceEvaluation PriceEval = EvaluatePrice(Candidate, *ProductRow);
 	const float PriceScore = PriceEval.PriceScore;
 
@@ -201,8 +223,12 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 뉴스 보정은 음수일 수 있지만 아래 Clamp에서 0으로 잘릴 뿐 -1.0(구매 불가)이 되지는 않는다
 	const float NewsBonus = ComputeNewsDemandBonus(Candidate.ProductRowHandle);
 
+	// 날씨 보정도 마찬가지. "맑은 날의 우산"처럼 음수가 기본값인 규칙이 많지만
+	// 여기서 구매 불가로 바꾸지는 않는다 - 추첨에서 빼는 일은 ScoreAndSelectTopCandidates가 한다
+	const float WeatherBonus = ComputeWeatherDemandBonus(Candidate.ProductRowHandle);
+
 	// Clamp는 모두 더한 뒤 한 번만 - 항마다 자르면 음수 보정이 양수 보너스에 묻힌다
-	return FMath::Clamp(Normalized + AffinityBonus + NewsBonus, 0.f, 1.f);
+	return FMath::Clamp(Normalized + AffinityBonus + NewsBonus + WeatherBonus, 0.f, 1.f);
 }
 
 // 전달받은 후보 전체에 점수를 매긴 뒤 점수가 높은 순으로 정렬하고
@@ -261,8 +287,21 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 	{
 		FCSPurchaseRejectionInfo CandidateRejection;
 		const float Score = ScoreCandidate(Candidate, CandidateRejection);
+
+		// 로그 조건은 가중치를 곱하기 전 원시값으로 판정한다
+		// W_WeatherDemand=0 대조 런에서도 같은 후보가 찍혀야 두 런을 줄 단위로 맞춰볼 수 있다
+		const float WeatherModifier = GetWeatherDemandModifier(Candidate.ProductRowHandle);
+		const bool bWeatherLogTarget = !FMath::IsNearlyZero(WeatherModifier);
+
 		if (Score < 0.f)
 		{
+			// 구매 불가(-1.0)는 날씨와 무관한 차단이지만, 거절 사유 오분류를 확인할 때
+			// "같은 판정에 -1.0 후보가 있었는가"를 로그만으로 가릴 수 있어야 해서 함께 남긴다
+			if (bWeatherLogTarget)
+			{
+				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("구매불가"));
+			}
+
 			// 이미 카테고리 차단 사유로 확정됐거나, 상품 데이터를 못 찾아 사유가 안 채워진(Reason=None)
 			// 데이터 무결성 문제 후보는 대표 사유 집계에서 제외 - Severity 기본값(0.0f)이
 			// 항상 최솟값이라 아무 사유도 없는 후보가 대표로 뽑히는 걸 막기 위함
@@ -290,12 +329,42 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 		FCSPurchaseRejectionInfo NewsInfo;
 		if (TryBuildNewsSuppressionInfo(Candidate, Score, NewsInfo))
 		{
+			if (bWeatherLogTarget)
+			{
+				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("뉴스제외"));
+			}
+
 			if (Score > BestSuppressedScore)
 			{
 				OutNewsSuppressedInfo = NewsInfo;
 				BestSuppressedScore = Score;
 			}
 			continue;
+		}
+
+		// 날씨 보정이 음수인 채로 기준선 아래로 떨어진 후보는 추첨에서 뺀다
+		// 점수만 깎고 남겨두면, 1등이 기준선을 넘었을 때 softmax가 이 후보를 확률로 뽑아
+		// "비도 안 오는데 우산을 사는" 손님이 계속 나온다
+		//
+		// 여기서 "날씨만 아니었으면 통과했을까"를 따지지 않는 이유:
+		// 가루류는 BaseDemand가 낮아 날씨와 무관하게 원래 기준선 아래일 수 있어서,
+		// 원인 귀속형 조건으로는 한 번도 걸리지 않는다. 날씨는 전용 거절 연출이 없으므로
+		// 뉴스처럼 "무엇 때문에 안 샀는지"를 정확히 가릴 필요도 없다
+		//
+		// 거절 정보를 모으지 않는 것도 같은 이유다(띄울 연출이 없다)
+		// W_WeatherDemand=0이면 보정이 정확히 0이라 이 조건이 절대 성립하지 않고 기존 동작이 그대로 보존된다
+		if (W_WeatherDemand * WeatherModifier < 0.f && Score < GetEffectiveMinPurchaseUtility())
+		{
+			if (bWeatherLogTarget)
+			{
+				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("제외"));
+			}
+			continue;
+		}
+
+		if (bWeatherLogTarget)
+		{
+			LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("후보유지"));
 		}
 
 		Viable.Add(Candidate);
@@ -403,10 +472,16 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceEval.PriceScore);
 	const float NewsBonus = ComputeNewsDemandBonus(Candidate.ProductRowHandle);
 
+	// 날씨 항은 두 재계산식 모두에 실제 점수와 똑같이 더한다 - 걷어내는 판정 단계를 만들지 않는다
+	// 날씨가 음수여서 기준선 아래로 간 후보는 ScoreAndSelectTopCandidates가 이미 추첨에서 빼기 때문에
+	// 이 함수까지 오는 미달 후보는 날씨 항이 0 이상이고, 따라서 날씨는 이번 거절의 원인이 아니다
+	// 한 식에서라도 빠뜨리면 판정용 점수가 실제보다 낮아져 PriceRejected 오분류(=평판 감점)가 생긴다
+	const float WeatherBonus = ComputeWeatherDemandBonus(Candidate.ProductRowHandle);
+
 	// 1) 뉴스 보정만 빼고 실제 점수와 같은 식으로 다시 계산
 	// "뉴스가 있을 때만" 조건은 두지 않음 - 보정이 0 이상이면 빼도 점수가 안 올라 어차피 통과 못 한다
 	const float ScoreWithoutNews = FMath::Clamp(
-		ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore) + AffinityBonus,
+		ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore) + AffinityBonus + WeatherBonus,
 		0.f, 1.f);
 	if (OutScoreWithoutNews != nullptr)
 	{
@@ -436,9 +511,9 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 		return Info;
 	}
 
-	// 2) 반복구매 감쇠까지 걷어내고 본다. 뉴스 항은 실제 점수와 같게 그대로 둠
+	// 2) 반복구매 감쇠까지 걷어내고 본다. 뉴스·날씨 항은 실제 점수와 같게 그대로 둠
 	const float ScoreWithoutRepeatPenalty = FMath::Clamp(
-		ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore) + AffinityBonus + NewsBonus,
+		ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore) + AffinityBonus + NewsBonus + WeatherBonus,
 		0.f, 1.f);
 
 	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
@@ -471,6 +546,41 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		return false;
 	}
 
+	// 날씨 규칙이 걸린 후보가 하나라도 있었던 판정만 결과를 남긴다
+	// 조건은 가중치를 곱하기 전 원시값 - W_WeatherDemand=0 대조 런에서도 같은 판정이 찍혀야
+	// 두 런의 "같은 손님 같은 진열대" 판정을 줄 단위로 맞춰볼 수 있다
+	bool bWeatherRuleInvolved = false;
+	for (const FCSPurchaseCandidate& Candidate : Candidates)
+	{
+		if (!FMath::IsNearlyZero(GetWeatherDemandModifier(Candidate.ProductRowHandle)))
+		{
+			bWeatherRuleInvolved = true;
+			break;
+		}
+	}
+
+	const FString WeatherLogShelfName = bWeatherRuleInvolved
+		? GetShelfNameForLog(Candidates[0].ProductActor)
+		: FString();
+
+	auto LogWeatherDemandResult = [this, bWeatherRuleInvolved, &WeatherLogShelfName]
+		(const FName PickedProduct, const FCSPurchaseRejectionInfo& Info)
+	{
+		if (!bWeatherRuleInvolved)
+		{
+			return;
+		}
+
+		const FString PickedText = PickedProduct.IsNone() ? TEXT("미구매") : PickedProduct.ToString();
+		UE_LOG(LogTemp, Log,
+			TEXT("[날씨수요] 결과 시드=%d 진열대=%s 담은상품=%s 사유=%s"),
+			GetCustomerSeed(),
+			*WeatherLogShelfName,
+			*PickedText,
+			*StaticEnum<ECSPurchaseRejectReason>()->GetNameStringByValue(
+				static_cast<int64>(Info.Reason)));
+	};
+
 	// 점수 매기고 상위 후보만 추림 (구매 불가 후보들의 대표 거절 사유는 OutRejectionInfo에 누적됨)
 	FCSPurchaseRejectionInfo NewsSuppressedInfo;
 	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates, OutRejectionInfo, NewsSuppressedInfo);
@@ -489,6 +599,7 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		{
 			OutRejectionInfo = NewsSuppressedInfo;
 		}
+		LogWeatherDemandResult(NAME_None, OutRejectionInfo);
 		return false;
 	}
 
@@ -498,6 +609,7 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		OutRejectionInfo = bHasNewsSuppression
 			? NewsSuppressedInfo
 			: BuildScoreShortfallRejectionInfo(TopCandidates[0]);
+		LogWeatherDemandResult(NAME_None, OutRejectionInfo);
 		return false;
 	}
 
@@ -548,6 +660,8 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 			W_NewsDemand * NewsModifier,
 			OutSelected.Score);
 	}
+
+	LogWeatherDemandResult(OutSelected.ProductRowHandle.RowName, OutRejectionInfo);
 
 	return true;
 }
@@ -718,6 +832,12 @@ namespace
 		}
 	}
 
+	// 수요 보정을 가중치 배율로 바꿀 때의 하한
+	// 배율이 0이 되면 가중치 총합도 0이 될 수 있고, 그러면 아래 WeightedRandomIndex가
+	// 난수를 굴리지 않고 빠져나가 같은 시드인데 그 지점 이후 결과가 전부 밀린다
+	// 0.1은 "거의 안 뽑히지만 굴림 횟수는 유지된다"를 만족하는 값
+	constexpr float MinPlannedDemandMultiplier = 0.1f;
+
 	// 누적 가중치 방식으로 인덱스 하나를 뽑음. Weights가 비어있지 않다는 건 호출부가 보장함
 	int32 WeightedRandomIndex(const TArray<float>& Weights, FRandomStream& Stream)
 	{
@@ -796,8 +916,14 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 			// GetCategoryAttractionWeights와 같은 지수를 적용
 			const float Weight = FMath::Pow(FMath::Max(RawPreference, 0.0f), CategoryAttractionExponent);
 
+			// 이 카테고리 안에서 가장 크게 오른 상품 하나가 카테고리 전체를 끌어올린다
+			// 상품 가중치만 바꾸면 "Supply 안에서 우산 비중"만 올라갈 뿐
+			// Supply를 고르는 손님 수는 그대로여서 매장에서는 거의 티가 안 난다
+			float MaxModifier = 0.0f;
+			ApplyPlannedDemandWeights(ProductsInCategory, ProductWeights, MaxModifier);
+
 			CandidateCategories.Add(Category);
-			CategoryWeights.Add(Weight);
+			CategoryWeights.Add(Weight * GetPlannedDemandMultiplier(MaxModifier));
 		}
 
 		if (CandidateCategories.Num() == 0)
@@ -819,8 +945,27 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 			continue;
 		}
 
+		// 카테고리 안에서도 같은 배율을 먹인다. 여기까지 해야 "비 오는 날 Supply를 고른 손님이
+		// 그 안에서 우산을 고른다"가 된다 - 카테고리만 올리면 횃불·화살이 대신 뽑힌다
+		float PickedCategoryMaxModifier = 0.0f;
+		ApplyPlannedDemandWeights(ProductsInPickedCategory, ProductWeightsInPickedCategory, PickedCategoryMaxModifier);
+
 		const FName PickedProduct = ProductsInPickedCategory[WeightedRandomIndex(ProductWeightsInPickedCategory, Stream)];
 		Result.Add(PickedProduct);
+
+		// 수요 보정이 걸린 상품을 계획했을 때만 로그
+		// 가중치를 곱하기 전 원시 수치로 판정 - W_PlannedDemand=0 대조군에서도 찍혀야 비교가 된다
+		const float PickedModifier = GetPlannedDemandModifier(PickedProduct);
+		if (!FMath::IsNearlyZero(PickedModifier))
+		{
+			UE_LOG(LogTemp, Log,
+				TEXT("[계획수요] 시드=%d 종족=%s 계획상품=%s 수치=%+.2f 배율=%.2f"),
+				GetCustomerSeed(),
+				Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
+				*PickedProduct.ToString(),
+				PickedModifier,
+				GetPlannedDemandMultiplier(PickedModifier));
+		}
 	}
 
 	return Result;
@@ -1063,6 +1208,126 @@ float UCSPurchaseDecisionComponent::GetNewsDemandModifier(const FDataTableRowHan
 float UCSPurchaseDecisionComponent::ComputeNewsDemandBonus(const FDataTableRowHandle& ProductRow) const
 {
 	return W_NewsDemand * GetNewsDemandModifier(ProductRow);
+}
+
+// 오늘 날씨의 상품 수요 보정 원시 수치
+// 뉴스와 마찬가지로 가격 게이트를 두지 않는다 - 값이 싸도 비가 안 오면 우산은 필요 없다
+float UCSPurchaseDecisionComponent::GetWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const
+{
+	// 서브시스템 3단 체크 - 없으면 보정 0(날씨 연동 전과 같은 동작)
+	const UWorld* World = GetWorld();
+	const UCSWeatherSubsystem* WeatherSubsystem = World != nullptr
+		? World->GetSubsystem<UCSWeatherSubsystem>()
+		: nullptr;
+	if (!IsValid(WeatherSubsystem))
+	{
+		return 0.0f;
+	}
+
+	return WeatherSubsystem->GetProductWeatherDemandModifier(ProductRow);
+}
+
+float UCSPurchaseDecisionComponent::ComputeWeatherDemandBonus(const FDataTableRowHandle& ProductRow) const
+{
+	return W_WeatherDemand * GetWeatherDemandModifier(ProductRow);
+}
+
+FString UCSPurchaseDecisionComponent::GetWeatherNameForLog() const
+{
+	const UWorld* World = GetWorld();
+	const UCSWeatherSubsystem* WeatherSubsystem = World != nullptr
+		? World->GetSubsystem<UCSWeatherSubsystem>()
+		: nullptr;
+	if (!IsValid(WeatherSubsystem))
+	{
+		return TEXT("?");
+	}
+
+	return StaticEnum<ECSWeatherType>()->GetNameStringByValue(
+		static_cast<int64>(WeatherSubsystem->GetCurrentWeather()));
+}
+
+bool UCSPurchaseDecisionComponent::IsSingleUnitLimitReached(const FDataTableRowHandle& ProductRow) const
+{
+	if (!SingleUnitProductIds.Contains(ProductRow.RowName))
+	{
+		return false;
+	}
+
+	// 손님 상태를 못 찾으면 장바구니를 확인할 수 없으므로 막지 않는다(기존 동작 유지)
+	const UCSCustomerStateComponent* State = GetCustomerState();
+	if (State == nullptr)
+	{
+		return false;
+	}
+
+	for (const FCSSelectProduct& Selected : State->SelectProducts)
+	{
+		if (Selected.ProductRow.RowName == ProductRow.RowName)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// 계획 상품 추첨용 수요 보정 = 뉴스 + 날씨
+// 둘을 합산하는 이유: 같은 상품에 둘 다 걸릴 수 있고, 한쪽만 반영하면
+// "진열대 앞에서는 둘 다 보는데 사러 올 때는 하나만 본다"가 되어 두 축의 처리가 어긋난다
+float UCSPurchaseDecisionComponent::GetPlannedDemandModifier(FName ProductRowName) const
+{
+	if (!IsValid(ProductMasterDataTable) || ProductRowName.IsNone())
+	{
+		return 0.0f;
+	}
+
+	// 추첨 단계에는 상품 액터가 없어서 핸들이 없다. 마스터 테이블 + 행 이름으로 직접 만든다
+	FDataTableRowHandle Handle;
+	Handle.DataTable = ProductMasterDataTable;
+	Handle.RowName = ProductRowName;
+
+	return GetNewsDemandModifier(Handle) + GetWeatherDemandModifier(Handle);
+}
+
+float UCSPurchaseDecisionComponent::GetPlannedDemandMultiplier(float DemandModifier) const
+{
+	return FMath::Max(1.0f + W_PlannedDemand * DemandModifier, MinPlannedDemandMultiplier);
+}
+
+void UCSPurchaseDecisionComponent::ApplyPlannedDemandWeights(const TArray<FName>& ProductRowNames,
+	TArray<float>& InOutWeights, float& OutMaxModifier) const
+{
+	OutMaxModifier = 0.0f;
+
+	// 호출부가 두 배열을 나란히 채우지만, 어긋난 채로 들어오면 엉뚱한 상품에 배율이 붙는다
+	if (ProductRowNames.Num() != InOutWeights.Num())
+	{
+		return;
+	}
+
+	for (int32 Index = 0; Index < ProductRowNames.Num(); ++Index)
+	{
+		const float Modifier = GetPlannedDemandModifier(ProductRowNames[Index]);
+		OutMaxModifier = FMath::Max(OutMaxModifier, Modifier);
+		InOutWeights[Index] *= GetPlannedDemandMultiplier(Modifier);
+	}
+}
+
+void UCSPurchaseDecisionComponent::LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate,
+	float WeatherModifier, float Score, const TCHAR* Disposition) const
+{
+	UE_LOG(LogTemp, Log,
+		TEXT("[날씨수요] 후보 시드=%d 종족=%s 진열대=%s 상품=%s 날씨=%s 수치=%+.2f 반영=%+.2f 점수=%.2f 처리=%s"),
+		GetCustomerSeed(),
+		Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
+		*GetShelfNameForLog(Candidate.ProductActor),
+		*Candidate.ProductRowHandle.RowName.ToString(),
+		*GetWeatherNameForLog(),
+		WeatherModifier,
+		W_WeatherDemand * WeatherModifier,
+		Score,
+		Disposition);
 }
 
 // 반복구매 감쇠를 적용한 카테고리 점수

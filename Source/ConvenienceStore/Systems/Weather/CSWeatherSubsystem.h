@@ -61,6 +61,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather|Board")
 	int32 GetPublicForecastDays() const;
 
+	// 오늘 날씨가 이 상품의 수요를 얼마나 바꾸는지 (가중치 곱하기 전 원시값, 합산 결과)
+	// 규칙이 없거나 설정이 비어 있으면 0을 반환해 날씨 도입 전과 같은 동작이 됩니다.
+	//
+	// 오늘 날씨를 "미리 정해둔 활성 규칙 목록"으로 캐싱하지 않고 호출 시점에 GetCurrentWeather()로 읽습니다.
+	// cs.WeatherSet은 CurrentWeather만 덮어쓰기 때문에, 캐싱하면 날씨는 비인데 수요는 맑음 기준으로 계산됩니다.
+	UFUNCTION(BlueprintPure, Category = "Weather|Demand")
+	float GetProductWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const;
+
 	// -----------------------------------------------------------------------
 	// 알림 (이벤트 브로드캐스트)
 	// -----------------------------------------------------------------------
@@ -211,6 +219,12 @@ protected:
 	UPROPERTY(Transient)
 	TMap<ECSWeatherType, FCSWeatherRow> WeatherRowCache;
 
+	// DT_WeatherDemandRule을 날씨별로 미리 나눠둔 캐시
+	// 캐싱 대상은 "표 데이터"이지 "오늘의 활성 규칙"이 아닙니다 - 오늘 날씨는 조회할 때마다 다시 읽습니다.
+	// TMap<K, TArray<V>>는 UPROPERTY로 반영할 수 없지만, 행 구조체가 FName/float/enum뿐이라
+	// UObject 참조가 없어 GC가 걷어갈 대상도 없습니다.
+	TMap<ECSWeatherType, TArray<FCSWeatherDemandRuleRow>> WeatherDemandRuleCache;
+
 	// 저장할 날씨 확률표입니다. 시작 시 Settings->BaseWeights를 복사해옵니다.
 	// 영구 이벤트는 이 표를 직접 고칩니다. 되돌리지 않습니다.
 	UPROPERTY(Transient)
@@ -291,6 +305,17 @@ private:
 	// 캐시 생성 및 검색 헬퍼 함수
 	void BuildWeatherRowCache();
 	const FCSWeatherRow* FindWeatherRow(ECSWeatherType Type) const;
+
+	// 수요 규칙표를 날씨별로 나눠 캐시에 담습니다. 규칙표가 없으면 캐시를 비운 채 돌아옵니다.
+	void BuildWeatherDemandRuleCache();
+
+	// 시작 시 날씨 후보·가중치·규칙표 상태를 한 번만 찍습니다.
+	// 규칙표가 연결 안 된 채로 넘어가면 보정이 전부 0이 되는데 게임은 멀쩡히 돌아가서
+	// 눈에 띄지 않으므로, 그 실패를 시작 시점에 드러내려는 로그입니다.
+	void LogWeatherStartupSummary() const;
+
+	// 오늘 날씨에 걸리는 규칙이 몇 건인지 (로그용)
+	int32 GetActiveDemandRuleCount() const;
 
 	// 날씨에 맞춰 파티클(이펙트) 액터를 스폰하거나 파괴하고, 문 연출 영역 에셋도 교체
 	void ApplyWeatherEffect(ECSWeatherType NewWeather);

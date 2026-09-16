@@ -57,6 +57,53 @@ struct CONVENIENCESTORE_API FCSWeatherRow : public FTableRowBase
 	TSoftObjectPtr<UNiagaraSystem> ZoneNiagaraSystem;
 };
 
+// 날씨 수요 규칙이 무엇을 대상으로 하는지
+// 뉴스 쪽 ECSNoticeEventTargetType과 값 구성은 같지만 재사용하지 않는다
+// 재사용하면 날씨 헤더가 뉴스 헤더를 include하게 되어
+// "하루짜리 이벤트 표와 지속되는 날씨 상태 표는 합치지 않는다"는 분리가 헤더 의존에서 먼저 깨진다
+UENUM(BlueprintType)
+enum class ECSWeatherDemandTargetType : uint8
+{
+	// TargetId가 DT_ProductMaster의 행 이름
+	Product  UMETA(DisplayName = "상품"),
+
+	// TargetId가 ECSProductCategory의 값 이름
+	Category UMETA(DisplayName = "카테고리"),
+};
+
+// DT_WeatherDemandRule에 저장할 날씨별 상품 수요 보정 한 건
+// 뉴스 규칙 행에 있는 SourceType/SourceId에 해당하는 필드가 없다 - 날씨는 WeatherType 자체가 출처다
+//
+// 날씨 종류를 새로 활성화하면 이 표에도 해당 날씨의 행을 추가해야 한다.
+// 빠뜨리면 그 날씨에는 음수가 안 걸려 대상 상품이 평소처럼 팔린다
+// (규칙이 0건인 날씨는 경고가 아니라 "보정 없음"으로 조용히 넘어가기 때문에 눈에 띄지 않는다)
+USTRUCT(BlueprintType)
+struct CONVENIENCESTORE_API FCSWeatherDemandRuleRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	// 이 규칙이 적용될 날씨 종류
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Demand")
+	ECSWeatherType WeatherType = ECSWeatherType::Clear;
+
+	// TargetId를 상품 행 이름으로 볼지 카테고리 이름으로 볼지
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Demand")
+	ECSWeatherDemandTargetType TargetType = ECSWeatherDemandTargetType::Product;
+
+	// 대상 상품 행 이름 또는 카테고리 이름
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Demand")
+	FName TargetId = NAME_None;
+
+	// 수요 보정 원시값. 양수면 잘 팔리고 음수면 덜 팔린다
+	// 같은 날씨에 여러 행이 걸리면 전부 합산한다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Demand")
+	float DemandModifier = 0.0f;
+
+	// 행을 지우지 않고 잠시 꺼둘 때 사용
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weather|Demand")
+	bool bEnabled = true;
+};
+
 // 날씨 종류별 가중치를 보관하는 표
 // 저장된 값의 합이 반드시 1일 필요는 없으며, 확률 계산 시 전체 합으로 나누어 사용
 USTRUCT(BlueprintType)
