@@ -43,6 +43,9 @@ public:
 	int32 GetTodayGeneratedOrderCount() const { return GeneratedOrderCountToday; }
 
 	UFUNCTION(BlueprintPure, Category = "Delivery Order")
+	int32 GetDailyOrderLimit() const;
+
+	UFUNCTION(BlueprintPure, Category = "Delivery Order")
 	int32 GetAcceptedOrderCount() const;
 
 	UFUNCTION(BlueprintPure, Category = "Delivery Order")
@@ -114,7 +117,6 @@ private:
 	bool IsStoreOperating() const;
 	void RefreshBusinessDayState();
 	void ScheduleNextOrder(float CurrentGameMinutes);
-	int32 GetDailyOrderLimit() const;
 	int32 GetMaximumLineCount() const;
 	int32 FindOrderIndex(int32 OrderId) const;
 	FCSDeliveryOrderRuntime* FindOrderMutable(int32 OrderId);
@@ -125,7 +127,9 @@ private:
 	void ReleaseOrderReservation(const FCSDeliveryOrderRuntime& Order);
 	void BroadcastOrdersChanged(const FCSDeliveryOrderRuntime& ChangedOrder);
 	void RemoveOrderAt(int32 OrderIndex, ECSDeliveryOrderStatus FinalStatus);
+	void ShowAcceptanceExpiredToast(const FCSDeliveryOrderRuntime& ExpiredOrder);
 	void ShowDeadlineExpiredToast(const FCSDeliveryOrderRuntime& ExpiredOrder);
+	void ShowStoreClosedFailureToast(const FCSDeliveryOrderRuntime& FailedOrder);
 	void ShowDeliveryToast(const FText& Title, const FText& Message) const;
 
 	// 단일 CurrentOrder 대신 여러 수락 대기·진행 중 주문을 함께 보관합니다.
@@ -153,6 +157,10 @@ private:
 	UPROPERTY(Transient)
 	float NextOrderGenerationMinutes = -1.0f;
 
+	// 강화로 오늘의 주문 한도가 바뀌면 이미 예약한 다음 주문도 남은 시간에 맞춰 다시 배치합니다.
+	UPROPERTY(Transient)
+	int32 LastScheduledDailyOrderLimit = INDEX_NONE;
+
 	UPROPERTY(Transient)
 	int32 NextOrderId = 1;
 
@@ -162,13 +170,6 @@ private:
 	UPROPERTY(Transient)
 	int32 ActiveDispatchOrderId = INDEX_NONE;
 
-	// 평판별 최대 주문 수는 낮음 0, 보통 1, 좋음 2, 최고 3건입니다.
-	int32 MaxOrdersVeryBadOrBad = 0;
-	int32 MaxOrdersNormal = 1;
-	int32 MaxOrdersGood = 2;
-	int32 MaxOrdersExcellent = 3;
-	float MinimumOrderIntervalMinutes = 90.0f;
-	float MaximumOrderIntervalMinutes = 180.0f;
 	float AcceptanceWindowMinutes = 120.0f;
 	float DeliveryWindowMinutes = 180.0f;
 	int32 MinimumProductQuantity = 1;

@@ -13,6 +13,18 @@ class UCSDeliveryOrderSettingsDataAsset;
 class UCSDeliverySettlementWidget;
 class ACSProductPickupActor;
 class ACSDeliveryCrateActor;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class ACSStoreGameState;
+
+USTRUCT(BlueprintType)
+struct FCSMagicCircleLevelVFX
+{
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> IdleEffect;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> UpgradeEffect;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> DispatchEffect;
+};
 
 /** 상점 내에서 선택한 원격 배달 주문을 발송하는 마법진입니다. */
 UCLASS()
@@ -23,6 +35,7 @@ class CONVENIENCESTORE_API ACSDeliveryMagicCircleActor : public AActor, public I
 public:
 	ACSDeliveryMagicCircleActor();
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
@@ -52,6 +65,16 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> MagicCircleMesh;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UNiagaraComponent> MagicCircleVFX;
+	// 배열 0~4에 1~5단계의 효과를 지정합니다. 비어 있으면 해당 효과를 재생하지 않습니다.
+	UPROPERTY(EditAnywhere, EditFixedSize, BlueprintReadOnly, Category = "Delivery Order|VFX")
+	TArray<FCSMagicCircleLevelVFX> LevelVFX;
+	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery Order|VFX")
+	void OnMagicCircleVisualUpdated(int32 Level);
+	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery Order|VFX")
+	void OnDeliveryDispatched();
+
 	/** 상품 후보와 원격 수신처 목록을 담은 설정 에셋입니다. */
 	// 모든 동일 마법진 인스턴스가 BP 기본값의 같은 주문 설정을 사용합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery Order")
@@ -59,4 +82,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Delivery Order|UI")
 	TSubclassOf<UCSDeliverySettlementWidget> DeliverySettlementWidgetClass;
+
+private:
+	UFUNCTION() void HandleMagicCircleUpgraded(int32 Level);
+	void UpdateLevelVFX(int32 Level, bool bPlayUpgrade);
+	void PlayOneShotVFX(UNiagaraSystem* Effect);
+	UPROPERTY(Transient) TObjectPtr<ACSStoreGameState> StoreState;
 };

@@ -25,6 +25,10 @@ class CONVENIENCESTORE_API UCSStoreEconomyDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	// 배열 0~3은 각각 2~5단계로 강화하는 비용입니다.
+	UPROPERTY(EditAnywhere, EditFixedSize, BlueprintReadOnly, Category = "Store|Economy|MagicCircle", meta = (ClampMin = "1"))
+	TArray<int32> MagicCircleUpgradeCosts = { 10000, 30000, 50000, 100000 };
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Economy|Employees", meta = (ClampMin = "1", ClampMax = "100000000"))
 	int32 FirstRestockHireCost = 1000;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Economy|Employees", meta = (ClampMin = "1", ClampMax = "100000000"))

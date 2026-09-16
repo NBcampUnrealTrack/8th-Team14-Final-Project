@@ -25,6 +25,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	bool,
 	bLocked);
 
+struct FCSQueuedDeliveryToast
+{
+	FText Title;
+	FText Message;
+};
+
 // 로컬 플레이어의 편의점 HUD와 마감 UI 입력 상태를 관리합니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
@@ -105,6 +111,8 @@ protected:
 	void UpdateClosingInputMode();
 	void ShowStatusAnnouncement(ECSStatusAnnouncementType AnnouncementType);
 	void TryShowPendingClosingAnnouncement();
+	void TryShowQueuedDeliveryToast();
+	bool IsCriticalDeliveryToastUIOpen() const;
 	bool HasGameplayUIInputLock() const;
 	UUserWidget* GetFocusedGameplayUIWidget() const;
 
@@ -141,6 +149,7 @@ protected:
 	TSubclassOf<UCSDeliveryToastWidget> DeliveryToastWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSDeliveryToastWidget> ActiveDeliveryToastWidget;
+	TArray<FCSQueuedDeliveryToast> QueuedDeliveryToasts;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
