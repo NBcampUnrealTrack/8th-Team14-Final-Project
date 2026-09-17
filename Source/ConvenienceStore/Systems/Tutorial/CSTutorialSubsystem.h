@@ -36,7 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	int32,
 	Goal);
 
-// 튜토리얼이 완전히 끝났을 때(정상 완료든 cs.SkipTutorial이든) 딱 한 번 방송
+// 튜토리얼이 완전히 끝났을 때 딱 한 번 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnTutorialCompleted);
 
 // 튜토리얼 진행 상태를 소유하는 서브시스템
