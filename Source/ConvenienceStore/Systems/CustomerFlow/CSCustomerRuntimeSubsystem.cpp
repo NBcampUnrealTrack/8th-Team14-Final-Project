@@ -302,19 +302,6 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(
 
 	AActor* Picked = FinalCandidates[PickIndex];
 
-	if (bPickedFromAffinity)
-	{
-		TArray<FString> TargetNames;
-		for (const ECSProductCategory Category : AffinityTargetCategories)
-		{
-			TargetNames.Add(UEnum::GetDisplayValueAsText(Category).ToString());
-		}
-		UE_LOG(LogTemp, Log, TEXT("[연관구매] 끌어가기 손님=%s 대상=[%s] 짝 진열대=%d/%d → %s"),
-			Customer != nullptr ? *Customer->GetName() : TEXT("?"),
-			*FString::Join(TargetNames, TEXT(", ")),
-			AffinityCandidates.Num(), Candidates.Num(), *Picked->GetName());
-	}
-
 	return Picked;
 }
 

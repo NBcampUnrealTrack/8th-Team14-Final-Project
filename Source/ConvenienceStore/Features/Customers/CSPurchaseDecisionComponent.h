@@ -314,14 +314,6 @@ private:
 	// 위 수치에 W_WeatherDemand를 곱한 실제 점수 보정분
 	float ComputeWeatherDemandBonus(const FDataTableRowHandle& ProductRow) const;
 
-	// 검증 로그에 찍을 오늘 날씨 이름. 서브시스템을 못 찾으면 "?"
-	FString GetWeatherNameForLog() const;
-
-	// 날씨 규칙이 걸린 후보 하나의 채점 결과를 남긴다
-	// Disposition은 이 후보가 어떻게 처리됐는지(제외/후보유지 등)
-	void LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate, float WeatherModifier,
-		float Score, const TCHAR* Disposition) const;
-
 	// 이 상품이 1개 제한 대상이고 이미 장바구니에 들어 있는지
 	bool IsSingleUnitLimitReached(const FDataTableRowHandle& ProductRow) const;
 
