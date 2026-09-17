@@ -16,8 +16,18 @@
 
 namespace
 {
-constexpr int32 DaysPerMonth = 28;
+constexpr int32 JournalDaysPerMonth = 28;
 constexpr int32 PageCount = 10;
+constexpr const TCHAR* JournalPageTitles[] = {TEXT("지도"),
+											  TEXT("고블린"),
+											  TEXT("오크"),
+											  TEXT("모험가"),
+											  TEXT("마법사"),
+											  TEXT("드워프"),
+											  TEXT("엘프"),
+											  TEXT("달력 · 사건 기록"),
+											  TEXT("배달 기록"),
+											  TEXT("아티팩트 도감")};
 bool IsInMap(FVector2D Point)
 {
 	return Point.X >= 0 && Point.X <= 1 && Point.Y >= 0 && Point.Y <= 1;
@@ -40,7 +50,7 @@ void UCSJournalWidget::NativeConstruct()
 	CacheMapGeometry();
 	Journal->ObserveDay(GetCurrentBusinessDay());
 	SelectedBusinessDay = GetCurrentBusinessDay();
-	SelectedMonthIndex = (SelectedBusinessDay - 1) / DaysPerMonth;
+	SelectedMonthIndex = (SelectedBusinessDay - 1) / JournalDaysPerMonth;
 	Journal->OnJournalChanged.AddUniqueDynamic(this, &UCSJournalWidget::RefreshJournal);
 	if (CloseButton)
 		CloseButton->OnClicked.AddUniqueDynamic(this, &UCSJournalWidget::RequestClose);
@@ -113,7 +123,7 @@ bool UCSJournalWidget::SelectMonth(int32 NewMonthIndex)
 	if (!Journal || NewMonthIndex < 0 || NewMonthIndex > GetLatestMonthIndex())
 		return false;
 	SelectedMonthIndex = NewMonthIndex;
-	SelectedBusinessDay = NewMonthIndex * DaysPerMonth + 1;
+	SelectedBusinessDay = NewMonthIndex * JournalDaysPerMonth + 1;
 	if (SelectedPage == ECSJournalPage::Calendar)
 		Journal->MarkDayRead(SelectedBusinessDay);
 	RefreshJournal();
@@ -125,7 +135,7 @@ bool UCSJournalWidget::SelectDay(int32 BusinessDay)
 	if (!Journal || BusinessDay < 1 || BusinessDay > Journal->LatestDay)
 		return false;
 	SelectedBusinessDay = BusinessDay;
-	SelectedMonthIndex = (BusinessDay - 1) / DaysPerMonth;
+	SelectedMonthIndex = (BusinessDay - 1) / JournalDaysPerMonth;
 	if (SelectedPage == ECSJournalPage::Calendar)
 		Journal->MarkDayRead(BusinessDay);
 	RefreshJournal();
@@ -152,8 +162,8 @@ void UCSJournalWidget::RefreshJournal()
 	TGuardValue<bool> Guard(bRefreshing, true);
 	Journal->ObserveDay(GetCurrentBusinessDay());
 	SelectedMonthIndex = FMath::Clamp(SelectedMonthIndex, 0, GetLatestMonthIndex());
-	SelectedBusinessDay = FMath::Clamp(SelectedBusinessDay, SelectedMonthIndex * DaysPerMonth + 1,
-									   FMath::Min(Journal->LatestDay, (SelectedMonthIndex + 1) * DaysPerMonth));
+	SelectedBusinessDay = FMath::Clamp(SelectedBusinessDay, SelectedMonthIndex * JournalDaysPerMonth + 1,
+									   FMath::Min(Journal->LatestDay, (SelectedMonthIndex + 1) * JournalDaysPerMonth));
 	UpdateNavigationWidgets();
 	ApplyJournalView();
 	OnJournalUpdated();
@@ -189,10 +199,7 @@ void UCSJournalWidget::UpdateLiveData()
 }
 FText UCSJournalWidget::GetPageTitle() const
 {
-	const TCHAR* Names[] = {TEXT("지도"),	   TEXT("고블린"),		 TEXT("오크"), TEXT("모험가"),
-							TEXT("마법사"),	   TEXT("드워프"),		 TEXT("엘프"), TEXT("달력 · 사건 기록"),
-							TEXT("배달 기록"), TEXT("아티팩트 도감")};
-	return FText::FromString(Names[FMath::Clamp(static_cast<int32>(SelectedPage), 0, PageCount - 1)]);
+	return FText::FromString(JournalPageTitles[FMath::Clamp(static_cast<int32>(SelectedPage), 0, PageCount - 1)]);
 }
 bool UCSJournalWidget::GetSelectedRace(ECSJournalRace& OutRace) const
 {
@@ -210,26 +217,26 @@ int32 UCSJournalWidget::GetCurrentBusinessDay() const
 }
 int32 UCSJournalWidget::GetLatestMonthIndex() const
 {
-	return Journal ? (FMath::Max(1, Journal->LatestDay) - 1) / DaysPerMonth : 0;
+	return Journal ? (FMath::Max(1, Journal->LatestDay) - 1) / JournalDaysPerMonth : 0;
 }
 FCSJournalDateView UCSJournalWidget::GetDateInfo(int32 BusinessDay)
 {
 	FCSJournalDateView Date;
 	const int32 Index = FMath::Max(1, BusinessDay) - 1;
-	Date.MonthIndex = Index / DaysPerMonth;
+	Date.MonthIndex = Index / JournalDaysPerMonth;
 	Date.Year = Date.MonthIndex / 12 + 1;
 	Date.Month = Date.MonthIndex % 12 + 1;
-	Date.Day = Index % DaysPerMonth + 1;
+	Date.Day = Index % JournalDaysPerMonth + 1;
 	return Date;
 }
 TArray<FCSJournalCalendarDayView> UCSJournalWidget::GetCalendarDays() const
 {
 	TArray<FCSJournalCalendarDayView> Days;
-	for (int32 I = 0; I < DaysPerMonth; ++I)
+	for (int32 I = 0; I < JournalDaysPerMonth; ++I)
 	{
 		FCSJournalCalendarDayView D;
 		D.DayOfMonth = I + 1;
-		D.BusinessDay = SelectedMonthIndex * DaysPerMonth + I + 1;
+		D.BusinessDay = SelectedMonthIndex * JournalDaysPerMonth + I + 1;
 		D.bToday = D.BusinessDay == GetCurrentBusinessDay();
 		D.bSelected = D.BusinessDay == SelectedBusinessDay;
 		D.bAvailable = Journal && D.BusinessDay <= Journal->LatestDay;
