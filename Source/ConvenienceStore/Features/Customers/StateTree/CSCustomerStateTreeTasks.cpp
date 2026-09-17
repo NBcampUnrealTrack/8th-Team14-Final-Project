@@ -1259,6 +1259,14 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 
 	UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 
+	// 퇴장 상태에 들어오는 시점에 장바구니를 숨긴다. 액터 자체는 손님 파괴 때 함께 정리된다.
+	// 결제 완료(ShowShoppingBag)와 계산 포기(AbandonCheckout)는 이미 숨긴 뒤 들어오므로 중복 호출이지만 무해하다.
+	// 훔친 물건을 든 채 도주하는 연출은 유지해야 하므로 절도 실행자만 예외로 둔다.
+	if (Subsystem == nullptr || !Subsystem->IsEscapingShoplifter(Data.Actor))
+	{
+		Data.Actor->SetBasketDisplayVisible(false);
+	}
+
 	// 계획 상품 미발견 반응은 전부 이 자리 하나로 모았다.
 	// 진열대마다 띄우면 한 손님이 같은 대사를 여러 번 하고, 어떤 손님은 진열대에서
 	// 어떤 손님은 문 앞에서 말해 규칙이 없어 보인다 - 퇴장 시점 1회로 고정한다
@@ -1555,6 +1563,10 @@ EStateTreeRunStatus FCSTask_SubduedDespawn::EnterState(FStateTreeExecutionContex
 		Movement->DisableMovement();
 	}
 
+	// 제압된 손님은 그 자리에서 소멸을 기다리므로 장바구니도 함께 숨긴다.
+	// 제압 시점에 상품 목록이 이미 비워지므로 절도 연출을 지킬 이유가 없다.
+	Data.Actor->SetBasketDisplayVisible(false);
+
 	Data.ElapsedTime = 0.0f;
 
 	UE_LOG(LogTemp, Log, TEXT("[제압] %s 소멸 대기 시작"), *Data.Actor->GetName());
@@ -1599,7 +1611,7 @@ EStateTreeRunStatus FCSTask_SubduedDespawn::Tick(FStateTreeExecutionContext& Con
 		Subsystem->NotifyCustomerDespawned(Data.Actor);
 	}
 
-	// Destroyed()가 AIController와 장바구니, 봉투까지 정리한다.
+	// Destroyed()가 AIController와 장바구니 액터, 봉투까지 정리한다. (표시는 EnterState에서 이미 껐다)
 	Data.Actor->Destroy();
 
 	return EStateTreeRunStatus::Succeeded;

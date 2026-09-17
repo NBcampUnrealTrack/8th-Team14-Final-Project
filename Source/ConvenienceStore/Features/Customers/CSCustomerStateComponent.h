@@ -10,6 +10,11 @@
 #include "Components/ActorComponent.h"
 #include "CSCustomerStateComponent.generated.h"
 
+class UCSCustomerStateComponent;
+
+// 입장이 확정되는 순간(bHasEnteredStore false → true) 한 번만 방송됩니다.
+DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnEnteredStoreNative, UCSCustomerStateComponent* /*State*/);
+
 // 손님이 고른 상품 하나의 정보.
 // ProductId(RowName)만으로는 상품 액터를 다시 만들 수 없어서
 // (어느 데이터 테이블인지, 어떤 BP였는지를 알 수 없음)
@@ -100,7 +105,12 @@ public:
 	bool HasEnteredStore() const;
 
 	// 가게 앞 판정을 통과해 입장이 확정될 때 호출합니다.
+	// 처음 호출될 때만 OnEnteredStore를 방송하고, 중복 호출은 무시
 	void MarkEnteredStore();
+
+	// 입장이 확정되는 순간 한 번만 방송. 장바구니 생성 등 "입장한 손님만" 가져야 하는 것을 붙이는 지점
+	// 상태 컴포넌트는 방송만 하고, 실제 생성은 구독자가 담당
+	FCSOnEnteredStoreNative OnEnteredStore;
 
 	// 빌런 -------
 

@@ -1100,6 +1100,10 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	// 대기열에서 먼저 제거
 	LeaveQueue(Customer);
 
+	// 계산에 실패한 손님은 결제 성공 때와 같이 장바구니를 숨긴다(액터는 손님 파괴 때 함께 정리).
+	// 상품 목록(SelectProducts)은 남겨 두므로 아래 진열대 반환/바닥 낙하는 기존대로 동작한다.
+	Customer->SetBasketDisplayVisible(false);
+
 	//  들고 있던 상품을 떨어뜨린다. (진열대에 되돌려놓는 기능이 들어오면 이 호출은 그쪽 Task로 이동)
 	//DropCustomerItems(Customer);
 
