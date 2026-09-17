@@ -90,7 +90,13 @@ bool UCSCustomerStateComponent::HasEnteredStore() const
 
 void UCSCustomerStateComponent::MarkEnteredStore()
 {
+	if (bHasEnteredStore)
+	{
+		return; // 중복 호출 시 재방송 금지
+	}
+
 	bHasEnteredStore = true;
+	OnEnteredStore.Broadcast(this);
 }
 
 bool UCSCustomerStateComponent::AssignVillainAction(ECSVillainAction NewAction)

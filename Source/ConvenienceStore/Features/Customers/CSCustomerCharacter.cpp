@@ -91,6 +91,12 @@ void ACSCustomerCharacter::Tick(float DeltaSeconds)
 
 void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(CustomerState))
+	{
+		CustomerState->OnEnteredStore.Remove(EnteredStoreHandle);
+	}
+	EnteredStoreHandle.Reset();
+
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
@@ -411,21 +417,51 @@ void ACSCustomerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (BasketActorClass == nullptr || GetWorld() == nullptr || !IsValid(BasketAnchor))
+	// 행인은 장바구니를 갖지 않는다. 입장이 확정되는 순간에만 생성
+	if (IsValid(CustomerState))
+	{
+		EnteredStoreHandle = CustomerState->OnEnteredStore.AddUObject(
+			this,
+			&ACSCustomerCharacter::HandleEnteredStore);
+
+		// 이미 입장 상태로 시작한 경우(디버그 배치 등) 대비
+		if (CustomerState->HasEnteredStore())
+		{
+			EnsureBasketSpawned();
+		}
+	}
+}
+
+void ACSCustomerCharacter::HandleEnteredStore(UCSCustomerStateComponent* State)
+{
+	EnsureBasketSpawned();
+}
+
+void ACSCustomerCharacter::EnsureBasketSpawned()
+{
+	UWorld* World = GetWorld();
+	if (IsValid(BasketActor) || BasketActorClass == nullptr || World == nullptr)
 	{
 		return;
 	}
 
-	BasketActor = GetWorld()->SpawnActor<ACSCustomerBasketActor>(
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	// 장바구니는 손님에게 Attach하지 않고 월드에 따로 서서 따라다닙니다.
+	// 위치는 StartFollowing에서 Park 자리를 찾아 순간이동하므로 우선 손님 발 위치에 만듭니다.
+	const FVector FootLocation = GetActorLocation() -
+		FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	BasketActor = World->SpawnActor<ACSCustomerBasketActor>(
 		BasketActorClass,
-		BasketAnchor->GetComponentTransform());
+		FootLocation,
+		FRotator(0.0f, GetActorRotation().Yaw, 0.0f),
+		SpawnParams);
+
 	if (IsValid(BasketActor))
 	{
-		BasketActor->AttachToComponent(
-			BasketAnchor,
-			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-		// 손님 크기가 바뀌어도 장바구니는 원래 크기를 유지하고 위치·회전만 따라가도록 설정합니다.
-		BasketActor->GetRootComponent()->SetAbsolute(false, false, true);
+		BasketActor->StartFollowing(this);
 	}
 }
 
@@ -437,6 +473,8 @@ UCSCustomerStateComponent* ACSCustomerCharacter::GetCustomerState() const
 void ACSCustomerCharacter::AddBasketDisplayProduct(
 	const FCSSelectProduct& SelectedProduct)
 {
+	// 안전망: 입장 확정 경로를 거치지 않은 경우에도 상품 표시가 사라지지 않게 합니다.
+	EnsureBasketSpawned();
 	if (IsValid(BasketActor))
 	{
 		BasketActor->AddDisplayProduct(SelectedProduct);
@@ -575,7 +613,7 @@ void ACSCustomerCharacter::SetVillainHighlight(bool bEnabled)
 		return;
 	}
 
-	// 손님에 Attach된 장바구니는 별개 액터라서 여기에 포함되지 않음.
+	// 장바구니는 손님을 따라다니는 별개 액터라서 여기에 포함되지 않음.
 	TArray<UPrimitiveComponent*> PrimitiveComponents;
 	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
 	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)

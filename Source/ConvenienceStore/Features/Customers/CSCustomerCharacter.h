@@ -32,6 +32,9 @@ public:
 
 	UCSCustomerStateComponent* GetCustomerState() const;
 
+	// 입장이 확정됐거나 상품을 처음 담을 때 장바구니가 없으면 만든다. 여러 번 불러도 안전
+	void EnsureBasketSpawned();
+
 	// 고객이 상품을 선택했을 때 장바구니에 표시용 상품을 추가합니다.
 	void AddBasketDisplayProduct(const FCSSelectProduct& SelectedProduct);
 	// 결제, 반품, 이탈 시 장바구니에 표시된 상품을 정리합니다.
@@ -156,6 +159,10 @@ protected:
 	float ActionAnimationStartOffsetSeconds = 0.04f;
 
 private:
+	// UCSCustomerStateComponent::OnEnteredStore 구독 함수. 입장이 확정되면 장바구니를 만든다
+	void HandleEnteredStore(UCSCustomerStateComponent* State);
+	FDelegateHandle EnteredStoreHandle;
+
 	void UpdateLocomotionAnimation(bool bForce = false);
 	void RefreshLocomotionAnimationPose();
 	bool PlayActionAnimation(UAnimSequence* Animation, bool bHoldTransformAfterFinish);
