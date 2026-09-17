@@ -266,14 +266,6 @@ bool UCSPurchaseDecisionComponent::TryBuildNewsSuppressionInfo(const FCSPurchase
 		return false;
 	}
 
-	const AActor* Owner = GetOwner();
-	UE_LOG(LogTemp, Log,
-		TEXT("[뉴스수요] 거절 손님=%s 상품=%s 뉴스=%s 뉴스뺀점수=%.2f 실제=%.2f"),
-		Owner != nullptr ? *Owner->GetName() : TEXT("?"),
-		*Candidate.ProductRowHandle.RowName.ToString(),
-		Info.NewsRowName.IsNone() ? TEXT("없음") : *Info.NewsRowName.ToString(),
-		ScoreWithoutNews, ActualScore);
-
 	OutInfo = Info;
 	return true;
 }
