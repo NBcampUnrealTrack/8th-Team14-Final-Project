@@ -33,7 +33,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Purchase|Archetype")
 	TObjectPtr<UCSCustomerArchetypeDataAsset> Archetype;
 
-	// 계획 상품(RollPlannedProducts)을 뽑을 때 카테고리별 레벨 해금 필터링·수요 가중치 조회에 쓰는
+	// 계획 상품(RollPlannedProducts)을 뽑을 때 카테고리별 후보 수집·수요 가중치 조회에 쓰는
 	// 상품 마스터 데이터테이블
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned")
 	TObjectPtr<UDataTable> ProductMasterDataTable;
@@ -51,14 +51,18 @@ public:
 	// 스폰 시점에 이번 방문에서 목표로 삼을 장바구니 개수를 미리 뽑아둠
 	int32 RollPlannedBasketTarget(FRandomStream& Stream) const;
 
+	// 이번 손님이 "뭔가 사러 왔는지"를 정함(PlannedPurchaseChance 1회 굴림)
+	// 입장 확률 구간(계획/무계획)을 가르는 값이며 아래 계획 상품 목록과는 별개다 -
+	// 이벤트가 없는 날은 사러 온 손님이어도 목록이 비어 있고, 그때 둘을 같은 값으로 묶으면
+	// 평상시 전원이 무계획 취급돼 입장률이 통째로 무너진다
+	bool RollShoppingIntent(FRandomStream& Stream) const;
+
 	// 스폰 시점에 이번 방문에서 우선적으로 찾아다닐 계획 상품(1~2개)을 미리 뽑아둠
-	// 맨 앞에서 PlannedPurchaseChance를 먼저 굴려 이번 손님이 계획을 가질지부터 정하고,
-	// 실패하면 빈 배열을 반환해 계획 없이 스폰되게 함(입장 판정이 이 결과로 계획 유무를 가름)
+	// 후보는 이벤트(뉴스·기념일·날씨)로 수요가 오른 상품뿐이라 평상시에는 빈 배열이 나온다
 	// 개수 자체도 이 스트림에서 굴려서 정함(PlannedProductSecondItemChance)
-	// 카테고리 선정 -> 그 카테고리 내 상품 선정 순서로, 둘 다 CurrentStoreLevel에서
-	// 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 후보만 대상으로 함
-	// (레벨이 낮아 후보가 0개인 카테고리를 걸러내지 않으면 다음 단계에서 빈 배열을 가중 샘플링하게 됨)
-	TArray<FName> RollPlannedProducts(FRandomStream& Stream, int32 CurrentStoreLevel) const;
+	// 매장 해금 레벨은 보지 않는다 - 아직 못 파는 물건을 손님이 찾는 것 자체가
+	// "저걸 해금해야겠다"는 신호라서 의도된 동작이다
+	TArray<FName> RollPlannedProducts(FRandomStream& Stream) const;
 
 	// 카테고리 선호를 손님 동선(PickNextShelf가 다음에 어느 진열대로 갈지 고르는 것)에 반영하기 위한
 	// 카테고리별 끌림 가중치
@@ -262,6 +266,10 @@ private:
 	// BuildInnerThoughtText의 {ProductName} 자리표시자 전용
 	FText GetProductDisplayName(FName ProductId) const;
 
+	// 계획 상품을 못 찾았을 때, 사러 온 이유(날씨/뉴스/기념일)에 맞는 표시 행 이름
+	// 해당하는 이유가 없으면 NAME_None - 호출부가 기본 행으로 돌아간다
+	FName GetPlannedMissingCauseRowName(FName ProductId) const;
+
 	// 후보 하나의 실제가/기준가/PriceScore를 한 번에 구하는 공용 계산 결과
 	// ScoreCandidate/BuildScoreShortfallRejectionInfo/BuildPriceReactionInfo 세 곳이
 	// 전부 같은 절차(기준가 조회 → 실제가 조회 → 데드존/기울기로 PriceScore 계산)를 반복해서
@@ -325,12 +333,6 @@ private:
 	// 하한이 없으면 가중치 총합이 0이 되는 경우가 생기고, 그때 WeightedRandomIndex가
 	// 난수를 굴리지 않고 반환해서 같은 시드인데 그 지점부터 결과가 통째로 밀린다
 	float GetPlannedDemandMultiplier(float DemandModifier) const;
-
-	// 상품 가중치 배열에 위 배율을 곱한다. OutMaxModifier에는 이 목록의 최대 보정값을 채운다
-	// (카테고리 가중치에는 합이 아니라 최댓값을 쓴다 - 비 오는 날 Supply는 우산 +1, 가루 −1 ×2라
-	//  합하면 음수가 되어 우산이 있는데도 그 카테고리를 안 고르게 된다)
-	void ApplyPlannedDemandWeights(const TArray<FName>& ProductRowNames,
-		TArray<float>& InOutWeights, float& OutMaxModifier) const;
 
 	// 장바구니에 담긴 같은 카테고리 개수만큼 카테고리 점수를 지수적으로 깎음
 	// 채점과 거절 원인 판정이 같은 값을 봐야 해서 한 곳에 모아둠
