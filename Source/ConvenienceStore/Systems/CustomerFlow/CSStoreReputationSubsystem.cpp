@@ -132,12 +132,21 @@ void UCSStoreReputationSubsystem::HandlePurchaseRejected(ACSCustomerCharacter* C
 		return;
 	}
 
+	const float UpsetWeight = ComputePriceUpsetWeight(Info.Severity);
+
+	// 추첨이 먼저인 이유: 순서를 바꾸면 ReputationRollStream 호출 횟수가 달라져 같은 시드 결과가 밀린다
 	if (!RollShouldCount())
 	{
 		return;
 	}
 
-	DailyPriceUpsetSum += ComputePriceUpsetWeight(Info.Severity);
+	// 감점 0인 약한 반응이 방문당 1회 슬롯을 태우면 이후 진짜 바가지가 감점되지 않는다
+	if (UpsetWeight <= 0.0f)
+	{
+		return;
+	}
+
+	DailyPriceUpsetSum += UpsetWeight;
 	State->bPriceUpsetCounted = true;
 }
 

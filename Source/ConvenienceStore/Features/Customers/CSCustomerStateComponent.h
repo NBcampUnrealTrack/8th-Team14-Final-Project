@@ -225,6 +225,10 @@ public:
 	void MarkVisited(AActor* ShelfActor);
 	bool HasVisited(const AActor* ShelfActor) const;
 
+	// 같은 상품에 두 번 반응하지 않도록 기록/조회. ShelfEmpty처럼 ProductId가 없는 사유는 대상 아님
+	void MarkReactedTo(FName ProductId);
+	bool HasReactedTo(FName ProductId) const;
+
 	// 거절 연출 / 가격 반응 공용
 
 	// 가장 최근 거절/가격반응 사유. 즉시표시(디버그 텍스트)와 마법봉 속마음 트리거가 둘 다 이 값을 읽음
@@ -240,6 +244,11 @@ public:
 	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	bool bPriceUpsetCounted = false;
+
+	// 이미 연출을 보여준 상품들. 후보 목록의 SKU 중복 제거는 한 라운드 안에서만 유효해서
+	// 라운드를 넘어가는 기억은 여기 있어야 한다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
+	TSet<FName> ReactedProductIds;
 
 	// 청결도 -------
 

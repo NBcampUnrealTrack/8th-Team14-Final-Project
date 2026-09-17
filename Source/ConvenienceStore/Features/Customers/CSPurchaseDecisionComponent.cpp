@@ -15,6 +15,16 @@ namespace
 	// 두 선이 어긋나면 "비싸다고 느끼는데 연관구매로 사는" 손님이 생긴다
 	constexpr float PriceReactionNeutralPoint = 0.5f;
 
+	// 평판 감점이 시작되는 강도. UCSStoreReputationSubsystem::PriceUpsetLowThreshold와 같아야 한다
+	constexpr float PriceUpsetSeverityFloor = 0.4f;
+
+	// 뉴스보다 가격 연출을 우선할지. 뉴스에 가려지면 같은 구조체로 판정되는 평판 감점까지 사라진다
+	bool PriceOutranksNews(const FCSPurchaseRejectionInfo& Info)
+	{
+		return Info.Reason == ECSPurchaseRejectReason::PriceRejected
+			&& Info.Severity >= PriceUpsetSeverityFloor;
+	}
+
 	// 검증 로그용 진열대 이름
 	// 후보 구조체는 진열대를 들고 있지 않지만, 상품 액터는 진열대에 Attach된 상태라
 	// 부모를 거슬러 올라가면 어느 진열대 앞에서 내린 판단인지 알 수 있다
@@ -431,11 +441,13 @@ int32 UCSPurchaseDecisionComponent::SoftmaxSelectIndex(const TArray<FCSPurchaseC
 // ScoreCandidate는 이 경우 정상 점수(0~1)를 반환해 OutRejectionInfo를 안 채우므로 여기서 별도로 채운다
 //
 // 총점 미달의 원인이 항상 가격은 아님
-// 항을 하나씩 걷어내 "그것만 없었으면 샀을까?"를 차례로 물어 진짜 원인을 가른다
-//   1) 뉴스 보정을 빼면 기준선을 넘는가 → 오늘의 뉴스가 결정타 (NewsDemandRejected)
-//   2) 반복구매 감쇠를 걷어내면 넘는가 → 질려서 안 산 것이라 연출하지 않음 (Reason=None)
-//   3) 둘 다 아니면 애초부터 안 살 상품 → 가격/선호 문제 (PriceRejected)
-// 뉴스를 먼저 보는 이유: 가격 거절로 잘못 분류되면 멀쩡한 가격에 가격 불만 말풍선이 뜬다
+// 항을 걷어내 "그것만 없었으면 샀을까?"를 차례로 물어 진짜 원인을 가른다
+//   0) 가격 불만이 평판 감점 구간인가  → 가격 (뉴스에 가려지면 감점까지 사라져 먼저 본다)
+//   1) 뉴스 보정을 빼면 기준선을 넘는가 → 뉴스
+//   2) 반복구매 감쇠를 걷어내면 넘는가  → 질린 것이라 연출하지 않음 (Reason=None)
+//   3) 둘을 함께 걷어내야 넘는가       → 더 크게 깎은 쪽에 귀속
+//   4) 남은 가격 불만이라도 있는가     → 있으면 가격, 없으면 조용히 미구매
+// 4)를 조건 없는 else로 두면 카테고리 선호가 낮아 안 산 상품에까지 가격 불만이 붙는다
 //
 // 전제: GetProductDemandModifier는 뉴스+기념일 합산이고 현재 기념일 규칙은 전부 양수라
 // 수요 보정 때문에 못 산 원인은 오늘의 뉴스뿐이다
@@ -472,23 +484,47 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 	const float AffinityBonus = ComputeAffinityBonus(ProductRow->Category, PriceEval.PriceScore);
 	const float NewsBonus = ComputeNewsDemandBonus(Candidate.ProductRowHandle);
 
-	// 날씨 항은 두 재계산식 모두에 실제 점수와 똑같이 더한다 - 걷어내는 판정 단계를 만들지 않는다
+	// 날씨 항은 아래 재계산식 전부에 실제 점수와 똑같이 더한다 - 걷어내는 판정 단계를 만들지 않는다
 	// 날씨가 음수여서 기준선 아래로 간 후보는 ScoreAndSelectTopCandidates가 이미 추첨에서 빼기 때문에
 	// 이 함수까지 오는 미달 후보는 날씨 항이 0 이상이고, 따라서 날씨는 이번 거절의 원인이 아니다
 	// 한 식에서라도 빠뜨리면 판정용 점수가 실제보다 낮아져 PriceRejected 오분류(=평판 감점)가 생긴다
 	const float WeatherBonus = ComputeWeatherDemandBonus(Candidate.ProductRowHandle);
 
-	// 1) 뉴스 보정만 빼고 실제 점수와 같은 식으로 다시 계산
-	// "뉴스가 있을 때만" 조건은 두지 않음 - 보정이 0 이상이면 빼도 점수가 안 올라 어차피 통과 못 한다
-	const float ScoreWithoutNews = FMath::Clamp(
-		ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore) + AffinityBonus + WeatherBonus,
-		0.f, 1.f);
+	// 네 가지 가정 점수. 클램프를 걸지 않는 이유는 기준선 대소는 그대로인데
+	// 아래 "얼마나 깎았나" 비교가 하한 0에 잘려 과소평가되기 때문
+	const float NormalizedWithRepeat = ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore);
+	const float NormalizedWithoutRepeat = ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore);
+	const float CommonBonus = AffinityBonus + WeatherBonus;
+
+	const float RawActual = NormalizedWithRepeat + CommonBonus + NewsBonus;
+	const float RawWithoutNews = NormalizedWithRepeat + CommonBonus;
+	const float RawWithoutRepeat = NormalizedWithoutRepeat + CommonBonus + NewsBonus;
+	const float RawWithoutBoth = NormalizedWithoutRepeat + CommonBonus;
+
+	// 호출부(TryBuildNewsSuppressionInfo)의 로그용 - 기존과 같이 클램프한 값으로 넘긴다
 	if (OutScoreWithoutNews != nullptr)
 	{
-		*OutScoreWithoutNews = ScoreWithoutNews;
+		*OutScoreWithoutNews = FMath::Clamp(RawWithoutNews, 0.f, 1.f);
 	}
 
-	if (ScoreWithoutNews >= GetEffectiveMinPurchaseUtility())
+	// 각 항이 점수를 깎은 양. 클수록 이번 미달에 더 크게 기여했다
+	const float NewsDrop = RawWithoutNews - RawActual;
+	const float RepeatDrop = RawWithoutRepeat - RawActual;
+
+	const float MinUtility = GetEffectiveMinPurchaseUtility();
+	const float PriceSeverity = ComputePriceReactionSeverity(PriceEval.PriceScore);
+
+	auto FillPriceRejection = [&Info, &Candidate, &PriceEval, PriceSeverity]()
+	{
+		Info.Reason = ECSPurchaseRejectReason::PriceRejected;
+		Info.ProductId = Candidate.ProductRowHandle.RowName;
+		Info.ActualPrice = PriceEval.ActualPrice;
+		Info.ReferencePrice = PriceEval.ReferencePrice;
+		// 하드컷·구매성공 반응과 같은 PriceScore 기반 - 척도가 같아야 DT 티어 문턱이 일관된다
+		Info.Severity = PriceSeverity;
+	};
+
+	auto FillNewsRejection = [this, &Info, &Candidate, &PriceEval]()
 	{
 		Info.Reason = ECSPurchaseRejectReason::NewsDemandRejected;
 		Info.ProductId = Candidate.ProductRowHandle.RowName;
@@ -507,27 +543,56 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 		{
 			Info.NewsRowName = NoticeSubsystem->GetTodayNewsRowName();
 		}
+	};
 
-		return Info;
-	}
+	const TCHAR* Branch = TEXT("무음-기타");
 
-	// 2) 반복구매 감쇠까지 걷어내고 본다. 뉴스·날씨 항은 실제 점수와 같게 그대로 둠
-	const float ScoreWithoutRepeatPenalty = FMath::Clamp(
-		ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore) + AffinityBonus + NewsBonus + WeatherBonus,
-		0.f, 1.f);
-
-	if (ScoreWithoutRepeatPenalty < GetEffectiveMinPurchaseUtility())
+	if (PriceSeverity >= PriceUpsetSeverityFloor)
 	{
-		// 반복구매 감쇠를 빼고 봐도 기준선을 못 넘음 - 애초부터 가격/선호가 문제였던 진짜 거절
-		Info.Reason = ECSPurchaseRejectReason::PriceRejected;
-		Info.ProductId = Candidate.ProductRowHandle.RowName;
-		Info.ActualPrice = PriceEval.ActualPrice;
-		Info.ReferencePrice = PriceEval.ReferencePrice;
-		// 총점 기반이 아니라 다른 두 경로(하드컷/구매성공 시 가격반응)와 동일하게 PriceScore 기반으로
-		// 통일 - 세 경로의 Severity가 같은 척도 위에 있어야 DT 티어 문턱이 일관되게 작동함
-		Info.Severity = ComputePriceReactionSeverity(PriceEval.PriceScore);
+		FillPriceRejection();
+		Branch = TEXT("가격우선");
 	}
-	// else: 반복구매 감쇠가 이번 거절의 진짜 원인 - Reason=None(기본값)으로 두고 조용히 미구매
+	else if (RawWithoutNews >= MinUtility)
+	{
+		// "뉴스가 있을 때만" 조건은 불필요 - 보정이 0 이상이면 빼도 점수가 안 오른다
+		FillNewsRejection();
+		Branch = TEXT("뉴스");
+	}
+	else if (RawWithoutRepeat >= MinUtility)
+	{
+		// 질린 것뿐이라 연출하지 않는다(Reason=None 유지)
+		Branch = TEXT("무음-질림");
+	}
+	else if (RawWithoutBoth >= MinUtility)
+	{
+		// 한 항만으로는 설명이 안 되는 복합 원인 - 더 크게 깎은 쪽에 귀속
+		if (NewsDrop >= RepeatDrop)
+		{
+			FillNewsRejection();
+			Branch = TEXT("복합-뉴스우세");
+		}
+		else
+		{
+			Branch = TEXT("복합-질림우세");
+		}
+	}
+	else if (PriceSeverity > 0.f)
+	{
+		FillPriceRejection();
+		Branch = TEXT("가격잔여");
+	}
+	// else: 셋 다 원인이 아님(카테고리 선호가 낮은 등) - 띄울 문구가 없어 조용히 미구매
+
+	// 같은 사유가 여러 분기에서 나와 화면만으로는 구분이 안 된다
+	// 예비 판정(OutScoreWithoutNews 지정)도 찍는 이유: 여기서 걸러진 후보는 최종 호출이 오지 않는다
+	UE_LOG(LogTemp, Log,
+		TEXT("[거절귀속] 시드=%d 호출=%s 상품=%s 판정=%s 사유=%s 가격강도=%.2f 실제=%.2f 뉴스뺌=%.2f 감쇠뺌=%.2f 둘다뺌=%.2f 기준선=%.2f"),
+		GetCustomerSeed(),
+		OutScoreWithoutNews != nullptr ? TEXT("예비") : TEXT("최종"),
+		*Candidate.ProductRowHandle.RowName.ToString(),
+		Branch,
+		*StaticEnum<ECSPurchaseRejectReason>()->GetNameStringByValue(static_cast<int64>(Info.Reason)),
+		PriceSeverity, RawActual, RawWithoutNews, RawWithoutRepeat, RawWithoutBoth, MinUtility);
 
 	return Info;
 }
@@ -595,7 +660,9 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	if (TopCandidates.IsEmpty())
 	{
 		// 진열대에 있던 게 전부 뉴스로 밀려난 경우 - 위 호출은 -1.0 후보만 집계하므로 여기서 채운다
-		if (bHasNewsSuppression)
+		// 단 감점 구간의 가격 거절이면 그쪽을 남긴다 - 뉴스 상품이 섞여 있다는 이유로
+		// 무관한 상품의 바가지 신호가 사라지면 안 된다
+		if (bHasNewsSuppression && !PriceOutranksNews(OutRejectionInfo))
 		{
 			OutRejectionInfo = NewsSuppressedInfo;
 		}
@@ -606,9 +673,11 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	// 1등 점수가 최소 구매 임계치보다 낮으면 손님이 살 게 없다고 판단하고 지나감
 	if (TopCandidates[0].Score < GetEffectiveMinPurchaseUtility())
 	{
-		OutRejectionInfo = bHasNewsSuppression
+		// 1등의 미달 원인을 먼저 뽑는다 - 감점 구간의 가격 문제면 다른 상품의 뉴스에 덮이면 안 된다
+		const FCSPurchaseRejectionInfo ShortfallInfo = BuildScoreShortfallRejectionInfo(TopCandidates[0]);
+		OutRejectionInfo = (bHasNewsSuppression && !PriceOutranksNews(ShortfallInfo))
 			? NewsSuppressedInfo
-			: BuildScoreShortfallRejectionInfo(TopCandidates[0]);
+			: ShortfallInfo;
 		LogWeatherDemandResult(NAME_None, OutRejectionInfo);
 		return false;
 	}
@@ -620,9 +689,11 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	// 구매에 성공해도 가격이 어느 정도 부담스러웠으면 반응을 남김
 	// 뉴스로 밀려난 상품이 있었으면 그쪽을 띄운다 - 다른 걸 집어 들면서 "저건 좀 꺼림칙해"
 	// 하는 장면이라, 물건을 샀다는 것과 어긋나지 않는다
-	OutRejectionInfo = bHasNewsSuppression
+	// 단 지금 집은 상품의 가격 반응이 감점 구간이면 양보하지 않는다
+	const FCSPurchaseRejectionInfo PriceReactionInfo = BuildPriceReactionInfo(OutSelected);
+	OutRejectionInfo = (bHasNewsSuppression && !PriceOutranksNews(PriceReactionInfo))
 		? NewsSuppressedInfo
-		: BuildPriceReactionInfo(OutSelected);
+		: PriceReactionInfo;
 
 	// 연관구매 보너스가 있었을 때만 로그
 	if (const FCSProductDataRow* SelectedRow = GetProductRow(OutSelected))

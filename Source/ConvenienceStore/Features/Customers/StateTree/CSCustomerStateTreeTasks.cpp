@@ -503,6 +503,7 @@ static void CS_HandlePurchaseRejection(
 	const float DisplayDuration = Decision.GetInstantDisplayDuration(RejectionInfo.Reason);
 	State.LastRejectionInfo = RejectionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+	State.MarkReactedTo(RejectionInfo.ProductId);
 
 	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(RejectionInfo).Icon, DisplayDuration);
 
@@ -528,6 +529,7 @@ static void CS_HandlePriceReactionThenBuy(
 	const float DisplayDuration = Decision.GetInstantDisplayDuration(ReactionInfo.Reason);
 	State.LastRejectionInfo = ReactionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+	State.MarkReactedTo(ReactionInfo.ProductId);
 
 	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(ReactionInfo).Icon, DisplayDuration);
 
@@ -961,9 +963,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 플레이어에게 딱히 알릴 이유가 없는 조용한 미구매
+		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 알릴 이유가 없는 조용한 미구매
+		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 5초 멈춰 선다
 		// 연출 없이 바로 세션 종료
-		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None)
+		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
+			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
 			return EStateTreeRunStatus::Succeeded;
@@ -978,7 +982,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 가격 반응(Reason=PriceRejected, 무반응이면 None)이 있으면 즉시 담지 않고 먼저 멈춰서
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
 	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
-	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None)
+	// 이미 반응한 상품이면 멈추지 않고 바로 담는다
+	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
 		Customer->ReleaseActionTransitionHold();
 		CS_HandlePriceReactionThenBuy(Data, *Customer, *State, *Decision, RejectionInfo, Selected.ProductActor, Context.GetWorld());
