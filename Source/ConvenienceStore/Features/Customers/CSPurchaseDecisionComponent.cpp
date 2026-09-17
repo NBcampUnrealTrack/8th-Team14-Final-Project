@@ -856,7 +856,7 @@ int32 UCSPurchaseDecisionComponent::RollPlannedBasketTarget(FRandomStream& Strea
 
 namespace
 {
-	// RollPlannedProducts 전용 - ECSProductCategory 전체 값을 순회하기 위한 목록
+	// GetCategoryAttractionWeights 전용 - ECSProductCategory 전체 값을 순회하기 위한 목록
 	// (UENUM 리플렉션으로 순회하지 않고 배열로 나열)
 	// 카테고리를 추가/삭제하면 이 배열도 반드시 같이 고칠 것
 	const ECSProductCategory AllProductCategories[] = {
@@ -865,43 +865,6 @@ namespace
 		ECSProductCategory::Snack, ECSProductCategory::Supply, ECSProductCategory::Toiletry,
 		ECSProductCategory::Tool, ECSProductCategory::HangoverCure
 	};
-
-	// Category에 속하면서 CurrentStoreLevel에서 실제로 살 수 있는(StoreLevelUnlockCondition 통과) 상품만 모아
-	// RowName과 BaseDemand 가중치를 나란히 채움
-	// 이 필터가 없으면 저레벨 매장에서 Beverage/Toiletry/Tool처럼 후보가 아예 0개인 카테고리를
-	// 다음 단계(상품 가중 샘플링)에서 빈 배열로 넘기게 됨
-	void CollectUnlockedProductsInCategory(
-		const UDataTable& ProductTable,
-		ECSProductCategory Category,
-		int32 CurrentStoreLevel,
-		TArray<FName>& OutRowNames,
-		TArray<float>& OutWeights)
-	{
-		for (const TPair<FName, uint8*>& Pair : ProductTable.GetRowMap())
-		{
-			const FCSProductDataRow* Row = reinterpret_cast<const FCSProductDataRow*>(Pair.Value);
-			if (Row == nullptr || Row->Category != Category || Row->StoreLevelUnlockCondition > CurrentStoreLevel)
-			{
-				continue;
-			}
-			OutRowNames.Add(Pair.Key);
-			OutWeights.Add(static_cast<float>(Row->BaseDemand));
-		}
-
-		// BaseDemand가 전부 0(데이터 미기입)이면 가중 샘플링이 전부 0표를 뽑는 꼴이라 균등 가중치로 대체
-		float TotalWeight = 0.0f;
-		for (const float Weight : OutWeights)
-		{
-			TotalWeight += Weight;
-		}
-		if (TotalWeight <= 0.0f)
-		{
-			for (float& Weight : OutWeights)
-			{
-				Weight = 1.0f;
-			}
-		}
-	}
 
 	// 수요 보정을 가중치 배율로 바꿀 때의 하한
 	// 배율이 0이 되면 가중치 총합도 0이 될 수 있고, 그러면 아래 WeightedRandomIndex가
@@ -936,107 +899,91 @@ namespace
 	}
 }
 
+// 스폰 시점에 이번 손님이 "뭔가 사러 왔는지"를 정함
+// 반드시 인수로 받은 스트림(스포너의 파생 스트림)만 쓴다 - 멤버 RandomStream을 쓰면 손님 마스터 시퀀스가 밀린다
+bool UCSPurchaseDecisionComponent::RollShoppingIntent(FRandomStream& Stream) const
+{
+	return Stream.FRand() < PlannedPurchaseChance;
+}
+
 // 스폰 시점에 이번 방문에서 우선적으로 찾아다닐 계획 상품(1~2개)을 미리 뽑아둠
 // PlannedBasketStream을 그대로 이어받아 쓰므로 여기서 몇 번을 더 굴리든 MasterStream 시퀀스에는 영향 없음
-TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& Stream, int32 CurrentStoreLevel) const
+TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& Stream) const
 {
 	TArray<FName> Result;
-
-	// 계획 유무부터 갈라놓는 굴림 - DT 상태와 무관하게 항상 이 자리에서 1회만 일어나야
-	// 입장 판정 쪽에서 계획 있음/없음 어느 쪽이든 굴림 횟수가 같다는 전제가 성립한다
-	// 반드시 인수로 받은 스트림(스포너의 파생 스트림)만 쓴다 - 멤버 RandomStream을 쓰면 손님 마스터 시퀀스가 밀린다
-	if (Stream.FRand() >= PlannedPurchaseChance)
-	{
-		return Result;
-	}
 
 	if (!IsValid(ProductMasterDataTable))
 	{
 		return Result;
 	}
 
-	// 개수(1~2)부터 이 스트림에서 정함
-	const int32 TargetCount = (Stream.FRand() < PlannedProductSecondItemChance) ? 2 : 1;
+	// 후보는 이벤트(뉴스·기념일·날씨)로 수요가 오른 상품뿐이다.
+	// 평상시에도 계획을 세우면 "뭘 사러 왔다"는 연출이 매일 떠서 이벤트가 이벤트로 안 보인다
+	TArray<FName> Candidates;
+	TArray<float> Weights;
 
-	for (int32 i = 0; i < TargetCount; i++)
+	for (const TPair<FName, uint8*>& Pair : ProductMasterDataTable->GetRowMap())
 	{
-		// 1) 후보 카테고리 수집: BlockedCategories 제외 + 이 레벨에서 살 수 있는 상품이
-		// 하나도 없는 카테고리 제외(레벨 필터 - CSV 확인상 Beverage/Toiletry/Tool이 특히 걸림)
-		TArray<ECSProductCategory> CandidateCategories;
-		TArray<float> CategoryWeights;
-
-		for (const ECSProductCategory Category : AllProductCategories)
+		const FCSProductDataRow* Row = reinterpret_cast<const FCSProductDataRow*>(Pair.Value);
+		if (Row == nullptr)
 		{
-			if (Archetype && Archetype->BlockedCategories.Contains(Category))
-			{
-				continue;
-			}
-
-			TArray<FName> ProductsInCategory;
-			TArray<float> ProductWeights;
-			CollectUnlockedProductsInCategory(*ProductMasterDataTable, Category, CurrentStoreLevel, ProductsInCategory, ProductWeights);
-			if (ProductsInCategory.Num() == 0)
-			{
-				continue;
-			}
-
-			// 선호도 맵에 없는 카테고리는 평균(0.5)으로 취급
-			const float* FoundPreference = Archetype ? Archetype->CategoryPreference.Find(Category) : nullptr;
-			const float RawPreference = FoundPreference ? *FoundPreference : 0.5f;
-
-			// GetCategoryAttractionWeights와 같은 지수를 적용
-			const float Weight = FMath::Pow(FMath::Max(RawPreference, 0.0f), CategoryAttractionExponent);
-
-			// 이 카테고리 안에서 가장 크게 오른 상품 하나가 카테고리 전체를 끌어올린다
-			// 상품 가중치만 바꾸면 "Supply 안에서 우산 비중"만 올라갈 뿐
-			// Supply를 고르는 손님 수는 그대로여서 매장에서는 거의 티가 안 난다
-			float MaxModifier = 0.0f;
-			ApplyPlannedDemandWeights(ProductsInCategory, ProductWeights, MaxModifier);
-
-			CandidateCategories.Add(Category);
-			CategoryWeights.Add(Weight * GetPlannedDemandMultiplier(MaxModifier));
+			continue;
 		}
-
-		if (CandidateCategories.Num() == 0)
+		if (Archetype && Archetype->BlockedCategories.Contains(Row->Category))
 		{
-			// 이 손님의 레벨/차단 카테고리 조건으로는 계획을 세울 상품이 하나도 없음 - 조용히 포기
-			break;
-		}
-
-		// 2) 카테고리 하나를 선호도 가중 샘플링으로 확정
-		const ECSProductCategory PickedCategory = CandidateCategories[WeightedRandomIndex(CategoryWeights, Stream)];
-
-		// 3) 그 카테고리 안에서 BaseDemand 가중 샘플링으로 상품 하나 확정
-		TArray<FName> ProductsInPickedCategory;
-		TArray<float> ProductWeightsInPickedCategory;
-		CollectUnlockedProductsInCategory(*ProductMasterDataTable, PickedCategory, CurrentStoreLevel, ProductsInPickedCategory, ProductWeightsInPickedCategory);
-		if (ProductsInPickedCategory.Num() == 0)
-		{
-			// 위 필터를 이미 통과한 카테고리라 정상적으로는 도달하지 않음 - 방어적 재확인
 			continue;
 		}
 
-		// 카테고리 안에서도 같은 배율을 먹인다. 여기까지 해야 "비 오는 날 Supply를 고른 손님이
-		// 그 안에서 우산을 고른다"가 된다 - 카테고리만 올리면 횃불·화살이 대신 뽑힌다
-		float PickedCategoryMaxModifier = 0.0f;
-		ApplyPlannedDemandWeights(ProductsInPickedCategory, ProductWeightsInPickedCategory, PickedCategoryMaxModifier);
+		// 음수 보정(뉴스로 기피하게 된 상품)은 계획 대상이 아니다 - 사러 올 이유가 없다
+		const float Modifier = GetPlannedDemandModifier(Pair.Key);
+		if (Modifier <= 0.0f)
+		{
+			continue;
+		}
 
-		const FName PickedProduct = ProductsInPickedCategory[WeightedRandomIndex(ProductWeightsInPickedCategory, Stream)];
+		// 선호도 맵에 없는 카테고리는 평균(0.5)으로 취급
+		const float* FoundPreference = Archetype ? Archetype->CategoryPreference.Find(Row->Category) : nullptr;
+		const float RawPreference = FoundPreference ? *FoundPreference : 0.5f;
+
+		// GetCategoryAttractionWeights와 같은 지수를 적용해 종족 취향을 반영한다 -
+		// 이게 없으면 눈 오는 날 모든 종족이 똑같이 방한가루를 사러 온다
+		// BaseDemand는 같은 이벤트에 여러 상품이 걸렸을 때 인기 상품 쪽으로 쏠리게 하는 항
+		const float Weight = FMath::Pow(FMath::Max(RawPreference, 0.0f), CategoryAttractionExponent)
+			* GetPlannedDemandMultiplier(Modifier)
+			* FMath::Max(static_cast<float>(Row->BaseDemand), 1.0f);
+
+		Candidates.Add(Pair.Key);
+		Weights.Add(Weight);
+	}
+
+	if (Candidates.Num() == 0)
+	{
+		// 오늘은 이벤트가 없거나 이 종족이 전부 차단한 카테고리 - 계획 없이 둘러보기만 한다
+		return Result;
+	}
+
+	// 개수(1~2)를 이 스트림에서 정함
+	const int32 TargetCount = (Stream.FRand() < PlannedProductSecondItemChance) ? 2 : 1;
+
+	for (int32 i = 0; i < TargetCount && Candidates.Num() > 0; i++)
+	{
+		const int32 PickedIndex = WeightedRandomIndex(Weights, Stream);
+		const FName PickedProduct = Candidates[PickedIndex];
 		Result.Add(PickedProduct);
 
-		// 수요 보정이 걸린 상품을 계획했을 때만 로그
-		// 가중치를 곱하기 전 원시 수치로 판정 - W_PlannedDemand=0 대조군에서도 찍혀야 비교가 된다
+		// 같은 상품을 두 번 계획하면 계획이 1개인 것과 다를 바 없어서 후보에서 뺀다
+		Candidates.RemoveAt(PickedIndex);
+		Weights.RemoveAt(PickedIndex);
+
+		// 가중치를 곱하기 전 원시 수치로 찍는다 - W_PlannedDemand=0 대조군에서도 비교가 되게
 		const float PickedModifier = GetPlannedDemandModifier(PickedProduct);
-		if (!FMath::IsNearlyZero(PickedModifier))
-		{
-			UE_LOG(LogTemp, Log,
-				TEXT("[계획수요] 시드=%d 종족=%s 계획상품=%s 수치=%+.2f 배율=%.2f"),
-				GetCustomerSeed(),
-				Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
-				*PickedProduct.ToString(),
-				PickedModifier,
-				GetPlannedDemandMultiplier(PickedModifier));
-		}
+		UE_LOG(LogTemp, Log,
+			TEXT("[계획수요] 시드=%d 종족=%s 계획상품=%s 수치=%+.2f 배율=%.2f"),
+			GetCustomerSeed(),
+			Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
+			*PickedProduct.ToString(),
+			PickedModifier,
+			GetPlannedDemandMultiplier(PickedModifier));
 	}
 
 	return Result;
@@ -1105,7 +1052,19 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 		RowName = TEXT("ShelfEmpty");
 		break;
 	case ECSPurchaseRejectReason::PlannedProductMissing:
+		// 미해금(Severity 1.0)은 원인과 무관하게 "여긴 안 파는구나"로 통일한다.
+		// 플레이어가 취할 행동이 채우기가 아니라 레벨 올리기라, 원인까지 붙이면
+		// 문구만 곱으로 늘고 정작 해야 할 일은 흐려진다
 		RowName = TEXT("PlannedProductMissing");
+		if (Info.Severity < 1.0f)
+		{
+			const FName CauseRowName = GetPlannedMissingCauseRowName(Info.ProductId);
+			if (!CauseRowName.IsNone() &&
+				RejectionDisplayDataTable->FindRow<FCSPurchaseRejectionDisplayRow>(CauseRowName, TEXT(""), false) != nullptr)
+			{
+				RowName = CauseRowName;
+			}
+		}
 		break;
 	case ECSPurchaseRejectReason::NewsDemandRejected:
 		// 뉴스별 전용 문구가 있으면 그걸, 없으면 기본 문구를 쓴다
@@ -1138,6 +1097,70 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 
 	// 어느 구간에도 안 걸렸으면(Severity가 모든 Threshold보다 낮으면) 마지막 구간을 그대로 씀
 	return Row->Tiers.Last();
+}
+
+// 계획 상품을 왜 사러 왔는지에 맞는 DT_PurchaseRejectionDisplay 행 이름을 고른다
+// ("눈 와서 사러 왔는데" / "뉴스 보고 사러 왔는데" / "기념일이라 사러 왔는데")
+// 계획을 세운 시점의 이유를 따로 저장하지 않고 여기서 다시 물어보는 이유:
+// 날씨도 뉴스도 하루 동안 안 바뀌어서 스폰 때와 같은 답이 나온다
+FName UCSPurchaseDecisionComponent::GetPlannedMissingCauseRowName(FName ProductId) const
+{
+	if (ProductId.IsNone() || !IsValid(ProductMasterDataTable))
+	{
+		return NAME_None;
+	}
+
+	FDataTableRowHandle Handle;
+	Handle.DataTable = ProductMasterDataTable;
+	Handle.RowName = ProductId;
+
+	const float WeatherModifier = GetWeatherDemandModifier(Handle);
+	const float NewsModifier = GetNewsDemandModifier(Handle);
+
+	// 둘 다 올렸으면 더 크게 올린 쪽이 문구의 주인이다
+	if (WeatherModifier > 0.0f && WeatherModifier >= NewsModifier)
+	{
+		const UWorld* World = GetWorld();
+		const UCSWeatherSubsystem* WeatherSubsystem = World != nullptr
+			? World->GetSubsystem<UCSWeatherSubsystem>()
+			: nullptr;
+		if (!IsValid(WeatherSubsystem))
+		{
+			return NAME_None;
+		}
+
+		switch (WeatherSubsystem->GetCurrentWeather())
+		{
+		case ECSWeatherType::Rain: return TEXT("PlannedMissing_Rain");
+		case ECSWeatherType::Snow: return TEXT("PlannedMissing_Snow");
+		case ECSWeatherType::Cold: return TEXT("PlannedMissing_Cold");
+		case ECSWeatherType::Heat: return TEXT("PlannedMissing_Heat");
+		default: return NAME_None;
+		}
+	}
+
+	if (NewsModifier > 0.0f)
+	{
+		const UWorld* World = GetWorld();
+		const UCSNoticeEventSubsystem* NoticeSubsystem = World != nullptr
+			? World->GetSubsystem<UCSNoticeEventSubsystem>()
+			: nullptr;
+		if (!IsValid(NoticeSubsystem))
+		{
+			return NAME_None;
+		}
+
+		// 합산은 양수인데 개별 규칙은 전부 음수일 수 없으므로 정상적으로는 항상 찾는다
+		ECSNoticeEventSourceType Source = ECSNoticeEventSourceType::News;
+		if (NoticeSubsystem->GetStrongestPositiveDemandSource(Handle, Source))
+		{
+			return Source == ECSNoticeEventSourceType::Holiday
+				? TEXT("PlannedMissing_Holiday")
+				: TEXT("PlannedMissing_News");
+		}
+	}
+
+	return NAME_None;
 }
 
 // Info.ProductId(RowName)로 ProductMasterDataTable을 조회해 화면 표시용 상품명을 반환
@@ -1364,25 +1387,6 @@ float UCSPurchaseDecisionComponent::GetPlannedDemandModifier(FName ProductRowNam
 float UCSPurchaseDecisionComponent::GetPlannedDemandMultiplier(float DemandModifier) const
 {
 	return FMath::Max(1.0f + W_PlannedDemand * DemandModifier, MinPlannedDemandMultiplier);
-}
-
-void UCSPurchaseDecisionComponent::ApplyPlannedDemandWeights(const TArray<FName>& ProductRowNames,
-	TArray<float>& InOutWeights, float& OutMaxModifier) const
-{
-	OutMaxModifier = 0.0f;
-
-	// 호출부가 두 배열을 나란히 채우지만, 어긋난 채로 들어오면 엉뚱한 상품에 배율이 붙는다
-	if (ProductRowNames.Num() != InOutWeights.Num())
-	{
-		return;
-	}
-
-	for (int32 Index = 0; Index < ProductRowNames.Num(); ++Index)
-	{
-		const float Modifier = GetPlannedDemandModifier(ProductRowNames[Index]);
-		OutMaxModifier = FMath::Max(OutMaxModifier, Modifier);
-		InOutWeights[Index] *= GetPlannedDemandMultiplier(Modifier);
-	}
 }
 
 void UCSPurchaseDecisionComponent::LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate,

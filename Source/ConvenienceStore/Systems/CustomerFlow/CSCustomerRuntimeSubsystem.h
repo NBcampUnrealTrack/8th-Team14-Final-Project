@@ -122,6 +122,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Shelf")
 	bool HasShelfStock(const AActor* ShelfActor) const;
 
+	// 이 매장이 한 번이라도 진열했던 상품인지. 계획 상품을 못 찾은 손님의 대사를
+	// "재고를 채워라"와 "레벨을 올려라" 중 어느 쪽으로 할지 가르는 데 쓴다
+	// 지금 품절이어도 true - 팔던 물건을 두고 "안 판다"고 하면 플레이어에게 반대 신호가 된다
+	bool WasProductEverStocked(FName ProductRowName) const;
+
 	// 지정한 상품을 집는 함수
 	// 소비심리 파트가 고른 상품을 이 함수로 넘기면 됨.
 	FName TakeProduct(AActor* ShelfActor, AActor* ProductActor, ACSCustomerCharacter* Customer);
@@ -230,6 +235,11 @@ public:
 
 	// 진열대 선택/반환 굴림용 스트림. 여러 함수가 const라서 mutable 필요
 	mutable FRandomStream ShelfRandomStream;
+
+	// 이번 세션에 한 번이라도 진열대에 올라온 적 있는 상품(GetProductsOnShelf가 채운다)
+	// 수집 지점이 const 함수라 mutable. 하루 단위로 비우지 않는 이유는
+	// 어제 팔던 물건을 오늘 아침 재고 채우기 전에 "안 판다"고 말하게 되기 때문이다
+	mutable TSet<FName> ProductsEverStocked;
 
 	//지금 줄 맨 앞 손님 (없으면 nullptr)
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
