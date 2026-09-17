@@ -202,6 +202,70 @@ float UCSNoticeEventSubsystem::GetProductDemandMultiplier(
 	return FMath::Max(0.0f, 1.0f + GetProductDemandModifier(ProductRow));
 }
 
+bool UCSNoticeEventSubsystem::GetStrongestPositiveDemandSource(
+	const FDataTableRowHandle& ProductRow,
+	ECSNoticeEventSourceType& OutSource) const
+{
+	if (!IsValid(EffectRuleDataTable) ||
+		!IsValid(ProductRow.DataTable) ||
+		ProductRow.RowName.IsNone())
+	{
+		return false;
+	}
+
+	const FCSProductDataRow* ProductData = ProductRow.GetRow<FCSProductDataRow>(
+		TEXT("UCSNoticeEventSubsystem::GetStrongestPositiveDemandSource"));
+	if (ProductData == nullptr)
+	{
+		return false;
+	}
+
+	FName ProductCategoryName = NAME_None;
+	if (const UEnum* ProductCategoryEnum = StaticEnum<ECSProductCategory>())
+	{
+		ProductCategoryName = FName(*ProductCategoryEnum->GetNameStringByValue(
+			static_cast<int64>(ProductData->Category)));
+	}
+
+	TArray<FCSNoticeEventEffectRuleRow*> EffectRules;
+	EffectRuleDataTable->GetAllRows(
+		TEXT("UCSNoticeEventSubsystem::GetStrongestPositiveDemandSource"),
+		EffectRules);
+
+	// 합산이 아니라 개별 규칙의 최댓값으로 고른다 - 상품 지정 규칙과 카테고리 규칙이
+	// 같은 상품에 겹칠 때, 더 구체적으로 지목한 쪽이 문구의 주인이어야 자연스럽다
+	float BestModifier = 0.0f;
+	bool bFound = false;
+
+	for (const FCSNoticeEventEffectRuleRow* Rule : EffectRules)
+	{
+		if (Rule == nullptr || !Rule->bEnabled || Rule->DemandModifier <= 0.0f || !IsEffectSourceActive(*Rule))
+		{
+			continue;
+		}
+
+		const bool bTargetMatches =
+			(Rule->TargetType == ECSNoticeEventTargetType::Product &&
+				ProductRow.RowName == Rule->TargetId) ||
+			(Rule->TargetType == ECSNoticeEventTargetType::Category &&
+				!ProductCategoryName.IsNone() &&
+				ProductCategoryName == Rule->TargetId);
+		if (!bTargetMatches)
+		{
+			continue;
+		}
+
+		if (!bFound || Rule->DemandModifier > BestModifier)
+		{
+			BestModifier = Rule->DemandModifier;
+			OutSource = Rule->SourceType;
+			bFound = true;
+		}
+	}
+
+	return bFound;
+}
+
 void UCSNoticeEventSubsystem::HandleBusinessDayStarted(const int32 NewBusinessDay)
 {
 	ProcessBusinessDay(NewBusinessDay);

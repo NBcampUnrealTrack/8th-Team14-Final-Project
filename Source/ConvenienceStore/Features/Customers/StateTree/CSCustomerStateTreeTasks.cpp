@@ -1,4 +1,4 @@
-#include "Features/Customers/StateTree/CSCustomerStateTreeTasks.h"
+﻿#include "Features/Customers/StateTree/CSCustomerStateTreeTasks.h"
 #include "StateTreeExecutionContext.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Features/Customers/CSCustomerCharacter.h"
@@ -12,6 +12,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 
 // =====================================================================
 // PickNextShelf
@@ -93,14 +94,15 @@ namespace
 	// 정작 그 상품이 있는 진열대가 아직 남아 있어도 손님이 영영 그리로 가지 않는다
 	// 한 카테고리가 호환 안 되는 두 진열대로 갈릴 때 반드시 생긴다
 	// (잎 우산은 ToolRack 전용인데 같은 Supply인 횃불·화살은 ScrollRack에 있는 식)
-	bool HasExactProductAnywhereUnvisited(
+	// 손님의 방문 여부는 보지 않는다 - "이 물건을 우리가 파느냐"는 동선과 무관한 질문이고,
+	// 이미 지나친 진열대에 놓인 것까지 세야 진열해 둔 물건을 두고 "없다"고 하는 일이 없다
+	bool HasExactProductAnywhere(
 		const UCSCustomerRuntimeSubsystem& Subsystem,
-		const UCSCustomerStateComponent& State,
 		const FName PlannedId)
 	{
 		for (const TObjectPtr<AActor>& Shelf : Subsystem.GetShelves())
 		{
-			if (!Subsystem.IsShelfSelectable(Shelf) || State.HasVisited(Shelf))
+			if (!Subsystem.IsShelfSelectable(Shelf))
 			{
 				continue;
 			}
@@ -115,6 +117,53 @@ namespace
 			}
 		}
 		return false;
+	}
+
+	// 계획 상품을 못 찾았을 때의 Severity. DT_PurchaseRejectionDisplay가 이 값으로 문구를 가른다
+	// 1.0 = 매장에 없고 해금 레벨도 안 돼서 발주조차 못 하는 상품 -> "레벨을 올려야겠다"
+	// 0.5 = 지금 이 손님이 못 찾았을 뿐 -> "지금 채워 넣어라"
+	// 두 문구가 같으면 플레이어가 발주하러 갔다가 목록에 없어서 버그로 오해한다
+	float CS_PlannedMissingSeverity(
+		const UWorld* World,
+		const UCSCustomerRuntimeSubsystem& Subsystem,
+		const UCSPurchaseDecisionComponent& Decision,
+		FName ProductId)
+	{
+		// 호출부가 전부 "매장에 없을 때만" 부르므로 정상적으로는 항상 false다.
+		// true가 찍히면 어딘가에서 검사를 빠뜨린 것이니 로그를 보고 그 경로를 찾을 것 -
+		// 그 사이에도 최소한 "안 판다"는 거짓말은 안 하도록 여기서 한 번 더 막는다
+		const bool bInStore = HasExactProductAnywhere(Subsystem, ProductId);
+
+		// 지금은 품절이지만 한 번이라도 진열했던 상품이면 "안 판다"가 아니라 "떨어졌다"이다.
+		// 해금 레벨만 보면 팔던 횃불이 다 팔린 순간 "아직 안 파는구나"로 바뀐다(실측됨)
+		const bool bEverStocked = Subsystem.WasProductEverStocked(ProductId);
+
+		const FCSProductDataRow* Row = IsValid(Decision.ProductMasterDataTable)
+			? Decision.ProductMasterDataTable->FindRow<FCSProductDataRow>(ProductId, TEXT("CS_PlannedMissingSeverity"), false)
+			: nullptr;
+
+		// 행이 없거나 게임스테이트를 못 잡으면 해금 여부를 알 수 없다.
+		// 미해금 쪽으로 몰아야 "발주 목록에 있을 텐데" 하고 헛되이 뒤지는 일이 없다
+		const ACSStoreGameState* StoreState = World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
+		const int32 UnlockLevel = Row != nullptr ? Row->StoreLevelUnlockCondition : 0;
+		const int32 StoreLevel = StoreState != nullptr ? StoreState->GetStoreLevel() : 0;
+		const bool bUnlocked = Row != nullptr && StoreState != nullptr && UnlockLevel <= StoreLevel;
+
+		// 셋 중 하나라도 맞으면 플레이어가 지금 손쓸 수 있는 상황이라 "채워 넣어라" 쪽이다.
+		// 셋 다 아닐 때만 "레벨을 올려라"가 된다
+		const float Severity = (bInStore || bEverStocked || bUnlocked) ? 0.5f : 1.0f;
+
+		// 같은 문구가 왜 이 손님한테만 다르게 떴는지는 조건이 셋(진열·이력·해금)이라
+		// 화면만 봐서는 역추적이 안 된다. 판정에 쓴 값을 그대로 남긴다
+		UE_LOG(LogTemp, Log,
+			TEXT("[계획미발견] 시드=%d 상품=%s 매장진열=%s 진열이력=%s 해금=%s(필요%d/현재%d) 문구=%s"),
+			Decision.GetCustomerSeed(), *ProductId.ToString(),
+			bInStore ? TEXT("있음") : TEXT("없음"),
+			bEverStocked ? TEXT("있음") : TEXT("없음"),
+			bUnlocked ? TEXT("됨") : TEXT("안됨"), UnlockLevel, StoreLevel,
+			Severity >= 1.0f ? TEXT("안파는구나") : TEXT("없네"));
+
+		return Severity;
 	}
 
 	bool HasCategoryMatchAnywhere(
@@ -228,10 +277,13 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 					continue;
 				}
 
+				// 찾기를 포기한다. 반응은 여기서 띄우지 않고 퇴장길에 한 번만 몰아서 낸다 -
+				// 진열대마다 띄우면 계획 2개짜리 손님이 같은 대사를 두세 번 한다
 				State->PlannedProductIds.RemoveAt(i);
+				State->UnfulfilledPlannedProductIds.AddUnique(PlannedId);
 
-				State->PendingPlannedCategoryMissingProductId = PlannedId;
-
+				// 포기 굴림은 항상 일어나야 한다 - 조건부로 만들면
+				// 진열 상태에 따라 굴림 횟수가 달라져 같은 시드 결과가 밀린다
 				if (Decision->RollChance(0.45f))
 				{
 					State->bForceStopShopping = true;
@@ -503,6 +555,7 @@ static void CS_HandlePurchaseRejection(
 	const float DisplayDuration = Decision.GetInstantDisplayDuration(RejectionInfo.Reason);
 	State.LastRejectionInfo = RejectionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+	State.MarkReactedTo(RejectionInfo.ProductId);
 
 	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(RejectionInfo).Icon, DisplayDuration);
 
@@ -528,6 +581,7 @@ static void CS_HandlePriceReactionThenBuy(
 	const float DisplayDuration = Decision.GetInstantDisplayDuration(ReactionInfo.Reason);
 	State.LastRejectionInfo = ReactionInfo;
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
+	State.MarkReactedTo(ReactionInfo.ProductId);
 
 	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(ReactionInfo).Icon, DisplayDuration);
 
@@ -734,56 +788,10 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		return EStateTreeRunStatus::Succeeded;
 	}
 
-	// PickNextShelf가 보류해둔 "계획 카테고리가 매장에 없음" 표시가 있는지
-	const bool bHasPendingCategoryMissing = Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
-		Data.RoundCount == 0 && !State->HasVisited(ShelfActor) &&
-		!State->PendingPlannedCategoryMissingProductId.IsNone();
-
-	// 이 진열대가 마침 재고까지 없으면 아래 ShelfEmpty 분기와 겹쳐서 반응이 2개 동시에
-	// 뜨게 되므로, 그 경우엔 PlannedProductMissing 쪽을 우선해 여기서 대신 처리하고 ShelfEmpty
-	// 분기를 건너뛴다(재고 없음이라는 사실 자체는 같으므로 GlanceTime 대기·MarkVisited·
-	// 평가예산 차감은 ShelfEmpty와 동일하게 수행)
-	if (bHasPendingCategoryMissing && !Subsystem->HasShelfStock(ShelfActor))
-	{
-		if (Data.ElapsedTime < Data.GlanceTime)
-		{
-			return EStateTreeRunStatus::Running;
-		}
-
-		State->MarkVisited(ShelfActor);
-		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
-
-		FCSPurchaseRejectionInfo PlannedMissingInfo;
-		PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
-		PlannedMissingInfo.ProductId = State->PendingPlannedCategoryMissingProductId;
-		PlannedMissingInfo.Severity = 1.0f;
-		State->PendingPlannedCategoryMissingProductId = NAME_None; // 1회성 - 소비 즉시 비움
-
-		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, PlannedMissingInfo, Context.GetWorld());
-		return EStateTreeRunStatus::Running;
-	}
-
-	// 재고는 있는 정상 케이스 - 도착한 첫 틱에 대신 띄우고 흐름은 그대로 이어간다(대기 없이 표시만)
-	if (bHasPendingCategoryMissing)
-	{
-		FCSPurchaseRejectionInfo PlannedMissingInfo;
-		PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
-		PlannedMissingInfo.ProductId = State->PendingPlannedCategoryMissingProductId;
-		PlannedMissingInfo.Severity = 1.0f;
-		State->PendingPlannedCategoryMissingProductId = NAME_None; // 1회성 - 소비 즉시 비움
-
-		const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
-		State->LastRejectionInfo = PlannedMissingInfo;
-		State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
-		Customer->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon, DisplayDuration);
-		Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
-	}
-
 	// 첫 라운드(세션 진입)에 재고가 없으면 세션 자체를 시작하지 않고 GlanceTime만큼만 짧게 머물다 지나감
 	// RoundCount == 0으로 제한하는 이유: 세션 도중(라운드 1 이상)에 다른 손님이 재고를 다 사가서 없어진 경우는
 	// 여기로 다시 빠지지 않고, 아래 BuildPurchaseCandidates가 빈 배열을 만들어 DecidePurchase가 자연히
 	// false(미구매)를 반환하며 세션이 끝나도록 둔다
-	// bHasPendingCategoryMissing이면서 재고까지 없는 경우는 위에서 이미 처리되고 return돼서 여기 안 옴
 	if (Data.Phase == ECSCustomerBrowsePhase::WaitingBeforeThink &&
 		Data.RoundCount == 0 && !Subsystem->HasShelfStock(ShelfActor))
 	{
@@ -855,43 +863,32 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			}
 
 			// 이 진열대에 계획 상품이 없다고 해서 매장에 없는 게 아니다 -
-			// 아직 안 가본 진열대에 실제로 남아 있으면 계획을 살려두고 반응도 띄우지 않는다
+			// 매장 어딘가에 실제로 남아 있으면 계획을 살려두고 반응도 띄우지 않는다.
+			// 이미 지나친 진열대에 있는 경우까지 포함한다 - 갖다놓은 물건을 두고 "없다"고 하면
+			// 플레이어에게는 거짓 신호다
 			// 이 검사가 없으면 계획을 2개 가진 손님이 한쪽 진열대에 도착하는 순간
 			// 나머지 하나를 잃는다(같은 카테고리인데 진열대가 갈려 있을 때)
-			if (HasExactProductAnywhereUnvisited(*Subsystem, *State, PlannedId))
+			if (HasExactProductAnywhere(*Subsystem, PlannedId))
 			{
 				continue;
 			}
 
+			// 반응은 여기서 띄우지 않는다 - 퇴장길에 한 번만 몰아서 낸다.
+			// 진열대마다 띄우면 같은 손님이 진열대와 문 앞에서 같은 대사를 반복한다
 			State->PlannedProductIds.RemoveAt(i);
-
-			FCSPurchaseRejectionInfo PlannedMissingInfo;
-			PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
-			PlannedMissingInfo.ProductId = PlannedId;
-			PlannedMissingInfo.Severity = 1.0f;
+			State->UnfulfilledPlannedProductIds.AddUnique(PlannedId);
 
 			// 대체품이 있는 케이스라 포기확률은 항상 15%(고정) - 지금 서 있는 이 진열대 자체가
 			// 같은 카테고리 상품을 갖고 있으므로 대체품 유무를 다시 따질 필요가 없음
 			if (Decision->RollChance(0.15f))
 			{
+				// 표시가 없어져 대기 상태로 넘길 이유가 사라졌다. 플래그만 세우면
+				// 다음 WantsMoreItems 판정에서 세션이 정상적으로 끝난다
 				State->bForceStopShopping = true;
-
-				// 포기 케이스는 기존 거절과 동일하게 표시 후 대기, 대기가 끝나면 세션 종료
-				// (이 시점엔 아직 Thinking을 시작 전이라 사실상 no-op이지만, 다른 거절 경로와
-				// 동일하게 방어적으로 호출 - 혹시 남아있을 이전 라운드의 hold를 확실히 정리)
-				Customer->ReleaseActionTransitionHold();
-				CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, PlannedMissingInfo, Context.GetWorld());
-				return EStateTreeRunStatus::Running;
 			}
 
-			// 포기 아님: 이 사유를 표시/방송만 하고 이후 정상 Thinking/BrowseTime → 평가 흐름을
-			// 그대로 이어간다(대체품을 실제로 담을지는 기존 채점 로직에 맡김) - CS_HandlePurchaseRejection을
-			// 쓰지 않는 이유는 그 함수가 항상 WaitingReaction 대기 후 세션 종료로 이어지기 때문
-			const float DisplayDuration = Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason);
-			State->LastRejectionInfo = PlannedMissingInfo;
-			State->LastRejectionTime = Context.GetWorld() != nullptr ? Context.GetWorld()->GetTimeSeconds() : 0.0f;
-			Customer->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon, DisplayDuration);
-			Subsystem->NotifyPurchaseRejected(Customer, PlannedMissingInfo);
+			// 한 진열대에서 여러 계획 상품을 한꺼번에 정리하지 않는다 -
+			// 대체품을 실제로 담을지는 이후 정상 Thinking/BrowseTime → 평가 흐름에 맡긴다
 			break;
 		}
 	}
@@ -961,9 +958,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 플레이어에게 딱히 알릴 이유가 없는 조용한 미구매
+		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 알릴 이유가 없는 조용한 미구매
+		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 5초 멈춰 선다
 		// 연출 없이 바로 세션 종료
-		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None)
+		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
+			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
 			return EStateTreeRunStatus::Succeeded;
@@ -978,7 +977,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 가격 반응(Reason=PriceRejected, 무반응이면 None)이 있으면 즉시 담지 않고 먼저 멈춰서
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
 	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
-	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None)
+	// 이미 반응한 상품이면 멈추지 않고 바로 담는다
+	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
 		Customer->ReleaseActionTransitionHold();
 		CS_HandlePriceReactionThenBuy(Data, *Customer, *State, *Decision, RejectionInfo, Selected.ProductActor, Context.GetWorld());
@@ -1264,6 +1265,48 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 	if (Subsystem == nullptr || !Subsystem->IsEscapingShoplifter(Data.Actor))
 	{
 		Data.Actor->SetBasketDisplayVisible(false);
+	}
+
+	// 계획 상품 미발견 반응은 전부 이 자리 하나로 모았다.
+	// 진열대마다 띄우면 한 손님이 같은 대사를 여러 번 하고, 어떤 손님은 진열대에서
+	// 어떤 손님은 문 앞에서 말해 규칙이 없어 보인다 - 퇴장 시점 1회로 고정한다
+	// 걸어 나가는 동안 마법봉으로 맞혀야 문장이 보이므로, 퇴장 이동을 시작하기 전에 띄운다
+	if (UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
+		Decision != nullptr && Subsystem != nullptr && !State->bPlannedMissingReported)
+	{
+		// 찾다가 포기한 것이 먼저다. 그 뒤가 아예 만나보지도 못한 계획 상품
+		TArray<FName> Unfulfilled = State->UnfulfilledPlannedProductIds;
+		Unfulfilled.Append(State->PlannedProductIds);
+
+		for (const FName PlannedId : Unfulfilled)
+		{
+			// 진열은 돼 있는데 이 손님이 그 진열대까지 못 간 것뿐이면 아무 말도 안 한다.
+			// 갖다놓은 물건을 두고 없다고 하면 플레이어에게 거짓 신호가 된다
+			if (HasExactProductAnywhere(*Subsystem, PlannedId))
+			{
+				continue;
+			}
+
+			FCSPurchaseRejectionInfo PlannedMissingInfo;
+			PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
+			PlannedMissingInfo.ProductId = PlannedId;
+			PlannedMissingInfo.Severity = CS_PlannedMissingSeverity(Context.GetWorld(), *Subsystem, *Decision, PlannedId);
+
+			State->LastRejectionInfo = PlannedMissingInfo;
+			State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
+			Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon,
+				Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason));
+			Subsystem->NotifyPurchaseRejected(Data.Actor, PlannedMissingInfo);
+
+			// 이 태스크는 영업 종료 강제 퇴장 등으로 다시 들어올 수 있다.
+			// 플래그를 안 세우면 같은 손님이 같은 상품으로 두 번 반응한다(실측됨)
+			State->bPlannedMissingReported = true;
+			State->PlannedProductIds.Empty();
+			State->UnfulfilledPlannedProductIds.Empty();
+
+			// 나가면서 여러 개를 연달아 띄우면 마지막 것만 보이므로 하나만
+			break;
+		}
 	}
 
 	const EPathFollowingRequestResult::Type Result =

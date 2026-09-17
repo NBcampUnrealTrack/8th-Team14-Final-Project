@@ -190,23 +190,32 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	int32 PlannedBasketTarget = 1;
 
+	// 스폰 시점에 정해지는 "뭔가 사러 왔는지". 입장 확률 구간(계획/무계획)을 가른다.
+	// 아래 PlannedProductIds와 따로 두는 이유: 계획 상품은 이벤트가 있는 날만 생기는데
+	// 둘을 같은 값으로 쓰면 평상시 전원이 무계획 취급돼 입장률이 통째로 무너진다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	bool bHasShoppingIntent = false;
+
 	// 스폰 시점에 뽑은 이번 방문의 계획 상품 목록(RowName). 진열대 우선 방문 대상.
 	// 한 항목을 확인(구매/거절/대체 포기 전부 포함)하면 결과와 무관하게 이 목록에서 제거된다 -
 	// 안 지우면 이미 처리한 계획 상품을 다음 진열대 선택 때마다 계속 찾아다니게 됨
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	TArray<FName> PlannedProductIds;
 
+	// 계획 상품을 못 찾았다는 반응을 이번 방문에 이미 한 번 했는지.
+	// 계획이 2개면 진열대마다 따로 반응해서 한 손님이 같은 대사를 두세 번 한다(실측됨)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	bool bPlannedMissingReported = false;
+
 	// true면 다음 WantsMoreItems 판정이 확률 굴림 없이 즉시 "그만 쇼핑"으로 확정된다
 	// 계획 상품이 대체품도 없이 품절이라 포기를 굴렸을 때만 켜짐
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	bool bForceStopShopping = false;
 
-	// PickNextShelf가 이 계획 카테고리는 매장 어디에도 없다고 판정했을 때, 그 사실을 손님이
-	// 실제로 다음 진열대에 도착할 때까지 잠깐 들고 있는 값. PickNextShelf 시점엔 아직 걸어가는 중이라
-	// 그 자리에서 바로 표시하면 진열대 앞이 아니라 매장에 막 들어온 위치에서 떠버리므로,
-	// BrowseShelf가 다음 진열대에 도착한 첫 틱에 표시하고 즉시 NAME_None으로 비운다
+	// 찾다가 포기한 계획 상품. 퇴장 시점에 속마음을 한 번 띄울 때 이 목록을 먼저 본다 -
+	// 계획 목록에서 지우기만 하면 "무엇을 못 샀는지"가 사라져 문 앞에서 할 말이 없어진다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
-	FName PendingPlannedCategoryMissingProductId = NAME_None;
+	TArray<FName> UnfulfilledPlannedProductIds;
 
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
@@ -235,6 +244,10 @@ public:
 	void MarkVisited(AActor* ShelfActor);
 	bool HasVisited(const AActor* ShelfActor) const;
 
+	// 같은 상품에 두 번 반응하지 않도록 기록/조회. ShelfEmpty처럼 ProductId가 없는 사유는 대상 아님
+	void MarkReactedTo(FName ProductId);
+	bool HasReactedTo(FName ProductId) const;
+
 	// 거절 연출 / 가격 반응 공용
 
 	// 가장 최근 거절/가격반응 사유. 즉시표시(디버그 텍스트)와 마법봉 속마음 트리거가 둘 다 이 값을 읽음
@@ -250,6 +263,11 @@ public:
 	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	bool bPriceUpsetCounted = false;
+
+	// 이미 연출을 보여준 상품들. 후보 목록의 SKU 중복 제거는 한 라운드 안에서만 유효해서
+	// 라운드를 넘어가는 기억은 여기 있어야 한다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
+	TSet<FName> ReactedProductIds;
 
 	// 청결도 -------
 
