@@ -1,4 +1,6 @@
 #include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
+#include "Systems/Journal/CSJournalSubsystem.h"
+#include "Engine/GameInstance.h"
 
 #include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
@@ -331,6 +333,19 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 			HolidayNames.IsEmpty() ? TEXT("없음") : *FString::Join(HolidayNames, TEXT(", ")));
 	}
 
+	// 오늘의 뉴스와 기념일을 날짜별 수첩 기록으로 남겨 이후에도 확인하실 수 있도록 합니다.
+	if (auto* GI = GetWorld()->GetGameInstance())
+	{
+		auto* Journal = GI->GetSubsystem<UCSJournalSubsystem>();
+		Journal->ObserveDay(SafeBusinessDay);
+		FCSNewsEventDataRow News;
+		if (GetTodayNews(News)) Journal->RecordEvent(FName(*(TEXT("News.") + CurrentNewsRowName.ToString())), SafeBusinessDay, News.Title, News.Body);
+		for (FName Id : ActiveHolidayRowNames)
+		{
+			const auto* Holiday = HolidayEventDataTable->FindRow<FCSHolidayEventDataRow>(Id, TEXT("Journal"), false);
+			if (Holiday) Journal->RecordEvent(FName(*(TEXT("Holiday.") + Id.ToString())), SafeBusinessDay, Holiday->Title, Holiday->Description);
+		}
+	}
 	OnNoticeEventsChanged.Broadcast();
 }
 

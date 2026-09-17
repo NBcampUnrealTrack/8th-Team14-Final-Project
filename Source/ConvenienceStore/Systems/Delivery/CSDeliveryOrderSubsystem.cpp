@@ -1,4 +1,6 @@
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
+#include "Systems/Journal/CSJournalSubsystem.h"
+#include "Engine/GameInstance.h"
 
 #include "Data/CSProductTypes.h"
 #include "Data/CSDeliveryOrderSettingsDataAsset.h"
@@ -535,6 +537,13 @@ void UCSDeliveryOrderSubsystem::ReleaseOrderReservation(const FCSDeliveryOrderRu
 
 void UCSDeliveryOrderSubsystem::BroadcastOrdersChanged(const FCSDeliveryOrderRuntime& ChangedOrder)
 {
+	// 주문 변경 알림 전에 수락·종료 상태를 수첩에 반영하며 월드 인스턴스별로 주문을 구분합니다.
+	if (auto* GI = GetWorld()->GetGameInstance())
+	{
+		const auto* State = GetWorld()->GetGameState<ACSStoreGameState>();
+		const FName Scope(*FString::Printf(TEXT("%s:%u"), *GetWorld()->GetMapName(), GetWorld()->GetUniqueID()));
+		GI->GetSubsystem<UCSJournalSubsystem>()->RecordDelivery(ChangedOrder, State ? State->CurrentBusinessDay : 1, Scope);
+	}
 	OnDeliveryOrderChanged.Broadcast(ChangedOrder);
 	OnDeliveryOrdersChanged.Broadcast();
 }
