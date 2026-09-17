@@ -25,14 +25,6 @@ namespace
 			&& Info.Severity >= PriceUpsetSeverityFloor;
 	}
 
-	// 검증 로그용 진열대 이름
-	// 후보 구조체는 진열대를 들고 있지 않지만, 상품 액터는 진열대에 Attach된 상태라
-	// 부모를 거슬러 올라가면 어느 진열대 앞에서 내린 판단인지 알 수 있다
-	FString GetShelfNameForLog(const AActor* ProductActor)
-	{
-		const AActor* Shelf = ProductActor != nullptr ? ProductActor->GetAttachParentActor() : nullptr;
-		return Shelf != nullptr ? Shelf->GetName() : TEXT("?");
-	}
 }
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
@@ -290,20 +282,11 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 		FCSPurchaseRejectionInfo CandidateRejection;
 		const float Score = ScoreCandidate(Candidate, CandidateRejection);
 
-		// 로그 조건은 가중치를 곱하기 전 원시값으로 판정한다
-		// W_WeatherDemand=0 대조 런에서도 같은 후보가 찍혀야 두 런을 줄 단위로 맞춰볼 수 있다
+		// 아래 날씨 억제 판정에 쓰는 원시 수치(가중치를 곱하기 전 값)
 		const float WeatherModifier = GetWeatherDemandModifier(Candidate.ProductRowHandle);
-		const bool bWeatherLogTarget = !FMath::IsNearlyZero(WeatherModifier);
 
 		if (Score < 0.f)
 		{
-			// 구매 불가(-1.0)는 날씨와 무관한 차단이지만, 거절 사유 오분류를 확인할 때
-			// "같은 판정에 -1.0 후보가 있었는가"를 로그만으로 가릴 수 있어야 해서 함께 남긴다
-			if (bWeatherLogTarget)
-			{
-				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("구매불가"));
-			}
-
 			// 이미 카테고리 차단 사유로 확정됐거나, 상품 데이터를 못 찾아 사유가 안 채워진(Reason=None)
 			// 데이터 무결성 문제 후보는 대표 사유 집계에서 제외 - Severity 기본값(0.0f)이
 			// 항상 최솟값이라 아무 사유도 없는 후보가 대표로 뽑히는 걸 막기 위함
@@ -331,11 +314,6 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 		FCSPurchaseRejectionInfo NewsInfo;
 		if (TryBuildNewsSuppressionInfo(Candidate, Score, NewsInfo))
 		{
-			if (bWeatherLogTarget)
-			{
-				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("뉴스제외"));
-			}
-
 			if (Score > BestSuppressedScore)
 			{
 				OutNewsSuppressedInfo = NewsInfo;
@@ -357,16 +335,7 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 		// W_WeatherDemand=0이면 보정이 정확히 0이라 이 조건이 절대 성립하지 않고 기존 동작이 그대로 보존된다
 		if (W_WeatherDemand * WeatherModifier < 0.f && Score < GetEffectiveMinPurchaseUtility())
 		{
-			if (bWeatherLogTarget)
-			{
-				LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("제외"));
-			}
 			continue;
-		}
-
-		if (bWeatherLogTarget)
-		{
-			LogWeatherDemandCandidate(Candidate, WeatherModifier, Score, TEXT("후보유지"));
 		}
 
 		Viable.Add(Candidate);
@@ -603,41 +572,6 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		return false;
 	}
 
-	// 날씨 규칙이 걸린 후보가 하나라도 있었던 판정만 결과를 남긴다
-	// 조건은 가중치를 곱하기 전 원시값 - W_WeatherDemand=0 대조 런에서도 같은 판정이 찍혀야
-	// 두 런의 "같은 손님 같은 진열대" 판정을 줄 단위로 맞춰볼 수 있다
-	bool bWeatherRuleInvolved = false;
-	for (const FCSPurchaseCandidate& Candidate : Candidates)
-	{
-		if (!FMath::IsNearlyZero(GetWeatherDemandModifier(Candidate.ProductRowHandle)))
-		{
-			bWeatherRuleInvolved = true;
-			break;
-		}
-	}
-
-	const FString WeatherLogShelfName = bWeatherRuleInvolved
-		? GetShelfNameForLog(Candidates[0].ProductActor)
-		: FString();
-
-	auto LogWeatherDemandResult = [this, bWeatherRuleInvolved, &WeatherLogShelfName]
-		(const FName PickedProduct, const FCSPurchaseRejectionInfo& Info)
-	{
-		if (!bWeatherRuleInvolved)
-		{
-			return;
-		}
-
-		const FString PickedText = PickedProduct.IsNone() ? TEXT("미구매") : PickedProduct.ToString();
-		UE_LOG(LogTemp, Log,
-			TEXT("[날씨수요] 결과 시드=%d 진열대=%s 담은상품=%s 사유=%s"),
-			GetCustomerSeed(),
-			*WeatherLogShelfName,
-			*PickedText,
-			*StaticEnum<ECSPurchaseRejectReason>()->GetNameStringByValue(
-				static_cast<int64>(Info.Reason)));
-	};
-
 	// 점수 매기고 상위 후보만 추림 (구매 불가 후보들의 대표 거절 사유는 OutRejectionInfo에 누적됨)
 	FCSPurchaseRejectionInfo NewsSuppressedInfo;
 	const TArray<FCSPurchaseCandidate> TopCandidates = ScoreAndSelectTopCandidates(Candidates, OutRejectionInfo, NewsSuppressedInfo);
@@ -658,7 +592,6 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		{
 			OutRejectionInfo = NewsSuppressedInfo;
 		}
-		LogWeatherDemandResult(NAME_None, OutRejectionInfo);
 		return false;
 	}
 
@@ -670,7 +603,6 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 		OutRejectionInfo = (bHasNewsSuppression && !PriceOutranksNews(ShortfallInfo))
 			? NewsSuppressedInfo
 			: ShortfallInfo;
-		LogWeatherDemandResult(NAME_None, OutRejectionInfo);
 		return false;
 	}
 
@@ -686,45 +618,6 @@ bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandid
 	OutRejectionInfo = (bHasNewsSuppression && !PriceOutranksNews(PriceReactionInfo))
 		? NewsSuppressedInfo
 		: PriceReactionInfo;
-
-	// 연관구매 보너스가 있었을 때만 로그
-	if (const FCSProductDataRow* SelectedRow = GetProductRow(OutSelected))
-	{
-		const FCSPriceEvaluation SelectedPriceEval = EvaluatePrice(OutSelected, *SelectedRow);
-		FString AnchorSummary;
-		const float AffinityBonus = ComputeAffinityBonus(SelectedRow->Category, SelectedPriceEval.PriceScore, &AnchorSummary);
-		if (AffinityBonus > 0.f)
-		{
-			const float FinalScore = OutSelected.Score;
-			const float OriginalScore = FinalScore - AffinityBonus;
-			// 최종 점수가 상한(1.0)에 잘렸으면 원래 점수를 정확히 역산할 수 없다는 표시
-			const bool bClampedAtCap = FinalScore >= 1.0f - KINDA_SMALL_NUMBER;
-			const AActor* Owner = GetOwner();
-			UE_LOG(LogTemp, Log,
-				TEXT("[연관구매] 담기 손님=%s 상품=%s 가격점수=%.2f 원래=%.2f +보너스=%.2f → 최종=%.2f%s 앵커=[%s]"),
-				Owner != nullptr ? *Owner->GetName() : TEXT("?"),
-				*OutSelected.ProductRowHandle.RowName.ToString(),
-				SelectedPriceEval.PriceScore, OriginalScore, AffinityBonus, FinalScore,
-				bClampedAtCap ? TEXT("(상한)") : TEXT(""), *AnchorSummary);
-		}
-	}
-
-	// 뉴스 보정이 걸린 상품을 담았을 때만 로그
-	// 가중치 곱한 값이 아니라 원시 수치로 판정 - W_NewsDemand=0 대조군에서도 찍혀야 판매 개수를 비교할 수 있다
-	const float NewsModifier = GetNewsDemandModifier(OutSelected.ProductRowHandle);
-	if (!FMath::IsNearlyZero(NewsModifier))
-	{
-		const AActor* Owner = GetOwner();
-		UE_LOG(LogTemp, Log,
-			TEXT("[뉴스수요] 담기 손님=%s 상품=%s 수치=%+.2f 반영=%+.2f 최종=%.2f"),
-			Owner != nullptr ? *Owner->GetName() : TEXT("?"),
-			*OutSelected.ProductRowHandle.RowName.ToString(),
-			NewsModifier,
-			W_NewsDemand * NewsModifier,
-			OutSelected.Score);
-	}
-
-	LogWeatherDemandResult(OutSelected.ProductRowHandle.RowName, OutRejectionInfo);
 
 	return true;
 }
@@ -1318,21 +1211,6 @@ float UCSPurchaseDecisionComponent::ComputeWeatherDemandBonus(const FDataTableRo
 	return W_WeatherDemand * GetWeatherDemandModifier(ProductRow);
 }
 
-FString UCSPurchaseDecisionComponent::GetWeatherNameForLog() const
-{
-	const UWorld* World = GetWorld();
-	const UCSWeatherSubsystem* WeatherSubsystem = World != nullptr
-		? World->GetSubsystem<UCSWeatherSubsystem>()
-		: nullptr;
-	if (!IsValid(WeatherSubsystem))
-	{
-		return TEXT("?");
-	}
-
-	return StaticEnum<ECSWeatherType>()->GetNameStringByValue(
-		static_cast<int64>(WeatherSubsystem->GetCurrentWeather()));
-}
-
 bool UCSPurchaseDecisionComponent::IsSingleUnitLimitReached(const FDataTableRowHandle& ProductRow) const
 {
 	if (!SingleUnitProductIds.Contains(ProductRow.RowName))
@@ -1379,22 +1257,6 @@ float UCSPurchaseDecisionComponent::GetPlannedDemandModifier(FName ProductRowNam
 float UCSPurchaseDecisionComponent::GetPlannedDemandMultiplier(float DemandModifier) const
 {
 	return FMath::Max(1.0f + W_PlannedDemand * DemandModifier, MinPlannedDemandMultiplier);
-}
-
-void UCSPurchaseDecisionComponent::LogWeatherDemandCandidate(const FCSPurchaseCandidate& Candidate,
-	float WeatherModifier, float Score, const TCHAR* Disposition) const
-{
-	UE_LOG(LogTemp, Log,
-		TEXT("[날씨수요] 후보 시드=%d 종족=%s 진열대=%s 상품=%s 날씨=%s 수치=%+.2f 반영=%+.2f 점수=%.2f 처리=%s"),
-		GetCustomerSeed(),
-		Archetype != nullptr ? *Archetype->DisplayName.ToString() : TEXT("?"),
-		*GetShelfNameForLog(Candidate.ProductActor),
-		*Candidate.ProductRowHandle.RowName.ToString(),
-		*GetWeatherNameForLog(),
-		WeatherModifier,
-		W_WeatherDemand * WeatherModifier,
-		Score,
-		Disposition);
 }
 
 // 반복구매 감쇠를 적용한 카테고리 점수
