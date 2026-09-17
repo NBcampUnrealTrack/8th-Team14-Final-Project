@@ -609,9 +609,6 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
 	if (Data.RoundCount >= Data.MaxSessionRounds)
 	{
-		// [세션종료 확인용] 어느 종료조건이 실제로 자주 걸리는지 확인용
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=라운드상한 | 담은개수=%d/%d | RoundCount=%d"),
-			*Customer.GetName(), State.SelectProducts.Num(), State.PlannedBasketTarget, Data.RoundCount);
 		return EStateTreeRunStatus::Succeeded;
 	}
 
@@ -619,17 +616,12 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	const int32 ItemsInBasket = State.SelectProducts.Num();
 	if (ItemsInBasket >= State.PlannedBasketTarget)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=목표달성 | 담은개수=%d/%d"),
-			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget);
 		return EStateTreeRunStatus::Succeeded;
 	}
 
 	// 소프트/하드 예산 중 하나라도 바닥나면 더 둘러봐도 살 수 없으므로 종료
 	if (State.GetRemainingSoftBudget() <= 0 || State.GetRemainingHardWallet() <= 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=예산바닥 | 담은개수=%d/%d | 남은소프트=%d | 남은하드=%d"),
-			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget,
-			State.GetRemainingSoftBudget(), State.GetRemainingHardWallet());
 		return EStateTreeRunStatus::Succeeded;
 	}
 
@@ -637,9 +629,6 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
 	if (!Decision.RollContinueShopping(ItemsInBasket))
 	{
-		UE_LOG(LogTemp, Log, TEXT("[세션종료 확인용] %s | 사유=확률탈락 | 담은개수=%d/%d | 확률=%.2f"),
-			*Customer.GetName(), ItemsInBasket, State.PlannedBasketTarget,
-			Decision.ContinueShoppingProbability(ItemsInBasket));
 		return EStateTreeRunStatus::Succeeded;
 	}
 
