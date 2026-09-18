@@ -178,6 +178,13 @@ bool IsPerishableProtectionTaskAlreadySafe(const FCSStoreEmployeeTask& Task)
 	return false;
 }
 
+bool IsStoreCrateTaskAlreadyStored(const FCSStoreEmployeeTask& Task)
+{
+	const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Task.SourceActor);
+	return Task.Type == ECSStoreEmployeeTaskType::StoreCrate && IsValid(Crate) &&
+		Cast<ACSFreshnessSafeZoneActor>(Crate->GetAttachParentActor()) != nullptr;
+}
+
 bool CanReserveTaskSource(
 	const FCSStoreEmployeeTask& Task,
 	const ACSStoreEmployeeCharacter* Employee)
@@ -212,7 +219,7 @@ bool ReserveTaskSource(FCSStoreEmployeeTask& Task, ACSStoreEmployeeCharacter* Em
 }
 
 void ReleaseTaskSourceReservation(
-	FCSStoreEmployeeTask& Task,
+	const FCSStoreEmployeeTask& Task,
 	const ACSStoreEmployeeCharacter* Employee)
 {
 	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Task.SourceActor))
@@ -383,13 +390,42 @@ bool UCSStoreEmployeeSubsystem::TryClaimBestTask(
 		}
 
 		++PendingTaskCount;
-		if (!IsValid(Task.TargetActor))
+		// 입고 시점에 예약된 진열대가 비었을 수 있으므로 수령 직전에 다시 판단합니다.
+		const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Task.SourceActor);
+		if (SupportedTaskTypes.Contains(ECSStoreEmployeeTaskType::RestockShelf) && IsValid(Crate) &&
+			IsPerishableProductRow(Crate->GetProductRow()) && !IsActorHeldByPlayer(GetWorld(), Crate) &&
+			(Task.Type == ECSStoreEmployeeTaskType::StoreCrate ||
+				(Task.Type == ECSStoreEmployeeTaskType::ProtectPerishableStock &&
+					Cast<ACSFreshnessSafeZoneActor>(Task.TargetActor) != nullptr)))
+		{
+			ACSShelfActor* BestShelf = nullptr;
+			float BestDistance = TNumericLimits<float>::Max();
+			for (TActorIterator<ACSShelfActor> It(GetWorld()); It; ++It)
+			{
+				ACSShelfActor* Shelf = *It;
+				if (!CanCrateRestockShelf(Crate, Shelf, true) || HasPendingReorganizationFromShelf(Shelf) ||
+					HasActiveTask(ECSStoreEmployeeTaskType::RestockShelf, Shelf)) continue;
+				const float Distance = FVector::DistSquared(Crate->GetActorLocation(), Shelf->GetActorLocation());
+				if (Distance < BestDistance) { BestDistance = Distance; BestShelf = Shelf; }
+			}
+			if (IsValid(BestShelf))
+			{
+				Task.Type = ECSStoreEmployeeTaskType::RestockShelf;
+				Task.TargetActor = BestShelf;
+				Task.ProductRow = Crate->GetProductRow();
+				Task.bAllowCrossTierDuplicateFallback = true;
+				Task.RequestedQuantity = FMath::Min(Crate->GetRemainingQuantity(),
+					BestShelf->GetEmployeeRestockableSlotCount(Task.ProductRow, true));
+			}
+		}
+		if (!IsValid(Task.TargetActor) ||
+			(Task.Type != ECSStoreEmployeeTaskType::CheckoutService && !IsValid(Task.SourceActor)))
 		{
 			++InvalidTargetTaskCount;
 			continue;
 		}
 
-		if (IsPerishableProtectionTaskAlreadySafe(Task))
+		if (IsPerishableProtectionTaskAlreadySafe(Task) || IsStoreCrateTaskAlreadyStored(Task))
 		{
 			++AlreadySafeTaskCount;
 			continue;
@@ -566,12 +602,21 @@ void UCSStoreEmployeeSubsystem::RefreshTasks()
 	Tasks.RemoveAll([](const FCSStoreEmployeeTask& Task)
 	{
 		const ACSProductPickupActor* SourceProduct = Cast<ACSProductPickupActor>(Task.SourceActor);
-		return !IsValid(Task.TargetActor) ||
+		const bool bRemoveTask = !IsValid(Task.TargetActor) ||
+			(Task.Status == ECSStoreEmployeeTaskStatus::Pending &&
+				Task.Type != ECSStoreEmployeeTaskType::CheckoutService && !IsValid(Task.SourceActor)) ||
+			(Task.Status == ECSStoreEmployeeTaskStatus::Pending && IsStoreCrateTaskAlreadyStored(Task)) ||
 			(IsValid(SourceProduct) && !IsEmployeeManageableProduct(SourceProduct)) ||
 			IsPerishableProtectionTaskAlreadySafe(Task) ||
 			Task.Status == ECSStoreEmployeeTaskStatus::Completed ||
 			Task.Status == ECSStoreEmployeeTaskStatus::Failed ||
 			Task.Status == ECSStoreEmployeeTaskStatus::Cancelled;
+		if (bRemoveTask)
+		{
+			// 삭제 뒤에는 FinishTask가 업무를 찾지 못하므로 원본 예약을 먼저 해제합니다.
+			ReleaseTaskSourceReservation(Task, Task.AssignedEmployee);
+		}
+		return bRemoveTask;
 	});
 	RegisteredEmployees.RemoveAll([](const ACSStoreEmployeeCharacter* Employee)
 	{
@@ -579,6 +624,7 @@ void UCSStoreEmployeeSubsystem::RefreshTasks()
 	});
 
 	RefreshCheckoutTasks();
+	RefreshPerishableCrateRestockTasks();
 	RefreshInboundIntakeTasks();
 	RefreshPerishableProtectionTasks();
 	RefreshReorganizationTasks();
@@ -795,6 +841,51 @@ void UCSStoreEmployeeSubsystem::RefreshReorganizationTasks()
 	}
 }
 
+void UCSStoreEmployeeSubsystem::RefreshPerishableCrateRestockTasks()
+{
+	UWorld* World = GetWorld();
+	if (!IsValid(World)) return;
+	for (TActorIterator<ACSDeliveryCrateActor> It(World); It; ++It)
+	{
+		ACSDeliveryCrateActor* Crate = *It;
+		if (!IsValid(Crate) || Crate->GetRemainingQuantity() <= 0 ||
+			!IsPerishableProductRow(Crate->GetProductRow()) || IsPerishableCrateSafelyStored(Crate) ||
+			HasActiveTaskForSource(Crate) || IsActorHeldByPlayer(World, Crate)) continue;
+		ACSShelfActor* TargetShelf = nullptr;
+		bool bUseFallback = false;
+		// 고유 품목 배치를 우선하고, 없을 때만 기존 중복 단 확장 규칙을 적용합니다.
+		for (int32 Pass = 0; Pass < 2 && !IsValid(TargetShelf); ++Pass)
+		{
+			float NearestDistance = TNumericLimits<float>::Max();
+			for (TActorIterator<ACSShelfActor> ShelfIt(World); ShelfIt; ++ShelfIt)
+			{
+				ACSShelfActor* Shelf = *ShelfIt;
+				if (!CanCrateRestockShelf(Crate, Shelf, Pass == 1) ||
+					HasPendingReorganizationFromShelf(Shelf) ||
+					HasActiveTask(ECSStoreEmployeeTaskType::RestockShelf, Shelf)) continue;
+				const float Distance = FVector::DistSquared(Crate->GetActorLocation(), Shelf->GetActorLocation());
+				if (Distance < NearestDistance)
+				{
+					NearestDistance = Distance;
+					TargetShelf = Shelf;
+					bUseFallback = Pass == 1;
+				}
+			}
+		}
+		if (!IsValid(TargetShelf)) continue;
+		FCSStoreEmployeeTask& Task = Tasks.AddDefaulted_GetRef();
+		Task.TaskId = NextTaskId++;
+		Task.Type = ECSStoreEmployeeTaskType::RestockShelf;
+		Task.Priority = 100;
+		Task.TargetActor = TargetShelf;
+		Task.SourceActor = Crate;
+		Task.ProductRow = Crate->GetProductRow();
+		Task.bAllowCrossTierDuplicateFallback = bUseFallback;
+		Task.RequestedQuantity = FMath::Min(Crate->GetRemainingQuantity(),
+			TargetShelf->GetEmployeeRestockableSlotCount(Task.ProductRow, bUseFallback));
+	}
+}
+
 void UCSStoreEmployeeSubsystem::RefreshInboundIntakeTasks()
 {
 	UWorld* World = GetWorld();
@@ -819,14 +910,17 @@ void UCSStoreEmployeeSubsystem::RefreshInboundIntakeTasks()
 		for (TActorIterator<ACSFreshnessSafeZoneActor> StorageIt(World); StorageIt; ++StorageIt)
 		{
 			ACSFreshnessSafeZoneActor* StoragePoint = *StorageIt;
-			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate))
+			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate, true))
 			{
 				continue;
 			}
 
 			const float DistanceSquared = FVector::DistSquared(
 				Crate->GetActorLocation(), StoragePoint->GetActorLocation());
-			if (DistanceSquared < NearestDistanceSquared)
+			if (!IsValid(NearestStoragePoint) ||
+				(StoragePoint->CanStoreCrate(Crate) && !NearestStoragePoint->CanStoreCrate(Crate)) ||
+				(StoragePoint->CanStoreCrate(Crate) == NearestStoragePoint->CanStoreCrate(Crate) &&
+					DistanceSquared < NearestDistanceSquared))
 			{
 				NearestDistanceSquared = DistanceSquared;
 				NearestStoragePoint = StoragePoint;
@@ -859,8 +953,8 @@ void UCSStoreEmployeeSubsystem::RefreshPerishableProtectionTasks()
 		return;
 	}
 
-	// 배송 상자는 낱개로 꺼내 진열한 뒤 남은 수량이 다시 바닥에 놓이는 일을 막기 위해,
-	// 냉장·냉동 환경이 아니면 항상 알맞은 창고 슬롯으로 먼저 옮깁니다.
+	// 먼저 생성된 진열 업무가 없는 냉장·냉동 상자는 적합한 창고로 보호합니다.
+	// 슬롯이 가득 차면 같은 보관 유형의 안전한 구역 바닥도 사용할 수 있습니다.
 	for (TActorIterator<ACSDeliveryCrateActor> CrateIt(World); CrateIt; ++CrateIt)
 	{
 		ACSDeliveryCrateActor* Crate = *CrateIt;
@@ -881,13 +975,16 @@ void UCSStoreEmployeeSubsystem::RefreshPerishableProtectionTasks()
 		for (TActorIterator<ACSFreshnessSafeZoneActor> StorageIt(World); StorageIt; ++StorageIt)
 		{
 			ACSFreshnessSafeZoneActor* StoragePoint = *StorageIt;
-			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate))
+			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate, true))
 			{
 				continue;
 			}
 
 			const float DistanceSquared = FVector::DistSquared(Crate->GetActorLocation(), StoragePoint->GetActorLocation());
-			if (DistanceSquared < NearestDistanceSquared)
+			if (!IsValid(NearestStoragePoint) ||
+				(StoragePoint->CanStoreCrate(Crate) && !NearestStoragePoint->CanStoreCrate(Crate)) ||
+				(StoragePoint->CanStoreCrate(Crate) == NearestStoragePoint->CanStoreCrate(Crate) &&
+					DistanceSquared < NearestDistanceSquared))
 			{
 				NearestDistanceSquared = DistanceSquared;
 				NearestStoragePoint = StoragePoint;
@@ -1176,14 +1273,17 @@ void UCSStoreEmployeeSubsystem::RefreshStorageTasks()
 		for (TActorIterator<ACSFreshnessSafeZoneActor> StorageIt(World); StorageIt; ++StorageIt)
 		{
 			ACSFreshnessSafeZoneActor* StoragePoint = *StorageIt;
-			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate))
+			if (!IsValid(StoragePoint) || !StoragePoint->CanStoreCrate(Crate, true))
 			{
 				continue;
 			}
 
 			const float DistanceSquared = FVector::DistSquared(
 				Crate->GetActorLocation(), StoragePoint->GetActorLocation());
-			if (DistanceSquared < NearestDistanceSquared)
+			if (!IsValid(NearestStoragePoint) ||
+				(StoragePoint->CanStoreCrate(Crate) && !NearestStoragePoint->CanStoreCrate(Crate)) ||
+				(StoragePoint->CanStoreCrate(Crate) == NearestStoragePoint->CanStoreCrate(Crate) &&
+					DistanceSquared < NearestDistanceSquared))
 			{
 				NearestDistanceSquared = DistanceSquared;
 				NearestStoragePoint = StoragePoint;
