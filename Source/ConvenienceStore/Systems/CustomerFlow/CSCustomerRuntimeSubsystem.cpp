@@ -302,19 +302,6 @@ AActor* UCSCustomerRuntimeSubsystem::PickRandomUnvisitedShelf(
 
 	AActor* Picked = FinalCandidates[PickIndex];
 
-	if (bPickedFromAffinity)
-	{
-		TArray<FString> TargetNames;
-		for (const ECSProductCategory Category : AffinityTargetCategories)
-		{
-			TargetNames.Add(UEnum::GetDisplayValueAsText(Category).ToString());
-		}
-		UE_LOG(LogTemp, Log, TEXT("[연관구매] 끌어가기 손님=%s 대상=[%s] 짝 진열대=%d/%d → %s"),
-			Customer != nullptr ? *Customer->GetName() : TEXT("?"),
-			*FString::Join(TargetNames, TEXT(", ")),
-			AffinityCandidates.Num(), Candidates.Num(), *Picked->GetName());
-	}
-
 	return Picked;
 }
 
@@ -372,10 +359,19 @@ TArray<AActor*> UCSCustomerRuntimeSubsystem::GetProductsOnShelf(const AActor* Sh
 		if (Product != nullptr && Product->IsSellable())
 		{
 			Result.Add(Product);
+
+			// 진열 이력을 여기서 모은다. 진열대를 훑는 모든 경로가 이 함수를 지나므로
+			// 다른 파트(진열·발주)에 손대지 않고도 "이 매장이 취급하는 상품"을 알 수 있다
+			ProductsEverStocked.Add(Product->GetProductId());
 		}
 	}
 
 	return Result;
+}
+
+bool UCSCustomerRuntimeSubsystem::WasProductEverStocked(FName ProductRowName) const
+{
+	return ProductsEverStocked.Contains(ProductRowName);
 }
 
 TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidates(const AActor* ShelfActor) const
@@ -1091,6 +1087,10 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	// 대기열에서 먼저 제거
 	LeaveQueue(Customer);
 
+	// 계산에 실패한 손님은 결제 성공 때와 같이 장바구니를 숨긴다(액터는 손님 파괴 때 함께 정리).
+	// 상품 목록(SelectProducts)은 남겨 두므로 아래 진열대 반환/바닥 낙하는 기존대로 동작한다.
+	Customer->SetBasketDisplayVisible(false);
+
 	//  들고 있던 상품을 떨어뜨린다. (진열대에 되돌려놓는 기능이 들어오면 이 호출은 그쪽 Task로 이동)
 	//DropCustomerItems(Customer);
 
@@ -1744,9 +1744,9 @@ bool UCSCustomerRuntimeSubsystem::ShouldEnterStore(const ACSCustomerCharacter* C
 	}
 
 	// 계획 유무 - 스폰 시점에 이미 정해진 값이라 여기서 새로 굴리지 않는다
-	// 입장 판정이 쇼핑보다 먼저라 이 시점엔 PlannedProductIds가 아직 줄어든 적이 없고,
-	// 종족 데이터 때문에 카테고리가 전부 막힌 손님도 자연히 "계획 없음"으로 처리된다
-	const bool bHasPlan = State->PlannedProductIds.Num() > 0;
+	// PlannedProductIds가 아니라 이 플래그를 보는 이유: 계획 상품 목록은 이벤트가 있는 날만
+	// 채워져서, 목록으로 판정하면 이벤트 없는 날 손님 전원이 무계획 구간(하한 0.05)에 걸린다
+	const bool bHasPlan = State->bHasShoppingIntent;
 
 	// 매장 상태는 판정 순간마다 새로 계산한다(캐시 금지) - 손님이 걸어오는 동안 플레이어가
 	// 진열대를 채우거나 쓰레기를 치우면 그게 바로 반영되게 하려는 것. 판정이 손님당 1회라 비용 문제는 없다

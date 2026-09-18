@@ -50,6 +50,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Notice Events|Demand")
 	float GetProductDemandMultiplier(const FDataTableRowHandle& ProductRow) const;
 
+	// 이 상품의 수요를 가장 크게 끌어올린 출처(뉴스/기념일)를 돌려준다.
+	// 올린 출처가 없으면(보정이 0이거나 전부 음수) false - 그때는 OutSource를 건드리지 않는다
+	// 속마음을 "뉴스 보고 왔는데" / "기념일이라 왔는데"로 가르려면 합산값만으로는 부족해서 둔다
+	bool GetStrongestPositiveDemandSource(
+		const FDataTableRowHandle& ProductRow,
+		ECSNoticeEventSourceType& OutSource) const;
+
 private:
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);

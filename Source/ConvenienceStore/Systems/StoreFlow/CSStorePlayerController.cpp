@@ -1,4 +1,9 @@
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "UI/Journal/CSJournalWidget.h"
+#include "Features/Journal/CSJournalWorldActors.h"
+#include "Systems/Journal/CSJournalSubsystem.h"
+#include "Components/InputComponent.h"
+#include "Engine/GameInstance.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -10,9 +15,45 @@
 #include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
+// 게임 입력 상태에서는 Tab으로 수첩을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
+void ACSStorePlayerController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
+}
+// 다른 조작 화면이나 일시 정지 상태와 충돌하지 않도록 확인한 뒤 수첩을 엽니다.
+void ACSStorePlayerController::ToggleJournal()
+{
+	if (IsValid(ActiveJournalWidget)) { CloseJournal(); return; }
+	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
+	// WBP가 준비되지 않았으면 입력과 HUD 상태를 변경하지 않습니다.
+	UClass* WidgetClass = JournalWidgetClass.LoadSynchronous();
+	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Journal] JournalWidgetClass에 CSJournalWidget 기반 WBP를 지정해 주세요."));
+		return;
+	}
+	ActiveJournalWidget = CreateWidget<UCSJournalWidget>(this, WidgetClass);
+	if (!ActiveJournalWidget) return;
+	ActiveJournalWidget->AddToViewport(50);
+	SetStoreHUDHidden(ActiveJournalWidget, true);
+	SetGameplayUIInputLock(ActiveJournalWidget, true);
+	ActiveJournalWidget->SetKeyboardFocus();
+}
+// 수첩이 요청한 입력 잠금과 HUD 숨김만 해제하여 다른 UI의 상태를 유지합니다.
+void ACSStorePlayerController::CloseJournal()
+{
+	if (!IsValid(ActiveJournalWidget)) return;
+	SetGameplayUIInputLock(ActiveJournalWidget, false);
+	SetStoreHUDHidden(ActiveJournalWidget, false);
+	ActiveJournalWidget->RemoveFromParent();
+	ActiveJournalWidget = nullptr;
+}
+
 void ACSStorePlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	if (IsLocalPlayerController()) CSConfigureJournalWorld(GetWorld());
 
 	if (IsLocalPlayerController() && StoreHUDWidgetClass != nullptr)
 	{
@@ -97,6 +138,7 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 
 void ACSStorePlayerController::StartGameFromTemporaryTitle()
 {
+	// 이 버튼은 최초 생성된 월드를 진행하므로 첫날 기록을 유지합니다. 별도의 새 게임 시작 시에는 ResetJournal을 호출해 주시면 됩니다.
 	CloseTemporaryTitleScreen();
 }
 
@@ -119,6 +161,7 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 
 void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CloseJournal();
 	CloseTemporaryTitleScreen();
 
 	if (StoreGameState != nullptr)
@@ -314,11 +357,14 @@ void ACSStorePlayerController::HandleDailySummaryConfirmed()
 
 void ACSStorePlayerController::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
 {
+	// 필수 마감 업무가 시작되면 수첩을 닫아 해당 업무 화면의 입력을 우선합니다.
+	if(NewTask != ECEndOfDayTask::None) CloseJournal();
 	UpdateClosingInputMode();
 }
 
 void ACSStorePlayerController::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
+	if(NewPhase == ECStorePhase::Finished) CloseJournal();
 	const bool bBusinessStarted =
 		LastObservedStorePhase != ECStorePhase::Open &&
 		NewPhase == ECStorePhase::Open;
@@ -403,6 +449,8 @@ void ACSStorePlayerController::SetGameplayUIInputLock(
 
 	if (bShouldLock)
 	{
+		// 다른 UI가 조작을 잠그면 수첩을 닫아 두 화면의 포커스가 충돌하지 않도록 합니다.
+		if(IsValid(ActiveJournalWidget) && RequestingWidget != ActiveJournalWidget) CloseJournal();
 		// 같은 위젯이 여러 번 열림을 알리더라도 입력 잠금 목록에는 한 번만 등록합니다.
 		GameplayUIInputLockWidgets.AddUnique(RequestingWidget);
 	}

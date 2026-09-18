@@ -43,7 +43,10 @@ void ACSMagicCircleUpgradeOffice::Interact_Implementation(AActor* Interactor)
 		return;
 	}
 	ActiveUpgradeWidget = CreateWidget<UCSMagicCircleUpgradeWidget>(Controller, WidgetClass);
-	if (IsValid(ActiveUpgradeWidget)) ActiveUpgradeWidget->AddToViewport(20);
+	if (IsValid(ActiveUpgradeWidget))
+	{
+		ActiveUpgradeWidget->AddToViewport(20);
+	}
 }
 
 FText ACSMagicCircleUpgradeOffice::GetInteractionText_Implementation() const

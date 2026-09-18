@@ -15,6 +15,7 @@
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
+#include "Features/Journal/CSJournalWorldActors.h"
 #include "Features/Tools/CSUsableTool.h"
 #include "Features/Tools/CSUsableToolActor.h"
 #include "Features/Tools/CSMagicWandActor.h"
@@ -1293,6 +1294,15 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		StorePlayerController->SetInteractionPrompt(
 			MagicCircle->GetUnavailableInteractionText(),
 			FLinearColor(1.0f, 0.8f, 0.3f, 1.0f));
+		return;
+	}
+
+	// 완료된 기록 지점은 다시 상호작용할 수 없으므로 안내 문구만 표시합니다.
+	if (const ACSJournalDiscoveryPoint* DiscoveryPoint = Cast<ACSJournalDiscoveryPoint>(TargetActor);
+		IsValid(DiscoveryPoint) && DiscoveryPoint->IsDiscoveryComplete())
+	{
+		StorePlayerController->SetInteractionPrompt(
+			DiscoveryPoint->GetInteractionText_Implementation(), FLinearColor::White);
 		return;
 	}
 

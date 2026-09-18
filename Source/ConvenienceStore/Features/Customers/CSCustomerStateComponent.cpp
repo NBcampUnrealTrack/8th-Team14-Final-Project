@@ -73,6 +73,20 @@ bool UCSCustomerStateComponent::HasVisited(const AActor* ShelfActor) const
 	return false;
 }
 
+void UCSCustomerStateComponent::MarkReactedTo(FName ProductId)
+{
+	// NAME_None을 넣으면 그 하나로 이후 모든 빈 진열대 연출이 막힌다
+	if (!ProductId.IsNone())
+	{
+		ReactedProductIds.Add(ProductId);
+	}
+}
+
+bool UCSCustomerStateComponent::HasReactedTo(FName ProductId) const
+{
+	return !ProductId.IsNone() && ReactedProductIds.Contains(ProductId);
+}
+
 bool UCSCustomerStateComponent::IsForcedToLeave() const
 {
 	return bForcedToLeave;
@@ -90,7 +104,13 @@ bool UCSCustomerStateComponent::HasEnteredStore() const
 
 void UCSCustomerStateComponent::MarkEnteredStore()
 {
+	if (bHasEnteredStore)
+	{
+		return; // 중복 호출 시 재방송 금지
+	}
+
 	bHasEnteredStore = true;
+	OnEnteredStore.Broadcast(this);
 }
 
 bool UCSCustomerStateComponent::AssignVillainAction(ECSVillainAction NewAction)

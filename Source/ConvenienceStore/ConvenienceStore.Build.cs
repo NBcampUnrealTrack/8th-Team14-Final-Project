@@ -20,10 +20,17 @@ public class ConvenienceStore : ModuleRules
 			"UMG",
 			"Slate",
 			"SlateCore",
-			"NavigationSystem"
+			"NavigationSystem",
+			"DeveloperSettings"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara" });
+
+		// 실제 WBP 컴파일을 검증하는 자동화 테스트에서만 에디터 모듈을 사용합니다.
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "RenderCore", "RHI" });
+		}
 
 		// 기능별 폴더를 포함한 모듈 루트 기준의 include 경로를 사용합니다.
 		PublicIncludePaths.Add(ModuleDirectory);

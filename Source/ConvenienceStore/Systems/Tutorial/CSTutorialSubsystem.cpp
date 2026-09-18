@@ -30,14 +30,6 @@ static constexpr int32 MaxPlayerControllerSubscribeAttempts = 20;
 // 재시도 사이에 둘 간격(초) / 체감상 딜레이가 없을 만큼 짧게 잡음
 static constexpr float PlayerControllerSubscribeRetryInterval = 0.05f;
 
-// 1이면 게임 시작 시 튜토리얼을 건너뜀 (디버깅용)
-static int32 GSkipTutorial = 0;
-static FAutoConsoleVariableRef CVarSkipTutorial(
-	TEXT("cs.SkipTutorial"),
-	GSkipTutorial,
-	TEXT("1이면 게임 시작 시 튜토리얼을 건너뛴다. 디버깅용."),
-	ECVF_Cheat);
-
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
 static void DebugAdvanceTutorialStepCommand(const TArray<FString>& Args, UWorld* World)
 {
@@ -68,12 +60,6 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	if (IsValid(GameState) && GameState->CurrentBusinessDay > 1)
 	{
 		// 2일차부터는 튜토리얼을 띄우지 않음
-		return;
-	}
-
-	if (GSkipTutorial != 0)
-	{
-		CompleteTutorial();
 		return;
 	}
 

@@ -6,6 +6,7 @@
 #include "Data/CSStorePhaseTypes.h"
 #include "CSStorePlayerController.generated.h"
 
+class UCSJournalWidget;
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UCSStoreTopBarWidget;
@@ -39,6 +40,10 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable, Category = "Journal")
+	void ToggleJournal();
+	UFUNCTION(BlueprintCallable, Category = "Journal")
+	void CloseJournal();
 	// 임시 타이틀의 시작 버튼에서 호출합니다. 정식 타이틀 도입 시 이 구역 전체를 제거할 수 있습니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Temporary Title")
 	void StartGameFromTemporaryTitle();
@@ -97,7 +102,14 @@ public:
 	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;
 
 protected:
+	virtual void SetupInputComponent() override;
 	virtual void BeginPlay() override;
+	// UI 담당자가 제작한 CSJournalWidget 기반 WBP를 지정해 주시면 됩니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Journal")
+	TSoftClassPtr<UCSJournalWidget> JournalWidgetClass = TSoftClassPtr<UCSJournalWidget>(
+  FSoftObjectPath(TEXT("/Game/ConvenienceStore/UI/Journal/WBP_Journal.WBP_Journal_C")));
+	UPROPERTY(Transient)
+	TObjectPtr<UCSJournalWidget> ActiveJournalWidget;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UFUNCTION()
