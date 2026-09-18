@@ -10,6 +10,11 @@ ACSUsableToolActor::ACSUsableToolActor()
 	SetRootComponent(ToolMesh);
 	ToolMesh->SetSimulatePhysics(false);
 	ToolMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	// [백무송]
+	// 바닥에 놓인 도구가 NavMesh를 변경하지 않도록 설정
+	// Pawn 충돌 응답은 EnableWorldDropPhysics에서 별도로 관리
+	ToolMesh->SetCanEverAffectNavigation(false);
 }
 
 void ACSUsableToolActor::Interact_Implementation(AActor* Interactor)

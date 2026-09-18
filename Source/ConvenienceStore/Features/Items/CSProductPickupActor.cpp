@@ -26,6 +26,12 @@ ACSProductPickupActor::ACSProductPickupActor()
 	ProductMesh->SetupAttachment(SceneRoot);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+
+	// [백무송]
+	// 바닥에 떨어진 상품이 NavMesh를 변경해 손님 이동 경로를 막지 않도록 설정
+	// 콜리전 응답 재설정과 별개로 내비게이션 영향 차단을 유지
+	ProductMesh->SetCanEverAffectNavigation(false);
+
 	ProductMesh->SetGenerateOverlapEvents(true);
 	ProductMesh->OnComponentBeginOverlap.AddDynamic(
 		this,
