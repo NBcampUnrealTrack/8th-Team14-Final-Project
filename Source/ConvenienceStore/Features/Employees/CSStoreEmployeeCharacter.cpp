@@ -23,6 +23,24 @@
 #include "Components/TextRenderComponent.h"
 #include "UI/Store/CSEmployeeHiringWidget.h"
 
+namespace
+{
+bool TryGetDeliveryCrateApproachPoint(
+	const ACSDeliveryCrateActor* Crate, float MaxPickupDistance, FVector& OutLocation)
+{
+	// Owner는 운반 후에도 배송 포털로 남으므로, 실제 입고 대기 위치도 확인합니다.
+	if (!IsValid(Crate) || !Crate->IsAwaitingStockroomIntake() ||
+		IsValid(Crate->GetAttachParentActor()))
+	{
+		return false;
+	}
+
+	const ACSDeliveryPortalActor* Portal = Cast<ACSDeliveryPortalActor>(Crate->GetOwner());
+	return IsValid(Portal) && Portal->TryGetEmployeeDeliveryApproachPoint(OutLocation) &&
+		FVector::DistSquared2D(Crate->GetActorLocation(), OutLocation) <= FMath::Square(MaxPickupDistance);
+}
+}
+
 ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -297,8 +315,9 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 		RestockPhase == ECSStoreEmployeeRestockPhase::MoveToSource
 			? Cast<ACSDeliveryCrateActor>(ActiveTask.SourceActor)
 			: nullptr;
-	const bool bIsDeliveryPortalSource = IsValid(SourceDeliveryCrate) &&
-		Cast<ACSDeliveryPortalActor>(SourceDeliveryCrate->GetOwner()) != nullptr;
+	FVector DeliveryApproachLocation;
+	const bool bIsDeliveryPortalSource = TryGetDeliveryCrateApproachPoint(
+		SourceDeliveryCrate, DeliveryPortalPickupMaxDistance, DeliveryApproachLocation);
 	// 배송 상자 더미에서는 접근 화살표 근처에서 멈춰야 300cm 집기 제한 안에 안정적으로 들어옵니다.
 	float RequestedAcceptanceRadius = bIsDeliveryPortalSource
 		? FMath::Min(WorkAcceptanceRadius, 75.0f)
@@ -306,6 +325,21 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 	float RequestedArrivalTolerance = bIsDeliveryPortalSource
 		? FMath::Min(WorkArrivalTolerance, 25.0f)
 		: WorkArrivalTolerance;
+	if (IsValid(SourceDeliveryCrate) &&
+		Cast<ACSFreshnessSafeZoneActor>(SourceDeliveryCrate->GetAttachParentActor()) != nullptr)
+	{
+		// 접근 지점과 슬롯 사이 거리까지 포함해 실제 집기 범위 안에서 멈춥니다.
+		const float PickupArrivalRadius = FMath::Max(1.0f, SourcePickupMaxDistance -
+			FVector::Dist2D(WorkLocation, SourceDeliveryCrate->GetActorLocation()) - 1.0f);
+		RequestedAcceptanceRadius = FMath::Min(RequestedAcceptanceRadius, PickupArrivalRadius);
+		RequestedArrivalTolerance = FMath::Min(RequestedArrivalTolerance,
+			FMath::Max(0.0f, PickupArrivalRadius - RequestedAcceptanceRadius));
+		if (FVector::DistSquared2D(GetActorLocation(), SourceDeliveryCrate->GetActorLocation()) >
+			FMath::Square(SourcePickupMaxDistance))
+		{
+			bHasReachedWorkTarget = false;
+		}
+	}
 	if (Cast<ACSCheckoutCounterActor>(TargetActor) != nullptr)
 	{
 		// 기본 반경(160cm)으로는 직원 구역 밖에서 도착 처리될 수 있으므로, 구역 중심까지 충분히 접근합니다.
@@ -604,6 +638,16 @@ void ACSStoreEmployeeCharacter::UpdateRestockTask(float DeltaSeconds)
 
 			--RemainingRestockQuantity;
 			ACSShelfActor* Shelf = Cast<ACSShelfActor>(ActiveTask.TargetActor);
+			// 기존 단을 채운 뒤 같은 진열대의 미지정 빈 단까지 이어서 채웁니다.
+			if (ActiveTask.Type == ECSStoreEmployeeTaskType::RestockShelf && IsValid(HeldCrate) &&
+				HeldCrate->GetRemainingQuantity() > 0 && IsValid(Shelf) &&
+				(RemainingRestockQuantity <= 0 || !Shelf->CanEmployeeRestockProduct(
+					ActiveTask.ProductRow, ActiveTask.bAllowCrossTierDuplicateFallback)))
+			{
+				ActiveTask.bAllowCrossTierDuplicateFallback = true;
+				RemainingRestockQuantity = FMath::Min(HeldCrate->GetRemainingQuantity(),
+					Shelf->GetEmployeeRestockableSlotCount(ActiveTask.ProductRow, true));
+			}
 			UE_LOG(LogTemp, Log,
 				TEXT("[StoreEmployee] %s 직원이 %d번 진열 업무에서 상품 1개를 배치했습니다. 남은 요청 수량=%d, 상자 잔여 수량=%d"),
 				*GetName(),
@@ -685,7 +729,7 @@ void ACSStoreEmployeeCharacter::UpdateStorageTask(float DeltaSeconds)
 		ACSFreshnessSafeZoneActor* StoragePoint =
 			Cast<ACSFreshnessSafeZoneActor>(ActiveTask.TargetActor);
 		const bool bStoredCrate = IsValid(HeldCrate) && StoragePoint != nullptr &&
-			StoragePoint->TryStoreCrate(HeldCrate);
+			StoragePoint->TryStoreCrate(HeldCrate, true);
 		const bool bStoredLooseProduct = IsValid(HeldProduct) && StoragePoint != nullptr &&
 			StoragePoint->TryStoreLooseProduct(HeldProduct);
 		if (!bStoredCrate && !bStoredLooseProduct)
@@ -915,14 +959,31 @@ bool ACSStoreEmployeeCharacter::GetCurrentWorkLocation(
 
 		if (const ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(OutTargetActor))
 		{
-			if (const ACSDeliveryPortalActor* DeliveryPortal =
-				Cast<ACSDeliveryPortalActor>(DeliveryCrate->GetOwner()))
+			if (const ACSFreshnessSafeZoneActor* StoragePoint =
+				Cast<ACSFreshnessSafeZoneActor>(DeliveryCrate->GetAttachParentActor()))
 			{
-				// 주문 배송 상자는 서로 밀집해 있으므로, 상자 충돌 대신 포털의 직원 전용 접근 지점을 목표로 삼습니다.
-				if (DeliveryPortal->TryGetEmployeeDeliveryApproachPoint(OutWorkLocation))
+				// 공용 접근 지점에서 먼 슬롯은 해당 상자 근처의 NavMesh 위치로 접근합니다.
+				const float MaxApproachDistance = FMath::Max(0.0f, SourcePickupMaxDistance - 2.0f);
+				if (StoragePoint->TryGetStorageApproachPoint(OutWorkLocation) &&
+					FVector::DistSquared2D(OutWorkLocation, DeliveryCrate->GetActorLocation()) <=
+						FMath::Square(MaxApproachDistance))
 				{
 					return true;
 				}
+				if (NavigationSystem->ProjectPointToNavigation(DeliveryCrate->GetActorLocation(),
+					ProjectedLocation, FVector(600.0f, 600.0f, 800.0f)) &&
+					FVector::DistSquared2D(ProjectedLocation.Location, DeliveryCrate->GetActorLocation()) <=
+						FMath::Square(MaxApproachDistance))
+				{
+					OutWorkLocation = ProjectedLocation.Location;
+					return true;
+				}
+				return false;
+			}
+			if (TryGetDeliveryCrateApproachPoint(
+				DeliveryCrate, DeliveryPortalPickupMaxDistance, OutWorkLocation))
+			{
+				return true;
 			}
 		}
 
@@ -1136,8 +1197,10 @@ bool ACSStoreEmployeeCharacter::BeginFailureStorageRecovery()
 	FailureRecoveryStoragePoint = RecoveryStorage;
 	BeginRestockPhase(ECSStoreEmployeeRestockPhase::MoveToRecoveryStorage);
 	UE_LOG(LogTemp, Log,
-		TEXT("[StoreEmployee] %s 직원이 %d번 실패 업무 재고를 적합 창고로 회수합니다: 창고=%s"),
-		*GetName(), ActiveTask.TaskId, *RecoveryStorage->GetName());
+		TEXT("[StoreEmployee] %s 직원이 %d번 %s 재고를 적합 창고로 회수합니다: 창고=%s"),
+		*GetName(), ActiveTask.TaskId,
+		bReturnHeldCrateAsTaskSuccess ? TEXT("진열 후 남은") : TEXT("실패 업무"),
+		*RecoveryStorage->GetName());
 	return true;
 }
 
@@ -1165,14 +1228,18 @@ bool ACSStoreEmployeeCharacter::FindFailureRecoveryStorage(
 		ACSFreshnessSafeZoneActor* StoragePoint = *StorageIt;
 		FVector ApproachPoint;
 		if (!IsValid(StoragePoint) || !StoragePoint->TryGetStorageApproachPoint(ApproachPoint) ||
-			(bRecoverCrate && !StoragePoint->CanStoreCrate(HeldCrate)) ||
+			(bRecoverCrate && !StoragePoint->CanStoreCrate(HeldCrate, true)) ||
 			(bRecoverLooseProduct && !StoragePoint->CanStoreLooseProduct(HeldProduct)))
 		{
 			continue;
 		}
 
 		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), ApproachPoint);
-		if (DistanceSquared < NearestDistanceSquared)
+		const bool bHasSlot = bRecoverCrate && StoragePoint->CanStoreCrate(HeldCrate);
+		const bool bBestHasSlot = bRecoverCrate && IsValid(OutStoragePoint) &&
+			OutStoragePoint->CanStoreCrate(HeldCrate);
+		if (!IsValid(OutStoragePoint) || (bHasSlot && !bBestHasSlot) ||
+			(bHasSlot == bBestHasSlot && DistanceSquared < NearestDistanceSquared))
 		{
 			NearestDistanceSquared = DistanceSquared;
 			OutStoragePoint = StoragePoint;
@@ -1190,7 +1257,7 @@ bool ACSStoreEmployeeCharacter::StoreHeldInventoryInRecoveryStorage()
 		return false;
 	}
 
-	if (IsValid(HeldCrate) && StoragePoint->TryStoreCrate(HeldCrate))
+	if (IsValid(HeldCrate) && StoragePoint->TryStoreCrate(HeldCrate, true))
 	{
 		HeldCrate = nullptr;
 		bHasHeldCrateReturnLocation = false;
@@ -1325,19 +1392,15 @@ bool ACSStoreEmployeeCharacter::PickUpSourceCrate()
 		float AllowedPickupDistance = SourcePickupMaxDistance;
 		bool bUsingDeliveryPortalPickupException = false;
 
-		if (const ACSDeliveryPortalActor* DeliveryPortal =
-			Cast<ACSDeliveryPortalActor>(SourceCrate->GetOwner()))
+		FVector DeliveryApproachLocation = FVector::ZeroVector;
+		if (TryGetDeliveryCrateApproachPoint(
+			SourceCrate, DeliveryPortalPickupMaxDistance, DeliveryApproachLocation) &&
+			FVector::DistSquared2D(GetActorLocation(), DeliveryApproachLocation) <=
+				FMath::Square(DeliveryPortalApproachTolerance))
 		{
-			FVector DeliveryApproachLocation = FVector::ZeroVector;
-			if (DeliveryPortal->TryGetEmployeeDeliveryApproachPoint(DeliveryApproachLocation) &&
-				FVector::DistSquared2D(GetActorLocation(), DeliveryApproachLocation) <=
-					FMath::Square(DeliveryPortalApproachTolerance))
-			{
-				// 배송 상자는 하나의 더미로 생성되어 뒤쪽 상자까지의 실제 거리가 길 수 있습니다.
-				// 직원이 지정된 접근 지점에 도착한 경우에만 넓은 집기 범위를 허용합니다.
-				AllowedPickupDistance = DeliveryPortalPickupMaxDistance;
-				bUsingDeliveryPortalPickupException = true;
-			}
+			// 하역장에 남은 상자를 지정 접근 지점에서 집을 때만 범위를 넓힙니다.
+			AllowedPickupDistance = DeliveryPortalPickupMaxDistance;
+			bUsingDeliveryPortalPickupException = true;
 		}
 
 		if (SourceDistance > AllowedPickupDistance)
