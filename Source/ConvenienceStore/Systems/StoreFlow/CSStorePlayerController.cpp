@@ -27,7 +27,7 @@ void ACSStorePlayerController::ToggleJournal()
 	if (IsValid(ActiveJournalWidget)) { CloseJournal(); return; }
 	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
 	// WBP가 준비되지 않았으면 입력과 HUD 상태를 변경하지 않습니다.
-	UClass* WidgetClass = JournalWidgetClass.LoadSynchronous();
+	UClass* WidgetClass = JournalWidgetClass.Get();
 	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Journal] JournalWidgetClass에 CSJournalWidget 기반 WBP를 지정해 주세요."));
@@ -112,12 +112,12 @@ void ACSStorePlayerController::BeginPlay()
 void ACSStorePlayerController::ShowTemporaryTitleScreen()
 {
 	if (!bUseTemporaryTitleScreen || !IsLocalPlayerController() ||
-		TemporaryTitleWidgetClass.IsNull() || IsValid(ActiveTemporaryTitleWidget))
+		!TemporaryTitleWidgetClass || IsValid(ActiveTemporaryTitleWidget))
 	{
 		return;
 	}
 
-	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.LoadSynchronous();
+	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.Get();
 	if (LoadedTitleWidgetClass == nullptr)
 	{
 		return;

@@ -20,6 +20,8 @@
 #include "Components/CapsuleComponent.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "Engine/World.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Engine/Engine.h"
@@ -430,11 +432,11 @@ void UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable()
 {
 	ValidatedAffinityRows.Reset();
 
-	const UDataTable* AffinityTable = CategoryAffinityDataTableAsset.LoadSynchronous();
+	const ACSStoreGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACSStoreGameMode>() : nullptr;
+	const UDataTable* AffinityTable = GameMode ? GameMode->GetCategoryAffinityDataTable() : nullptr;
 	if (!IsValid(AffinityTable))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[연관구매] DT_CategoryAffinity를 찾지 못했습니다: %s"),
-			*CategoryAffinityDataTableAsset.ToSoftObjectPath().ToString());
+		UE_LOG(LogTemp, Warning, TEXT("[연관구매] GameMode의 CategoryAffinityDataTable을 지정해 주세요."));
 	}
 	else if (AffinityTable->GetRowStruct() != FCSCategoryAffinityRow::StaticStruct())
 	{

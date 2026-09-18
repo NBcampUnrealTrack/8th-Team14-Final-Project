@@ -7,12 +7,12 @@
 #include "UI/Store/CSEmployeeHiringWidget.h"
 #include "Engine/World.h"
 
-void ACSStoreEmployeeCharacter::ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSoftClassPtr<UCSEmployeeHiringWidget> WidgetClass)
+void ACSStoreEmployeeCharacter::ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSubclassOf<UCSEmployeeHiringWidget> WidgetClass)
 {
 	check(!HasActorBegunPlay());
 	bRequiresHiring = true;
 	HiringSlot = Slot;
-	if (!WidgetClass.IsNull()) HiringWidgetClass = WidgetClass;
+	if (WidgetClass) HiringWidgetClass = WidgetClass;
 }
 
 bool ACSStoreEmployeeCharacter::CanWork() const
@@ -53,7 +53,7 @@ void ACSStoreEmployeeCharacter::Interact_Implementation(AActor* Interactor)
 	const APawn* Pawn = Cast<APawn>(Interactor);
 	ACSStorePlayerController* PlayerController = Pawn ? Cast<ACSStorePlayerController>(Pawn->GetController()) : nullptr;
 	if (!IsValid(PlayerController) || !PlayerController->IsLocalController() || PlayerController->IsGameplayUIInputLocked()) return;
-	UClass* WidgetClass = HiringWidgetClass.LoadSynchronous();
+	UClass* WidgetClass = HiringWidgetClass.Get();
 	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[EmployeeHiring] %s: HiringWidgetClass에 CSEmployeeHiringWidget 기반 WBP를 지정해 주세요."), *GetName());
