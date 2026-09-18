@@ -27,7 +27,6 @@ ACSMagicCircleUpgradeOffice::ACSMagicCircleUpgradeOffice()
 	InteractionCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
 	InteractionCollision->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	InteractionCollision->SetGenerateOverlapEvents(false);
-	UpgradeWidgetClass = TSoftClassPtr<UCSMagicCircleUpgradeWidget>(FSoftObjectPath(TEXT("/Game/ConvenienceStore/UI/Delivery/WBP_MagicCircleUpgrade.WBP_MagicCircleUpgrade_C")));
 }
 
 void ACSMagicCircleUpgradeOffice::Interact_Implementation(AActor* Interactor)
@@ -36,7 +35,7 @@ void ACSMagicCircleUpgradeOffice::Interact_Implementation(AActor* Interactor)
 	ACSStorePlayerController* Controller = Pawn ? Cast<ACSStorePlayerController>(Pawn->GetController()) : nullptr;
 	if (!IsValid(Controller) || !Controller->IsLocalController() || Controller->IsGameplayUIInputLocked()) return;
 	if (IsValid(ActiveUpgradeWidget) && ActiveUpgradeWidget->IsInViewport()) return;
-	UClass* WidgetClass = UpgradeWidgetClass.LoadSynchronous();
+	UClass* WidgetClass = UpgradeWidgetClass.Get();
 	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[MagicCircle] %s: UpgradeWidgetClass에 CSMagicCircleUpgradeWidget 기반 WBP를 지정해 주세요."), *GetName());

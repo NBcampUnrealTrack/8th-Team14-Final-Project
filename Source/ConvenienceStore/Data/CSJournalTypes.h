@@ -4,6 +4,8 @@
 #include "Data/CSDeliveryOrderTypes.h"
 #include "CSJournalTypes.generated.h"
 
+class UCSCustomerArchetypeDataAsset;
+
 // 수첩의 종족 페이지를 구분하며 고블린부터 엘프까지의 페이지 순서에 대응합니다.
 UENUM(BlueprintType)
 enum class ECSJournalRace : uint8
@@ -47,6 +49,9 @@ class CONVENIENCESTORE_API UCSJournalCatalog : public UDataAsset
   public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FCSJournalEntry> RaceEntries;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FCSJournalArtifact> Artifacts;
+	// RaceEntries가 비어 있을 때 기본 설명을 만들기 위한 실제 에셋 참조입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fallback")
+	TMap<ECSJournalRace, TObjectPtr<UCSCustomerArchetypeDataAsset>> FallbackArchetypes;
 };
 
 // 발생한 날짜의 제목과 본문을 보관하므로 날짜가 지나도 당시 기록을 확인하실 수 있습니다.

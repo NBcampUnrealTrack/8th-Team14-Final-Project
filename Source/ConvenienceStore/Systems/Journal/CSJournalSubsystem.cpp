@@ -101,8 +101,8 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 {
 	Super::Initialize(Collection);
 	// 프로젝트 설정에 등록한 카탈로그가 있으면 모든 발견 지점이 같은 목록을 사용합니다.
-	if (auto* ConfiguredCatalog = GetDefault<UCSJournalSettings>()->Catalog.LoadSynchronous();
-		IsValid(ConfiguredCatalog) && !ConfiguredCatalog->RaceEntries.IsEmpty())
+	UCSJournalCatalog* ConfiguredCatalog = GetDefault<UCSJournalSettings>()->Catalog.LoadSynchronous();
+	if (IsValid(ConfiguredCatalog) && !ConfiguredCatalog->RaceEntries.IsEmpty())
 	{
 		Catalog = ConfiguredCatalog;
 		return;
@@ -111,8 +111,6 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 	// 공용 에셋에 내용이 아직 없을 때에도 기존 게임 진행을 유지하는 초기값입니다.
 	Catalog = NewObject<UCSJournalCatalog>(this);
 	const TCHAR *Races[] = {TEXT("Goblin"), TEXT("Orc"), TEXT("Human"), TEXT("Wizard"), TEXT("Dwarf"), TEXT("Elf")};
-	const TCHAR *Assets[] = {TEXT("10s_Goblin"), TEXT("40s_Orc"),	TEXT("20s_Adventurer"),
-							 TEXT("30s_Mage"),	 TEXT("50s_Dwarf"), TEXT("60s_Elf")};
 	const TCHAR *Names[] = {TEXT("고블린"), TEXT("오크"), TEXT("인간"), TEXT("마법사"), TEXT("드워프"), TEXT("엘프")};
 	const TCHAR *Categories[] = {TEXT("주류"),	   TEXT("음료"),	 TEXT("신선 식품"),	 TEXT("냉동 식품"),
 								 TEXT("물약"),	   TEXT("두루마리"), TEXT("간식"),		 TEXT("생활용품"),
@@ -123,10 +121,8 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 		E.EntryId = FName(*FString::Printf(TEXT("%s.Introduction"), Races[I]));
 		E.Race = static_cast<ECSJournalRace>(I);
 		E.Title = FText::FromString(FString::Printf(TEXT("%s의 상품 취향"), Names[I]));
-		const FString Path = FString::Printf(
-			TEXT("/Game/ConvenienceStore/Data/DataAsset/Customer_Archetypes/DA_Archetype_%s.DA_Archetype_%s"),
-			Assets[I], Assets[I]);
-		auto *Archetype = LoadObject<UCSCustomerArchetypeDataAsset>(nullptr, *Path);
+		const UCSCustomerArchetypeDataAsset* Archetype = IsValid(ConfiguredCatalog)
+			? ConfiguredCatalog->FallbackArchetypes.FindRef(E.Race).Get() : nullptr;
 		FString Body = TEXT("관련 장소를 방문하며 이 종족의 생활과 상품 취향을 조사했다.");
 		if (Archetype)
 		{

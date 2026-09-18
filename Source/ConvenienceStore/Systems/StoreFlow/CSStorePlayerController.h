@@ -106,8 +106,7 @@ protected:
 	virtual void BeginPlay() override;
 	// UI 담당자가 제작한 CSJournalWidget 기반 WBP를 지정해 주시면 됩니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Journal")
-	TSoftClassPtr<UCSJournalWidget> JournalWidgetClass = TSoftClassPtr<UCSJournalWidget>(
-  FSoftObjectPath(TEXT("/Game/ConvenienceStore/UI/Journal/WBP_Journal.WBP_Journal_C")));
+	TSubclassOf<UCSJournalWidget> JournalWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSJournalWidget> ActiveJournalWidget;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -140,9 +139,7 @@ protected:
 	bool bUseTemporaryTitleScreen = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Temporary Title")
-	TSoftClassPtr<UUserWidget> TemporaryTitleWidgetClass =
-		TSoftClassPtr<UUserWidget>(FSoftObjectPath(
-			TEXT("/Game/ConvenienceStore/UI/Title/WBP_Title.WBP_Title_C")));
+	TSubclassOf<UUserWidget> TemporaryTitleWidgetClass;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> ActiveTemporaryTitleWidget;
