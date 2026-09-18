@@ -3,6 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
+#include "UI/HUD/CSStoreTopBarWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "UI/Store/CSClosingWarningWidget.h"
@@ -35,6 +36,16 @@ void ACSStorePlayerController::BeginPlay()
 					CachedQuickbarToolNames,
 					QuickbarIcons);
 			}
+		}
+	}
+	if (IsLocalPlayerController() && StoreTopBarWidgetClass != nullptr)
+	{
+		StoreTopBarWidget = CreateWidget<UCSStoreTopBarWidget>(this, StoreTopBarWidgetClass);
+		if (IsValid(StoreTopBarWidget))
+		{
+			// 발주창 등 Viewport UI보다 위에 두고, 타이틀과 엔딩에서는 별도로 숨깁니다.
+			StoreTopBarWidget->AddToViewport(2000);
+			StoreTopBarWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 		}
 	}
 
@@ -79,6 +90,7 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 
 	ActiveTemporaryTitleWidget->AddToViewport(1001);
 	SetStoreHUDHidden(ActiveTemporaryTitleWidget, true);
+	SetStoreTopBarHidden(ActiveTemporaryTitleWidget, true);
 	SetGameplayUIInputLock(ActiveTemporaryTitleWidget, true);
 	SetPause(true);
 }
@@ -99,6 +111,7 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 	SetPause(false);
 	SetGameplayUIInputLock(TitleWidgetToClose, false);
 	SetStoreHUDHidden(TitleWidgetToClose, false);
+	SetStoreTopBarHidden(TitleWidgetToClose, false);
 	TitleWidgetToClose->RemoveFromParent();
 	ActiveTemporaryTitleWidget = nullptr;
 }
@@ -451,6 +464,19 @@ void ACSStorePlayerController::SetStoreHUDHidden(
 	{
 		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeHide);
 		bHasStoredHUDVisibilityBeforeHide = false;
+	}
+}
+
+void ACSStorePlayerController::SetStoreTopBarHidden(UObject* Requester, bool bShouldHide)
+{
+	if (!IsValid(Requester)) return;
+	if (bShouldHide) StoreTopBarHideRequesters.AddUnique(Requester);
+	else StoreTopBarHideRequesters.Remove(Requester);
+	if (IsValid(StoreTopBarWidget))
+	{
+		StoreTopBarWidget->SetVisibility(StoreTopBarHideRequesters.IsEmpty()
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
 	}
 }
 
