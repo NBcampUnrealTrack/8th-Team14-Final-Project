@@ -1014,6 +1014,10 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 		{
 			StoragePoint->RemoveStoredLooseProduct(StoredProduct);
 		}
+		else if (ACSDeliveryCrateActor* StoredCrate = Cast<ACSDeliveryCrateActor>(PickupActor))
+		{
+			StoragePoint->RemoveStoredCrate(StoredCrate);
+		}
 	}
 
 	// 물리로 분리된 메시를 먼저 복원한 뒤 Actor 자체를 손 위치에 부착합니다.

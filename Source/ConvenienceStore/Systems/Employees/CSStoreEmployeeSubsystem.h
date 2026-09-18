@@ -60,6 +60,7 @@ private:
 	void RefreshCheckoutTasks();
 	void RefreshReorganizationTasks();
 	void RefreshInboundIntakeTasks();
+	void RefreshPerishableCrateRestockTasks();
 	void RefreshPerishableProtectionTasks();
 	void RefreshRestockTasks();
 	void RefreshStorageTasks();
