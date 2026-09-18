@@ -24,19 +24,15 @@ ACSEmployeeHiringOffice::ACSEmployeeHiringOffice()
 	SecondRestockPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("SecondRestockPoint"));
 	SecondRestockPoint->SetupAttachment(SceneRoot);
 	SecondRestockPoint->SetRelativeLocation(FVector(0, 190, 96));
-	RestockEmployeeClass = TSoftClassPtr<ACSStoreEmployeeCharacter>(FSoftObjectPath(
-		TEXT("/Game/ConvenienceStore/Feature/Employee/BP_RestockEmployee.BP_RestockEmployee_C")));
-	CheckoutEmployeeClass = TSoftClassPtr<ACSStoreEmployeeCharacter>(FSoftObjectPath(
-		TEXT("/Game/ConvenienceStore/Feature/Employee/BP_CheckoutEmployee.BP_CheckoutEmployee_C")));
 }
 
 void ACSEmployeeHiringOffice::BeginPlay()
 {
 	Super::BeginPlay();
 	if (!HasAuthority()) return;
-	SpawnApplicant(ECSEmployeeHireSlot::FirstRestock, FirstRestockPoint, RestockEmployeeClass.LoadSynchronous());
-	SpawnApplicant(ECSEmployeeHireSlot::Checkout, CheckoutPoint, CheckoutEmployeeClass.LoadSynchronous());
-	SpawnApplicant(ECSEmployeeHireSlot::SecondRestock, SecondRestockPoint, RestockEmployeeClass.LoadSynchronous());
+	SpawnApplicant(ECSEmployeeHireSlot::FirstRestock, FirstRestockPoint, RestockEmployeeClass);
+	SpawnApplicant(ECSEmployeeHireSlot::Checkout, CheckoutPoint, CheckoutEmployeeClass);
+	SpawnApplicant(ECSEmployeeHireSlot::SecondRestock, SecondRestockPoint, RestockEmployeeClass);
 }
 
 void ACSEmployeeHiringOffice::SpawnApplicant(ECSEmployeeHireSlot Slot, UArrowComponent* Point,

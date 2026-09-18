@@ -26,10 +26,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Office") TObjectPtr<UArrowComponent> FirstRestockPoint;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Office") TObjectPtr<UArrowComponent> CheckoutPoint;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Office") TObjectPtr<UArrowComponent> SecondRestockPoint;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSoftClassPtr<ACSStoreEmployeeCharacter> RestockEmployeeClass;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSoftClassPtr<ACSStoreEmployeeCharacter> CheckoutEmployeeClass;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSubclassOf<ACSStoreEmployeeCharacter> RestockEmployeeClass;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSubclassOf<ACSStoreEmployeeCharacter> CheckoutEmployeeClass;
 	// 지정하면 이 고용소에서 생성하는 세 지원자에게 같은 WBP를 적용합니다.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSoftClassPtr<UCSEmployeeHiringWidget> HiringWidgetClass;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Office") TSubclassOf<UCSEmployeeHiringWidget> HiringWidgetClass;
 private:
 	void SpawnApplicant(ECSEmployeeHireSlot Slot, UArrowComponent* Point, TSubclassOf<ACSStoreEmployeeCharacter> EmployeeClass);
 };

@@ -4,6 +4,8 @@
 
 #include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
+#include "Engine/World.h"
+#include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogCSNoticeEvents, Log, All);
@@ -273,28 +275,26 @@ void UCSNoticeEventSubsystem::HandleBusinessDayStarted(const int32 NewBusinessDa
 
 void UCSNoticeEventSubsystem::LoadEventDataTables()
 {
-	NewsEventDataTable = NewsEventDataTableAsset.LoadSynchronous();
+	const ACSStoreGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACSStoreGameMode>() : nullptr;
+	NewsEventDataTable = GameMode ? GameMode->GetNewsEventDataTable() : nullptr;
 	if (!IsValid(NewsEventDataTable))
 	{
 		UE_LOG(LogCSNoticeEvents, Warning,
-			TEXT("[NoticeEvents] 뉴스 DataTable을 찾지 못했습니다: %s"),
-			*NewsEventDataTableAsset.ToSoftObjectPath().ToString());
+			TEXT("[NoticeEvents] GameMode의 NewsEventDataTable을 지정해 주세요."));
 	}
 
-	HolidayEventDataTable = HolidayEventDataTableAsset.LoadSynchronous();
+	HolidayEventDataTable = GameMode ? GameMode->GetHolidayEventDataTable() : nullptr;
 	if (!IsValid(HolidayEventDataTable))
 	{
 		UE_LOG(LogCSNoticeEvents, Warning,
-			TEXT("[NoticeEvents] 기념일 DataTable을 찾지 못했습니다: %s"),
-			*HolidayEventDataTableAsset.ToSoftObjectPath().ToString());
+			TEXT("[NoticeEvents] GameMode의 HolidayEventDataTable을 지정해 주세요."));
 	}
 
-	EffectRuleDataTable = EffectRuleDataTableAsset.LoadSynchronous();
+	EffectRuleDataTable = GameMode ? GameMode->GetNoticeEventEffectRuleDataTable() : nullptr;
 	if (!IsValid(EffectRuleDataTable))
 	{
 		UE_LOG(LogCSNoticeEvents, Warning,
-			TEXT("[NoticeEvents] 수요 효과 규칙 DataTable을 찾지 못했습니다: %s"),
-			*EffectRuleDataTableAsset.ToSoftObjectPath().ToString());
+			TEXT("[NoticeEvents] GameMode의 NoticeEventEffectRuleDataTable을 지정해 주세요."));
 	}
 }
 

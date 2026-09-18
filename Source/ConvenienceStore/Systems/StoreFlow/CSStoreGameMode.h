@@ -75,8 +75,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Weather")
 	UCSWeatherSettingsDataAsset* GetWeatherSettings() const;
 
+	// 네이티브 서브시스템도 이 맵의 직렬화된 데이터 참조를 사용합니다.
+	UDataTable* GetCategoryAffinityDataTable() const { return CategoryAffinityDataTable.Get(); }
+	UDataTable* GetNewsEventDataTable() const { return NewsEventDataTable.Get(); }
+	UDataTable* GetHolidayEventDataTable() const { return HolidayEventDataTable.Get(); }
+	UDataTable* GetNoticeEventEffectRuleDataTable() const { return NoticeEventEffectRuleDataTable.Get(); }
+
 protected:
 	virtual void BeginPlay() override;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Customer")
+	TObjectPtr<UDataTable> CategoryAffinityDataTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Notice Events")
+	TObjectPtr<UDataTable> NewsEventDataTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Notice Events")
+	TObjectPtr<UDataTable> HolidayEventDataTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Notice Events")
+	TObjectPtr<UDataTable> NoticeEventEffectRuleDataTable;
 
 	// 단계별 시각과 행동 허용 규칙을 읽는 데이터 테이블입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")

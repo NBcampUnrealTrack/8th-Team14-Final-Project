@@ -517,12 +517,6 @@ private:
 	int32 CountTrashInWorld() const;
 
 	// 카테고리 연관구매 -------
-	// DT_ProductMaster와 같은 폴더의 고정 경로. UWorldSubsystem은 디테일 패널이 없어
-	// 에디터에서 할당할 수 없으므로 CSNoticeEventSubsystem과 같은 방식으로 코드에 경로를 박아둔다
-	UPROPERTY()
-	TSoftObjectPtr<UDataTable> CategoryAffinityDataTableAsset = TSoftObjectPtr<UDataTable>(
-		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/DT_CategoryAffinity.DT_CategoryAffinity")));
-
 	// 검증을 통과한 쌍만 남긴 배열
 	TArray<FCSCategoryAffinityRow> ValidatedAffinityRows;
 
