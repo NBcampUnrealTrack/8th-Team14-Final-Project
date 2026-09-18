@@ -215,6 +215,7 @@ void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)
 	State->SetGameClockRunning(false);
 	Controller->ClearInteractionContext();
 	Controller->SetStoreHUDHidden(this, true);
+	Controller->SetStoreTopBarHidden(this, true);
 	Widget->AddToViewport(10000);
 	Controller->SetGameplayUIInputLock(Widget, true);
 	FInputModeUIOnly InputMode;

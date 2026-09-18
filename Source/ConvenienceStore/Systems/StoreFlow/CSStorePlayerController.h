@@ -9,6 +9,7 @@
 class UCSJournalWidget;
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
+class UCSStoreTopBarWidget;
 class UUserWidget;
 class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
@@ -55,6 +56,9 @@ public:
 	// 요청이 모두 해제된 뒤에만 HUD를 이전 표시 상태로 복원합니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|HUD")
 	void SetStoreHUDHidden(UObject* Requester, bool bShouldHide);
+
+	// 타이틀과 엔딩처럼 게임 화면을 완전히 덮는 장면에서만 상단 바를 숨깁니다.
+	void SetStoreTopBarHidden(UObject* Requester, bool bShouldHide);
 
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
@@ -146,6 +150,8 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Top Bar")
+	TSubclassOf<UCSStoreTopBarWidget> StoreTopBarWidgetClass;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
 	TSubclassOf<UCSDailySummaryWidget> DailySummaryWidgetClass;
 	UPROPERTY(Transient) TObjectPtr<UCSDailySummaryWidget> ActiveDailySummaryWidget;
@@ -165,6 +171,10 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreTopBarWidget> StoreTopBarWidget;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UObject>> StoreTopBarHideRequesters;
 
 	// HUD 생성 순서와 무관하게 퀵바 초기 상태를 전달하기 위한 캐시입니다.
 	int32 CachedQuickbarSlotCount = 0;
