@@ -1222,16 +1222,9 @@ void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
 	(void)Result;   // 이 델리게이트는 발주 성공 시에만 방송되므로 별도 성공 여부 검사가 필요 없음
 
 	// 발주창을 안 닫고 계속 열어둔 채여도 "이번에 열려 있는 동안 적어도 1번 발주했다"를 기록
-	// (닫을 때 HandleOrderWidgetLockChanged가 이 값으로 경고 여부를 판단)
+	// 스텝 완료는 여기서 바로 하지 않음 - 발주창이 열려 있는 동안 다음 스텝(장부) 안내가
+	// 뜨면 안 되므로, 실제 완료 판정은 창이 닫힐 때(HandleOrderWidgetLockChanged)로 미룸
 	bOrderWidgetOrderedThisOpen = true;
-
-	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
-		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceProductOrder)
-	{
-		return;
-	}
-
-	NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
 }
 
 void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
@@ -1368,18 +1361,24 @@ void UCSTutorialSubsystem::HandleOrderWidgetLockChanged(UUserWidget* RequestingW
 	// 여기부터는 닫힘(bLocked == false)
 	bOrderWidgetCurrentlyOpen = false;
 
-	if (CurrentId == ECSTutorialStepId::PlaceProductOrder && !bOrderWidgetOrderedThisOpen)
+	if (CurrentId == ECSTutorialStepId::PlaceProductOrder)
 	{
-		// 발주 없이 닫으려고 함 - 완료 처리하지 않고 경고만 띄움. 스텝은 그대로 PlaceProductOrder에 머무름
-		if (IsValid(SubscribedPlayerController))
+		if (!bOrderWidgetOrderedThisOpen)
 		{
-			SubscribedPlayerController->ShowNoticeBanner(
-				NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+			// 발주 없이 닫으려고 함 - 완료 처리하지 않고 경고만 띄움. 스텝은 그대로 PlaceProductOrder에 머무름
+			if (IsValid(SubscribedPlayerController))
+			{
+				SubscribedPlayerController->ShowNoticeBanner(
+					NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+			}
+			UpdateHighlightMarkersForCurrentStep();
 		}
-		UpdateHighlightMarkersForCurrentStep();
+		else
+		{
+			// 발주는 했고 이제 창을 닫는 시점 - 다음 스텝(장부) 안내는 여기서 처음 뜸
+			NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
+		}
 	}
-	// bOrderWidgetOrderedThisOpen이 true인 경우는 HandleOrderPlaced가 이미 다음 스텝(FacilityOrderInfo)으로
-	// 넘겼어야 하므로 CurrentId가 여전히 PlaceProductOrder일 수 없음 - 여기 도달하지 않음
 	// FacilityOrderInfo는 위 [임시] 주석대로 닫힘 기반 완료를 안 함(타이머가 대신 완료시킴)
 }
 
