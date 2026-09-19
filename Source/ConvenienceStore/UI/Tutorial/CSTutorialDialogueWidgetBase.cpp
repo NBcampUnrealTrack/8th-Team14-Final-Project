@@ -45,6 +45,8 @@ void UCSTutorialDialogueWidgetBase::HandleStepChanged(const FCSTutorialStepRow& 
 	}
 
 	OnDialogueTextChanged(NewStep.PromptText);
+	OnDialogueHintChanged(NewStep.PromptHintKey, NewStep.PromptHintText);
+	OnDialogueHintListChanged(NewStep.PromptHintList);
 }
 
 void UCSTutorialDialogueWidgetBase::HandleTutorialCompleted()

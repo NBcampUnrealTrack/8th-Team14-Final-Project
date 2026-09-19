@@ -83,6 +83,11 @@ private:
 	bool MatchesSelectedCategory(ECSProductCategory ProductCategory) const;
 	void ClearSelection();
 
+	// 영업 중 가격 변경 시도 시 "가격 변경 불가" 안내를 이미 띄웠는지
+	// 스핀박스 증감 한 번에도 편집 이벤트가 여러 번 들어와, 이게 없으면 시도할 때마다 계속 뜸
+	// 상품을 새로 선택하면 다시 시도할 수 있도록 초기화됨
+	bool bPriceLockedNoticeShown = false;
+
 	UFUNCTION() void HandleCategorySelected(ECSLedgerCategoryFilter Category);
 	UFUNCTION() void HandleProductRowSelected(FDataTableRowHandle ProductRow);
 	UFUNCTION() void HandleSalePriceEdited(int32 NewSalePrice);

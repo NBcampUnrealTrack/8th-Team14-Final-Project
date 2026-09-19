@@ -1,6 +1,21 @@
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 
 #include "Data/CSProductTypes.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
+
+bool UCSStorePricingSubsystem::CanChangeSalePrice(FText& OutReason) const
+{
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState = World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
+
+	if (IsValid(StoreGameState) && StoreGameState->bIsStoreOpen)
+	{
+		OutReason = NSLOCTEXT("StorePricing", "PriceLockedWhileOpen", "영업시간 종료 후 변경할 수 있습니다.");
+		return false;
+	}
+
+	return true;
+}
 
 int32 UCSStorePricingSubsystem::GetSalePrice(
 	const FDataTableRowHandle& ProductRow) const
@@ -29,9 +44,11 @@ bool UCSStorePricingSubsystem::SetSalePrice(
 	const FDataTableRowHandle& ProductRow,
 	int32 NewSalePrice)
 {
+	FText UnusedReason;
 	if (ProductRow.DataTable == nullptr ||
 		ProductRow.RowName.IsNone() ||
-		NewSalePrice < 0)
+		NewSalePrice < 0 ||
+		!CanChangeSalePrice(UnusedReason))
 	{
 		return false;
 	}

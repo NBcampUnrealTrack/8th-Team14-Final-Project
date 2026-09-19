@@ -14,6 +14,7 @@
 #include "UI/Store/CSClosingWarningWidget.h"
 #include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
 
 // 게임 입력 상태에서는 Tab으로 수첩을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
@@ -197,6 +198,11 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActiveDeliveryToastWidget->RemoveFromParent();
 		ActiveDeliveryToastWidget = nullptr;
 	}
+	if (IsValid(ActiveNoticeBannerWidget))
+	{
+		ActiveNoticeBannerWidget->RemoveFromParent();
+		ActiveNoticeBannerWidget = nullptr;
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -235,6 +241,15 @@ void ACSStorePlayerController::HandleStatusAnnouncementFinished()
 		return;
 	}
 
+	if (ActiveStatusAnnouncementWidget->GetAnnouncementType() == ECSStatusAnnouncementType::Opened)
+	{
+		OnStoreOpenedAnnouncementFinished.Broadcast();
+	}
+	else
+	{
+		OnStoreClosedAnnouncementFinished.Broadcast();
+	}
+
 	ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
 		this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
 	ActiveStatusAnnouncementWidget->RemoveFromParent();
@@ -249,6 +264,33 @@ void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText
 	}
 	QueuedDeliveryToasts.Add({ Title, Message });
 	TryShowQueuedDeliveryToast();
+}
+
+void ACSStorePlayerController::ShowNoticeBanner(const FText& Message)
+{
+	if (!IsLocalPlayerController())
+	{
+		return;
+	}
+
+	if (NoticeBannerWidgetClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[UI] NoticeBannerWidgetClass가 지정되지 않았습니다."));
+		return;
+	}
+
+	if (!IsValid(ActiveNoticeBannerWidget))
+	{
+		ActiveNoticeBannerWidget = CreateWidget<UCSNoticeBannerWidgetBase>(this, NoticeBannerWidgetClass);
+		if (!IsValid(ActiveNoticeBannerWidget))
+		{
+			return;
+		}
+		ActiveNoticeBannerWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		ActiveNoticeBannerWidget->AddToViewport(500);
+	}
+
+	ActiveNoticeBannerWidget->ShowMessage(Message);
 }
 
 void ACSStorePlayerController::TryShowQueuedDeliveryToast()
