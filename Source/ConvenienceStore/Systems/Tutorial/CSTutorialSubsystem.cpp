@@ -16,19 +16,26 @@
 #include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
-#include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
 
-// 발주/장부 UI 등 다른 화면 위에서도 튜토리얼 위젯이 항상 보이도록 충분히 높은 값을 사용
-static constexpr int32 TutorialWidgetZOrder = 1000;
+// 발주창(WBP_Orderv2, 1100번 레이어) 등 다른 화면 위에서도 항상 보이도록 그보다 높게 잡음
+static constexpr int32 TutorialWidgetZOrder = 1150;
 
 // TrySubscribeToPlayerController가 재시도를 포기하기까지 시도할 최대 횟수
 static constexpr int32 MaxPlayerControllerSubscribeAttempts = 20;
 
 // 재시도 사이에 둘 간격(초) / 체감상 딜레이가 없을 만큼 짧게 잡음
 static constexpr float PlayerControllerSubscribeRetryInterval = 0.05f;
+
+// TryStartTutorialAfterTitleScreen이 재시도를 포기하기까지 시도할 최대 횟수
+// 임시 타이틀은 사람이 직접 눌러야 닫히므로 플레이어 컨트롤러 재시도보다 훨씬 길게 기다려줘야 함
+static constexpr int32 MaxTitleScreenWaitAttempts = 1200;
+
+// 재시도 사이 간격(초). 0.25초 * 1200회 = 최대 5분까지 대기
+static constexpr float TitleScreenWaitRetryInterval = 0.25f;
 
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
 static void DebugAdvanceTutorialStepCommand(const TArray<FString>& Args, UWorld* World)
@@ -44,6 +51,21 @@ static FAutoConsoleCommandWithWorldAndArgs CmdAdvanceTutorialStep(
 	TEXT("cs.TNext"),
 	TEXT("현재 튜토리얼 스텝을 완료 조건과 무관하게 강제로 다음으로 넘긴다. 디버그용."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&DebugAdvanceTutorialStepCommand));
+
+// 콘솔에서 cs.TSkip을 입력하면 배너/대화창/목표/마커(외곽선)까지 튜토리얼을 통째로 끔
+static void DebugSkipTutorialCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (UCSTutorialSubsystem* TutorialSubsystem =
+		World != nullptr ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr)
+	{
+		TutorialSubsystem->DebugSkipTutorial();
+	}
+}
+
+static FAutoConsoleCommandWithWorldAndArgs CmdSkipTutorial(
+	TEXT("cs.TSkip"),
+	TEXT("튜토리얼을 배너·대화창·목표·마커(외곽선)까지 전부 끄고 완전히 종료한다. 디버그용."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&DebugSkipTutorialCommand));
 
 void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
@@ -63,20 +85,75 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		return;
 	}
 
+	// OnWorldBeginPlay가 PlayerController::BeginPlay(SetPause(true) 호출 지점)보다 먼저 실행돼
+	// 바로 확인하면 아직 안 멈춘 것으로 잘못 판단함 - 타이머로 한 틱 이상 미뤄서 피함
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			TitleScreenWaitTimerHandle,
+			this,
+			&UCSTutorialSubsystem::TryStartTutorialAfterTitleScreen,
+			TitleScreenWaitRetryInterval,
+			false);
+	}
+}
+
+void UCSTutorialSubsystem::TryStartTutorialAfterTitleScreen()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 임시 타이틀 화면이 SetPause(true)로 게임을 멈춰둔 동안에는 튜토리얼을 시작하지 않음
+	// "시작하기"를 눌러 실제로 게임이 재개될 때(IsPaused() == false)까지 대기
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	const bool bReadyToStart = PlayerController != nullptr && !PlayerController->IsPaused();
+
+	if (!bReadyToStart)
+	{
+		++TitleScreenWaitAttempts;
+		if (TitleScreenWaitAttempts <= MaxTitleScreenWaitAttempts)
+		{
+			World->GetTimerManager().SetTimer(
+				TitleScreenWaitTimerHandle,
+				this,
+				&UCSTutorialSubsystem::TryStartTutorialAfterTitleScreen,
+				TitleScreenWaitRetryInterval,
+				false);
+			return;
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[Tutorial] 임시 타이틀 화면 종료를 %d회 시도해도 감지하지 못해 튜토리얼을 그냥 시작합니다."),
+			MaxTitleScreenWaitAttempts);
+	}
+
+	ACSStoreGameMode* GameMode = World->GetAuthGameMode<ACSStoreGameMode>();
+	if (!IsValid(GameMode) || !GameMode->IsTutorialEnabled())
+	{
+		return;
+	}
+
 	StartTutorial(GameMode);
 }
 
 void UCSTutorialSubsystem::Deinitialize()
 {
 	ClearAutoAdvanceTimer();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(TitleScreenWaitTimerHandle);
+	}
 	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	UnsubscribeFromOrderSubsystem();
-	UnsubscribeFromPricingSubsystem();
 	UnsubscribeFromStoreGameState();
+	UnsubscribeFromCustomerRuntimeSubsystem();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -85,6 +162,13 @@ void UCSTutorialSubsystem::Deinitialize()
 void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 {
 	StepRows.Reset();
+	TipRows.Reset();
+	ShownTipIds.Reset();
+	bTipChainActive = false;
+	bPart3EntryScheduled = false;
+	bOrderWidgetCurrentlyOpen = false;
+	bOrderWidgetOrderedThisOpen = false;
+	bOrderWidgetFacilityTabViewedThisOpen = false;
 	CleanTrashDisposedCount = 0;
 	StockShelvesPlacedCount = 0;
 	bTutorialShelfSpawned = false;
@@ -99,12 +183,20 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	}
 
 	// DataTable에 행이 나열된 순서를 그대로 진행 순서로 사용
+	// DuringOpen(2부 원포인트 팁) 행은 관문형 진행(StepRows)이 아니라 TipRows로 따로 담음
 	for (const FName& RowName : StepDataTable->GetRowNames())
 	{
 		if (FCSTutorialStepRow* Row = StepDataTable->FindRow<FCSTutorialStepRow>(
 			RowName, TEXT("UCSTutorialSubsystem::StartTutorial")))
 		{
-			StepRows.Add(Row);
+			if (Row->Part == ECSTutorialPart::DuringOpen)
+			{
+				TipRows.Add(Row);
+			}
+			else
+			{
+				StepRows.Add(Row);
+			}
 		}
 	}
 
@@ -119,8 +211,8 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToLevelShelves();
 	TrySubscribeToPlayerController();
 	SubscribeToOrderSubsystem();
-	SubscribeToPricingSubsystem();
 	SubscribeToStoreGameState();
+	SubscribeToCustomerRuntimeSubsystem();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -140,7 +232,10 @@ void UCSTutorialSubsystem::AdvanceStep()
 	const ECSTutorialPart FinishedPart = StepRows[CurrentStepIndex]->Part;
 	const int32 NextIndex = CurrentStepIndex + 1;
 
-	if (!StepRows.IsValidIndex(NextIndex))
+	// 다음 행이 없거나, 있어도 소속 Part가 지금과 다르면 지금 Part는 여기서 끝난 것으로 봄
+	// (다음 Part 진입은 HandlePartFinished가 아니라 각 Part의 실제 트리거가 맡음)
+	// 이 체크가 없으면 3부 스텝이 1부 바로 다음 행으로 DT에 있을 때 영업 시작과 동시에 떠버림
+	if (!StepRows.IsValidIndex(NextIndex) || StepRows[NextIndex]->Part != FinishedPart)
 	{
 		HandlePartFinished(FinishedPart);
 		return;
@@ -162,7 +257,7 @@ void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
 		HandlePart1Finished();
 		break;
 	case ECSTutorialPart::DuringOpen:
-		// 3부(영업 후) 스텝이 DataTable에 추가되면 여기서 PostClose로 이어감
+		// 2부는 관문형 스텝을 두지 않기로 했으므로(StepRows에 안 들어감) 실제로는 여기 안 옴
 		CompleteTutorial();
 		break;
 	case ECSTutorialPart::PostClose:
@@ -176,8 +271,20 @@ void UCSTutorialSubsystem::HandlePart1Finished()
 {
 	// 새 시간 흐름에서는 입간판을 여는 것 자체가 영업 시작 신호이므로
 	// 여기서 따로 시계를 재개시키는 코드가 필요 없음
-	// 2부(영업 중) 스텝이 DataTable에 추가되면 여기서 CompleteTutorial() 대신 2부 첫 스텝으로 넘어가야 함
-	CompleteTutorial();
+	// OpenSign의 마커·대화창·목표 표시가 2부 내내 화면에 남아있던 문제 - 다음 스텝이 없어
+	// BroadcastCurrentStep이 다시 안 불리므로 여기서 명시적으로 정리해야 함
+	ClearTutorialDisplay();
+
+	// 3부(마감 후) 스텝이 없으면 예전처럼 여기서 바로 종료. 있으면 구독을 유지한 채 대기하고,
+	// 실제 3부 시작은 HandleStorePhaseChanged(ClosingFreeRoam)가 맡음
+	if (FindFirstStepIndexForPart(ECSTutorialPart::PostClose) == INDEX_NONE)
+	{
+		CompleteTutorial();
+		return;
+	}
+
+	// 다이어리 팁은 고정 시간이 아니라 "영업을 시작하였습니다" 안내가 끝나는 시점(HandleStoreOpenedAnnouncementFinished)에 뜸
+	bTipChainActive = true;
 }
 
 void UCSTutorialSubsystem::CompleteTutorial()
@@ -188,6 +295,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	}
 
 	bTutorialCompleted = true;
+	bTipChainActive = false;
 	ClearAutoAdvanceTimer();
 	HideAllActiveMarkers();
 	OnTutorialCompleted.Broadcast();
@@ -197,8 +305,8 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromPlayerCharacter();
 	UnsubscribeFromPlayerController();
 	UnsubscribeFromOrderSubsystem();
-	UnsubscribeFromPricingSubsystem();
 	UnsubscribeFromStoreGameState();
+	UnsubscribeFromCustomerRuntimeSubsystem();
 	CloseTutorialWidgets();
 }
 
@@ -266,9 +374,13 @@ void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
 	}
 
 	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
+	ShowMarkersForTag(CurrentRow.HighlightMarkerTag, CurrentRow.MarkerLabelText);
+}
 
-	// 태그가 비어 있으면 이 스텝은 마커를 쓰지 않음
-	if (CurrentRow.HighlightMarkerTag.IsNone())
+void UCSTutorialSubsystem::ShowMarkersForTag(FName Tag, const FText& Label)
+{
+	// 태그가 비어 있으면 이 스텝/팁은 마커를 쓰지 않음
+	if (Tag.IsNone())
 	{
 		return;
 	}
@@ -283,14 +395,14 @@ void UCSTutorialSubsystem::UpdateHighlightMarkersForCurrentStep()
 	for (TActorIterator<AActor> It(World); It; ++It)
 	{
 		AActor* Actor = *It;
-		if (!IsValid(Actor) || !Actor->ActorHasTag(CurrentRow.HighlightMarkerTag))
+		if (!IsValid(Actor) || !Actor->ActorHasTag(Tag))
 		{
 			continue;
 		}
 
 		if (UCSTutorialMarkerComponent* MarkerComponent = Actor->FindComponentByClass<UCSTutorialMarkerComponent>())
 		{
-			MarkerComponent->ShowMarker(CurrentRow.MarkerLabelText);
+			MarkerComponent->ShowMarker(Label);
 			ActiveMarkerComponents.Add(MarkerComponent);
 		}
 	}
@@ -413,6 +525,8 @@ void UCSTutorialSubsystem::TrySpawnTutorialCrateDeliveries()
 				*SpawnPoint->GetName());
 		}
 
+		TutorialSpawnedCrates.Add(SpawnedCrate);
+
 		// 상자에도 동적으로 마커를 붙여 즉시 아웃라인을 켬
 		UCSTutorialMarkerComponent* HighlightComponent =
 			NewObject<UCSTutorialMarkerComponent>(SpawnedCrate);
@@ -440,9 +554,126 @@ void UCSTutorialSubsystem::HideAllActiveMarkers()
 	ActiveMarkerComponents.Reset();
 }
 
+int32 UCSTutorialSubsystem::FindFirstStepIndexForPart(ECSTutorialPart TargetPart) const
+{
+	for (int32 Index = 0; Index < StepRows.Num(); ++Index)
+	{
+		if (StepRows[Index]->Part == TargetPart)
+		{
+			return Index;
+		}
+	}
+
+	return INDEX_NONE;
+}
+
+void UCSTutorialSubsystem::ShowOneShotTip(ECSTutorialStepId TipId)
+{
+	if (ShownTipIds.Contains(TipId))
+	{
+		return;
+	}
+
+	FCSTutorialStepRow** FoundRow = TipRows.FindByPredicate(
+		[TipId](const FCSTutorialStepRow* Row) { return Row->StepId == TipId; });
+	if (FoundRow == nullptr)
+	{
+		return;
+	}
+
+	ShownTipIds.Add(TipId);
+
+	// 기존 배너/대화창/목표 위젯 구독을 그대로 재사용. 여기서는 CurrentStepIndex를 건드리지 않고
+	// 방송만 함. 이전에 켜져 있던 마커는 여기서 새로 켜기 전에 정리
+	HideAllActiveMarkers();
+	const FCSTutorialStepRow& TipRow = **FoundRow;
+	OnTutorialStepChanged.Broadcast(TipRow);
+	OnTutorialObjectiveProgress.Broadcast(0, TipRow.ObjectiveGoal);
+	ShowMarkersForTag(TipRow.HighlightMarkerTag, TipRow.MarkerLabelText);
+}
+
+void UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished()
+{
+	// 1부가 아직 안 끝났거나(팁 체인 대상 아님) 이미 3부로 넘어갔으면 무관한 시점이므로 무시
+	if (!bTipChainActive)
+	{
+		return;
+	}
+
+	ShowOneShotTip(ECSTutorialStepId::TipDiary);
+	// TipNoticeBoard는 다이어리를 닫는 시점(HandleTipWidgetLockChanged)에 트리거됨
+	// TipInnerThought는 첫 속마음 표시 이벤트(HandleInnerThoughtShown)로 트리거됨
+}
+
+bool UCSTutorialSubsystem::DoesTipExpectWidget(ECSTutorialStepId TipId, const UUserWidget* Widget) const
+{
+	if (!IsValid(Widget))
+	{
+		return false;
+	}
+
+	FCSTutorialStepRow* const* FoundRow = TipRows.FindByPredicate(
+		[TipId](const FCSTutorialStepRow* Row) { return Row->StepId == TipId; });
+	if (FoundRow == nullptr || (*FoundRow)->ExpectedWidgetClass.IsNull())
+	{
+		return false;
+	}
+
+	// 필요한 시점에만 실제로 로드 (HandleGameplayUIInputLockChanged와 동일한 패턴)
+	const UClass* ExpectedClass = (*FoundRow)->ExpectedWidgetClass.LoadSynchronous();
+	return ExpectedClass != nullptr && Widget->IsA(ExpectedClass);
+}
+
+void UCSTutorialSubsystem::ClearTutorialDisplay()
+{
+	HideAllActiveMarkers();
+
+	// PromptType=None으로 완전히 숨기면 대화창 WBP가 이후 텍스트 변경으로 다시 안 보여주는
+	// 버그가 있어, 완전히 숨기지 않고 빈 텍스트로만 바꿈
+	FCSTutorialStepRow BlankRow;
+	BlankRow.PromptType = ECSTutorialPromptType::Dialogue;
+	BlankRow.PromptText = FText::GetEmpty();
+	OnTutorialStepChanged.Broadcast(BlankRow);
+	OnTutorialObjectiveProgress.Broadcast(0, 0);
+}
+
+void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked)
+{
+	// 1부가 아직 안 끝났거나(대기 중이 아님) 3부가 시작된 뒤면 팁 체인과 무관한 시점이므로 무시
+	if (!bTipChainActive)
+	{
+		return;
+	}
+
+	if (DoesTipExpectWidget(ECSTutorialStepId::TipDiary, RequestingWidget))
+	{
+		if (bLocked)
+		{
+			// 팁이 아직 안 떴어도(안내 애니메이션이 끝나길 대기 중) 다이어리를 직접 열었으면
+			// 나중에 안내가 끝나도 다시 뜨지 않도록 이미 본 것으로 표시함
+			ShownTipIds.Add(ECSTutorialStepId::TipDiary);
+			ClearTutorialDisplay();
+		}
+		else
+		{
+			// 다이어리를 닫는 순간 게시판 팁으로 넘어감 (이미 봤으면 ShowOneShotTip이 알아서 무시)
+			ShowOneShotTip(ECSTutorialStepId::TipNoticeBoard);
+		}
+		return;
+	}
+
+	if (DoesTipExpectWidget(ECSTutorialStepId::TipNoticeBoard, RequestingWidget) && bLocked)
+	{
+		// 게시판과 상호작용(열림)하는 순간 바로 숨김
+		ClearTutorialDisplay();
+	}
+}
+
 void UCSTutorialSubsystem::NotifyStepCompleted(ECSTutorialStepId CompletedStepId)
 {
-	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	// 트리거 볼륨 등 구독/해제 목록과 무관하게 직접 호출하는 경로가 있어서, 튜토리얼이
+	// 끝난 뒤에도 이 가드가 없으면 스텝이 되살아나 마커가 다시 켜짐(cs.TSkip 이후 재현됨)
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
 	}
@@ -458,7 +689,8 @@ void UCSTutorialSubsystem::NotifyStepCompleted(ECSTutorialStepId CompletedStepId
 
 void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int32 NewCurrent)
 {
-	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+	if (bTutorialCompleted ||
+		!StepRows.IsValidIndex(CurrentStepIndex) ||
 		StepRows[CurrentStepIndex]->StepId != StepId)
 	{
 		return;
@@ -488,7 +720,45 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 		DebugHideTutorialShelfHighlight();
 	}
 
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::StockShelves)
+	{
+		DebugHideTutorialCrateHighlight();
+	}
+
 	AdvanceStep();
+}
+
+void UCSTutorialSubsystem::DebugSkipTutorial()
+{
+	// 어느 스텝에서 부르든 안전하게: 남아있을 수 있는 쓰레기/선반/상자 외곽선을 먼저 정리하고 완전히 종료
+	DebugDestroyRemainingTrash();
+	DebugHideTutorialShelfHighlight();
+	DebugHideTutorialCrateHighlight();
+	CompleteTutorial();
+}
+
+bool UCSTutorialSubsystem::CanCloseOrderWidget()
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return true;
+	}
+
+	const ECSTutorialStepId CurrentId = StepRows[CurrentStepIndex]->StepId;
+
+	if (CurrentId == ECSTutorialStepId::PlaceProductOrder && !bOrderWidgetOrderedThisOpen)
+	{
+		if (IsValid(SubscribedPlayerController))
+		{
+			SubscribedPlayerController->ShowNoticeBanner(
+				NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+		}
+		UpdateHighlightMarkersForCurrentStep();
+		return false;
+	}
+
+	return true;
 }
 
 void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
@@ -523,6 +793,23 @@ void UCSTutorialSubsystem::DebugHideTutorialShelfHighlight()
 	}
 
 	TutorialSpawnedShelves.Reset();
+}
+
+void UCSTutorialSubsystem::DebugHideTutorialCrateHighlight()
+{
+	for (const TObjectPtr<AActor>& Crate : TutorialSpawnedCrates)
+	{
+		if (IsValid(Crate))
+		{
+			if (UCSTutorialMarkerComponent* HighlightComponent =
+				Crate->FindComponentByClass<UCSTutorialMarkerComponent>())
+			{
+				HighlightComponent->HideMarker();
+			}
+		}
+	}
+
+	TutorialSpawnedCrates.Reset();
 }
 
 void UCSTutorialSubsystem::CreateTutorialWidgets(ACSStoreGameMode* GameMode)
@@ -726,6 +1013,10 @@ void UCSTutorialSubsystem::SubscribeToPlayerController(ACSStorePlayerController*
 
 	PlayerController->OnGameplayUIInputLockChanged.AddUniqueDynamic(
 		this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+	PlayerController->OnStoreOpenedAnnouncementFinished.AddUniqueDynamic(
+		this, &UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished);
+	PlayerController->OnStoreClosedAnnouncementFinished.AddUniqueDynamic(
+		this, &UCSTutorialSubsystem::HandleStoreClosedAnnouncementFinished);
 }
 
 void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
@@ -739,6 +1030,10 @@ void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
 	{
 		SubscribedPlayerController->OnGameplayUIInputLockChanged.RemoveDynamic(
 			this, &UCSTutorialSubsystem::HandleGameplayUIInputLockChanged);
+		SubscribedPlayerController->OnStoreOpenedAnnouncementFinished.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished);
+		SubscribedPlayerController->OnStoreClosedAnnouncementFinished.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleStoreClosedAnnouncementFinished);
 	}
 
 	SubscribedPlayerController = nullptr;
@@ -768,30 +1063,6 @@ void UCSTutorialSubsystem::UnsubscribeFromOrderSubsystem()
 	SubscribedOrderSubsystem = nullptr;
 }
 
-void UCSTutorialSubsystem::SubscribeToPricingSubsystem()
-{
-	if (UWorld* World = GetWorld())
-	{
-		if (UCSStorePricingSubsystem* PricingSubsystem = World->GetSubsystem<UCSStorePricingSubsystem>())
-		{
-			SubscribedPricingSubsystem = PricingSubsystem;
-			PricingSubsystem->OnSalePriceChanged.AddUniqueDynamic(
-				this, &UCSTutorialSubsystem::HandleSalePriceChanged);
-		}
-	}
-}
-
-void UCSTutorialSubsystem::UnsubscribeFromPricingSubsystem()
-{
-	if (IsValid(SubscribedPricingSubsystem))
-	{
-		SubscribedPricingSubsystem->OnSalePriceChanged.RemoveDynamic(
-			this, &UCSTutorialSubsystem::HandleSalePriceChanged);
-	}
-
-	SubscribedPricingSubsystem = nullptr;
-}
-
 void UCSTutorialSubsystem::SubscribeToStoreGameState()
 {
 	if (UWorld* World = GetWorld())
@@ -801,6 +1072,8 @@ void UCSTutorialSubsystem::SubscribeToStoreGameState()
 			SubscribedStoreGameState = StoreGameState;
 			StoreGameState->OnStoreOpenStateChanged.AddUniqueDynamic(
 				this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+			StoreGameState->OnStorePhaseChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleStorePhaseChanged);
 		}
 	}
 }
@@ -811,9 +1084,39 @@ void UCSTutorialSubsystem::UnsubscribeFromStoreGameState()
 	{
 		SubscribedStoreGameState->OnStoreOpenStateChanged.RemoveDynamic(
 			this, &UCSTutorialSubsystem::HandleStoreOpenStateChanged);
+		SubscribedStoreGameState->OnStorePhaseChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleStorePhaseChanged);
 	}
 
 	SubscribedStoreGameState = nullptr;
+}
+
+void UCSTutorialSubsystem::SubscribeToCustomerRuntimeSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem = World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			SubscribedCustomerRuntimeSubsystem = CustomerRuntimeSubsystem;
+			CustomerRuntimeSubsystem->OnInnerThoughtShown.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleInnerThoughtShown);
+			CustomerRuntimeSubsystem->OnHeadIconShown.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleHeadIconShown);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromCustomerRuntimeSubsystem()
+{
+	if (IsValid(SubscribedCustomerRuntimeSubsystem))
+	{
+		SubscribedCustomerRuntimeSubsystem->OnInnerThoughtShown.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleInnerThoughtShown);
+		SubscribedCustomerRuntimeSubsystem->OnHeadIconShown.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleHeadIconShown);
+	}
+
+	SubscribedCustomerRuntimeSubsystem = nullptr;
 }
 
 void UCSTutorialSubsystem::SubscribeToPlayerCharacter(ACSPlayerCharacter* PlayerCharacter)
@@ -918,6 +1221,10 @@ void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
 {
 	(void)Result;   // 이 델리게이트는 발주 성공 시에만 방송되므로 별도 성공 여부 검사가 필요 없음
 
+	// 발주창을 안 닫고 계속 열어둔 채여도 "이번에 열려 있는 동안 적어도 1번 발주했다"를 기록
+	// (닫을 때 HandleOrderWidgetLockChanged가 이 값으로 경고 여부를 판단)
+	bOrderWidgetOrderedThisOpen = true;
+
 	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
 		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::PlaceProductOrder)
 	{
@@ -925,20 +1232,6 @@ void UCSTutorialSubsystem::HandleOrderPlaced(const FCSOrderResult& Result)
 	}
 
 	NotifyStepCompleted(ECSTutorialStepId::PlaceProductOrder);
-}
-
-void UCSTutorialSubsystem::HandleSalePriceChanged(FName ProductRowName, int32 NewSalePrice)
-{
-	(void)ProductRowName;
-	(void)NewSalePrice;   // 이 델리게이트는 변경 성공 시에만 방송되므로 값 자체는 볼 필요 없음
-
-	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
-		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::SetProductPrice)
-	{
-		return;
-	}
-
-	NotifyStepCompleted(ECSTutorialStepId::SetProductPrice);
 }
 
 void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
@@ -957,27 +1250,177 @@ void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
 	NotifyStepCompleted(ECSTutorialStepId::OpenSign);
 }
 
+void UCSTutorialSubsystem::HandleStorePhaseChanged(ECStorePhase NewPhase)
+{
+	if (NewPhase != ECStorePhase::ClosingFreeRoam || bTutorialCompleted || bPart3EntryScheduled)
+	{
+		return;
+	}
+
+	// 이미 3부에 들어와 있으면 무시 (페이즈 방송이 중복으로 와도 안전)
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->Part == ECSTutorialPart::PostClose)
+	{
+		return;
+	}
+
+	if (FindFirstStepIndexForPart(ECSTutorialPart::PostClose) == INDEX_NONE)
+	{
+		// 3부 스텝이 DT에 없는 구성이면 1부 종료 시점에 이미 CompleteTutorial()로 끝났어야 함
+		return;
+	}
+
+	// 2부 팁 체인이 아직 진행 중이었다면 여기서 종료
+	// 이 시점 이후엔 HandleStoreOpenedAnnouncementFinished가 와도 bTipChainActive 검사로 걸러짐
+	bTipChainActive = false;
+
+	// 3부 진입은 "영업시간이 종료되었습니다" 안내가 끝나는 시점(HandleStoreClosedAnnouncementFinished)에 함
+	// 여기서 바로 EnterPart3()를 부르면 안내 애니메이션과 겹쳐서 뜸 - bPart3EntryScheduled는 이 함수가
+	// 같은 전환에 대해 두 번 반응하지 않게 막는 용도(페이즈 방송 중복 대비)
+	bPart3EntryScheduled = true;
+}
+
+void UCSTutorialSubsystem::HandleStoreClosedAnnouncementFinished()
+{
+	if (!bPart3EntryScheduled || bTutorialCompleted)
+	{
+		return;
+	}
+
+	EnterPart3();
+}
+
+void UCSTutorialSubsystem::EnterPart3()
+{
+	const int32 Part3Index = FindFirstStepIndexForPart(ECSTutorialPart::PostClose);
+	if (Part3Index == INDEX_NONE)
+	{
+		return;
+	}
+
+	CurrentStepIndex = Part3Index;
+	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
+}
+
+void UCSTutorialSubsystem::HandleInnerThoughtShown()
+{
+	ShowOneShotTip(ECSTutorialStepId::TipInnerThought);
+}
+
+void UCSTutorialSubsystem::HandleHeadIconShown(ACSCustomerCharacter* Customer)
+{
+	(void)Customer;   // 어느 손님인지는 안 봐도 됨 - 팁은 손님 구분 없이 1회만 표시
+	ShowOneShotTip(ECSTutorialStepId::TipInnerThought);
+}
+
+bool UCSTutorialSubsystem::DoesStepExpectWidget(int32 StepIndex, const UUserWidget* Widget) const
+{
+	if (!IsValid(Widget) || !StepRows.IsValidIndex(StepIndex))
+	{
+		return false;
+	}
+
+	const FCSTutorialStepRow& Row = *StepRows[StepIndex];
+	if (Row.ExpectedWidgetClass.IsNull())
+	{
+		return false;
+	}
+
+	// 필요한 시점에만 실제로 로드 (평소엔 주소만 갖고 있다가 지금 처음 불러옴)
+	const UClass* ExpectedClass = Row.ExpectedWidgetClass.LoadSynchronous();
+	return ExpectedClass != nullptr && Widget->IsA(ExpectedClass);
+}
+
+void UCSTutorialSubsystem::HandleOrderWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked)
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const ECSTutorialStepId CurrentId = StepRows[CurrentStepIndex]->StepId;
+	if (CurrentId != ECSTutorialStepId::PlaceProductOrder && CurrentId != ECSTutorialStepId::FacilityOrderInfo)
+	{
+		return;
+	}
+
+	if (!DoesStepExpectWidget(CurrentStepIndex, RequestingWidget))
+	{
+		return;
+	}
+
+	if (bLocked)
+	{
+		if (!bOrderWidgetCurrentlyOpen)
+		{
+			// 최초로 열림 - 발주/시설탭 두 스텝이 공유하는 이 창을 여는 순간이므로 대화창을 치움
+			bOrderWidgetCurrentlyOpen = true;
+			bOrderWidgetOrderedThisOpen = false;
+			ClearTutorialDisplay();
+		}
+		// [임시] 시설탭 클릭이 이 위젯의 재오픈 신호로 안 와서, FacilityOrderInfo 완료는
+		// 당분간 DT의 AutoAdvanceSeconds(5초) 타이머가 대신 맡음. 감지 방법을 찾으면 닫힘 기반으로 되돌릴 것
+		return;
+	}
+
+	// 여기부터는 닫힘(bLocked == false)
+	bOrderWidgetCurrentlyOpen = false;
+
+	if (CurrentId == ECSTutorialStepId::PlaceProductOrder && !bOrderWidgetOrderedThisOpen)
+	{
+		// 발주 없이 닫으려고 함 - 완료 처리하지 않고 경고만 띄움. 스텝은 그대로 PlaceProductOrder에 머무름
+		if (IsValid(SubscribedPlayerController))
+		{
+			SubscribedPlayerController->ShowNoticeBanner(
+				NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+		}
+		UpdateHighlightMarkersForCurrentStep();
+	}
+	// bOrderWidgetOrderedThisOpen이 true인 경우는 HandleOrderPlaced가 이미 다음 스텝(FacilityOrderInfo)으로
+	// 넘겼어야 하므로 CurrentId가 여전히 PlaceProductOrder일 수 없음 - 여기 도달하지 않음
+	// FacilityOrderInfo는 위 [임시] 주석대로 닫힘 기반 완료를 안 함(타이머가 대신 완료시킴)
+}
+
 void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* RequestingWidget, bool bLocked)
 {
-	if (!StepRows.IsValidIndex(CurrentStepIndex) || !IsValid(RequestingWidget))
+	if (!IsValid(RequestingWidget))
+	{
+		return;
+	}
+
+	// 2부 팁 체인(다이어리↔게시판)은 StepRows의 관문형 진행과 별개라 여기서 먼저 처리
+	HandleTipWidgetLockChanged(RequestingWidget, bLocked);
+
+	// 발주/시설탭 두 스텝은 같은 창을 계속 열어둔 채 이어지는 흐름이라 전담 함수가 완료 판정까지 다 함
+	HandleOrderWidgetLockChanged(RequestingWidget, bLocked);
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
 	}
 
 	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
 
-	// 이 스텝이 UI 감지를 쓰지 않으면(빈 칸이면) 신경 쓰지 않음
-	if (CurrentRow.ExpectedWidgetClass.IsNull())
+	if (CurrentRow.StepId == ECSTutorialStepId::PlaceProductOrder ||
+		CurrentRow.StepId == ECSTutorialStepId::FacilityOrderInfo)
 	{
+		// 위 HandleOrderWidgetLockChanged가 전담하므로 아래 범용 완료 판정에서는 제외
 		return;
 	}
 
-	// 필요한 시점에만 실제로 로드 (평소엔 주소만 갖고 있다가 지금 처음 불러옴)
-	const UClass* ExpectedClass = CurrentRow.ExpectedWidgetClass.LoadSynchronous();
-	if (ExpectedClass == nullptr || !RequestingWidget->IsA(ExpectedClass))
+	if (!DoesStepExpectWidget(CurrentStepIndex, RequestingWidget))
 	{
 		// 지금 열리거나 닫힌 위젯이 이 스텝이 기다리는 위젯이 아니면 무시
 		return;
+	}
+
+	// 위젯이 열리는 순간 대화창을 즉시 치움 - 장부/마감 종처럼 열려 있는 UI 위에
+	// 안내 문구가 계속 겹쳐 보이지 않게 함
+	if (bLocked)
+	{
+		ClearTutorialDisplay();
 	}
 
 	// bCompleteOnWidgetClosed == false면 "열릴 때"(bLocked == true) 완료

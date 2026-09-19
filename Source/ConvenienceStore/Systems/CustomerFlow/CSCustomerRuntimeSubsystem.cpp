@@ -676,6 +676,16 @@ void UCSCustomerRuntimeSubsystem::NotifyTrashWitnessed(ACSCustomerCharacter* Cus
 	OnTrashWitnessed.Broadcast(Customer);
 }
 
+void UCSCustomerRuntimeSubsystem::NotifyHeadIconShown(ACSCustomerCharacter* Customer)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	OnHeadIconShown.Broadcast(Customer);
+}
+
 // 화면 하단 대화창 스타일 위젯 인스턴스 하나를 캐싱해서 재사용
 void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWidget> WidgetClass, const FText& InText, float Duration)
 {
@@ -707,6 +717,7 @@ void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWi
 
 	CachedInnerThoughtWidget->SetThoughtText(InText);
 	CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Visible);
+	OnInnerThoughtShown.Broadcast();
 
 	World->GetTimerManager().SetTimer(
 		InnerThoughtHideTimerHandle,
