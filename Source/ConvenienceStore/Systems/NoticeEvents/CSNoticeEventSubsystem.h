@@ -70,19 +70,6 @@ private:
 	void CollectDailyHolidays(int32 DayOfMonth);
 	bool IsEffectSourceActive(const FCSNoticeEventEffectRuleRow& Rule) const;
 
-	// 고정 경로의 soft reference를 CDO에 보관해 수동 연결 없이 로드하고 cook 의존성도 표현합니다.
-	UPROPERTY()
-	TSoftObjectPtr<UDataTable> NewsEventDataTableAsset = TSoftObjectPtr<UDataTable>(
-		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/NoticeEvents/DT_NewsEvent.DT_NewsEvent")));
-
-	UPROPERTY()
-	TSoftObjectPtr<UDataTable> HolidayEventDataTableAsset = TSoftObjectPtr<UDataTable>(
-		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/NoticeEvents/DT_HolidayEvent.DT_HolidayEvent")));
-
-	UPROPERTY()
-	TSoftObjectPtr<UDataTable> EffectRuleDataTableAsset = TSoftObjectPtr<UDataTable>(
-		FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/NoticeEvents/DT_NoticeEventEffectRule.DT_NoticeEventEffectRule")));
-
 	UPROPERTY(Transient)
 	TObjectPtr<UDataTable> NewsEventDataTable;
 

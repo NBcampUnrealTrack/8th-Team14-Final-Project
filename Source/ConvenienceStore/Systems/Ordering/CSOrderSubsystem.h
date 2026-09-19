@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Data/CSFacilityOrderTypes.h"
 #include "Data/CSOrderTypes.h"
+#include "Data/CSCombinedOrderTypes.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "CSOrderSubsystem.generated.h"
 
@@ -55,6 +56,23 @@ class CONVENIENCESTORE_API UCSOrderSubsystem : public UWorldSubsystem
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	UFUNCTION(BlueprintPure, Category="Store|Order|Combined")
+	FCSCombinedOrderResult EvaluateCombinedOrder(const TArray<FCSOrderLine>& Products,
+		const TArray<FCSFacilityOrderLine>& Facilities, ECSOrderDeliveryType DeliveryType) const;
+
+	UFUNCTION(BlueprintCallable, Category="Store|Order|Combined")
+	FCSCombinedOrderResult PlaceCombinedOrder(const TArray<FCSOrderLine>& Products,
+		const TArray<FCSFacilityOrderLine>& Facilities, ECSOrderDeliveryType DeliveryType);
+
+	UFUNCTION(BlueprintPure, Category="Store|Order|Unlock")
+	bool IsFacilityUnlocked(const FDataTableRowHandle& Row) const;
+
+	UFUNCTION(BlueprintPure, Category="Store|Order|Unlock")
+	bool IsProductUnlocked(const FDataTableRowHandle& Row) const;
+
+	UFUNCTION(BlueprintPure, Category="Store|Order|Unlock")
+	TArray<FName> GetUnlockedFacilityRowNames(UDataTable* Table) const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Order")
 	FCSOrderResult EvaluateOrder(const TArray<FCSOrderLine>& OrderLines) const;
@@ -118,6 +136,7 @@ public:
 	FCSOnFacilityOrderPlaced OnFacilityOrderPlaced;
 
 private:
+	bool bCombinedCheckoutInProgress = false;
 	void TrySubscribeToStoreGameState();
 	void UnsubscribeFromStoreGameState();
 	void EnsureDeliverySpawnIndicesForBusinessDay(int32 BusinessDay);

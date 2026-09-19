@@ -23,7 +23,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> BuildingMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UStaticMeshComponent> InteractionMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<UBoxComponent> InteractionCollision;
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MagicCircle|UI") TSoftClassPtr<UCSMagicCircleUpgradeWidget> UpgradeWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "MagicCircle|UI") TSubclassOf<UCSMagicCircleUpgradeWidget> UpgradeWidgetClass;
 private:
 	UPROPERTY(Transient) TObjectPtr<UCSMagicCircleUpgradeWidget> ActiveUpgradeWidget;
 };

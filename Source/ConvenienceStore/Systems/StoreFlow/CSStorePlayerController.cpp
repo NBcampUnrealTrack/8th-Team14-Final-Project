@@ -8,6 +8,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
+#include "UI/HUD/CSStoreTopBarWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "UI/Store/CSClosingWarningWidget.h"
@@ -27,7 +28,7 @@ void ACSStorePlayerController::ToggleJournal()
 	if (IsValid(ActiveJournalWidget)) { CloseJournal(); return; }
 	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
 	// WBP가 준비되지 않았으면 입력과 HUD 상태를 변경하지 않습니다.
-	UClass* WidgetClass = JournalWidgetClass.LoadSynchronous();
+	UClass* WidgetClass = JournalWidgetClass.Get();
 	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Journal] JournalWidgetClass에 CSJournalWidget 기반 WBP를 지정해 주세요."));
@@ -79,6 +80,16 @@ void ACSStorePlayerController::BeginPlay()
 			}
 		}
 	}
+	if (IsLocalPlayerController() && StoreTopBarWidgetClass != nullptr)
+	{
+		StoreTopBarWidget = CreateWidget<UCSStoreTopBarWidget>(this, StoreTopBarWidgetClass);
+		if (IsValid(StoreTopBarWidget))
+		{
+			// 발주창 등 Viewport UI보다 위에 두고, 타이틀과 엔딩에서는 별도로 숨깁니다.
+			StoreTopBarWidget->AddToViewport(2000);
+			StoreTopBarWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
 
 	// Temporary Title Screen: 이 한 줄을 제거하면 기존 시작 흐름으로 즉시 복귀합니다.
 	ShowTemporaryTitleScreen();
@@ -102,12 +113,12 @@ void ACSStorePlayerController::BeginPlay()
 void ACSStorePlayerController::ShowTemporaryTitleScreen()
 {
 	if (!bUseTemporaryTitleScreen || !IsLocalPlayerController() ||
-		TemporaryTitleWidgetClass.IsNull() || IsValid(ActiveTemporaryTitleWidget))
+		!TemporaryTitleWidgetClass || IsValid(ActiveTemporaryTitleWidget))
 	{
 		return;
 	}
 
-	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.LoadSynchronous();
+	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.Get();
 	if (LoadedTitleWidgetClass == nullptr)
 	{
 		return;
@@ -121,6 +132,7 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 
 	ActiveTemporaryTitleWidget->AddToViewport(1001);
 	SetStoreHUDHidden(ActiveTemporaryTitleWidget, true);
+	SetStoreTopBarHidden(ActiveTemporaryTitleWidget, true);
 	SetGameplayUIInputLock(ActiveTemporaryTitleWidget, true);
 	SetPause(true);
 }
@@ -142,6 +154,7 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 	SetPause(false);
 	SetGameplayUIInputLock(TitleWidgetToClose, false);
 	SetStoreHUDHidden(TitleWidgetToClose, false);
+	SetStoreTopBarHidden(TitleWidgetToClose, false);
 	TitleWidgetToClose->RemoveFromParent();
 	ActiveTemporaryTitleWidget = nullptr;
 }
@@ -541,6 +554,19 @@ void ACSStorePlayerController::SetStoreHUDHidden(
 	{
 		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeHide);
 		bHasStoredHUDVisibilityBeforeHide = false;
+	}
+}
+
+void ACSStorePlayerController::SetStoreTopBarHidden(UObject* Requester, bool bShouldHide)
+{
+	if (!IsValid(Requester)) return;
+	if (bShouldHide) StoreTopBarHideRequesters.AddUnique(Requester);
+	else StoreTopBarHideRequesters.Remove(Requester);
+	if (IsValid(StoreTopBarWidget))
+	{
+		StoreTopBarWidget->SetVisibility(StoreTopBarHideRequesters.IsEmpty()
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
 	}
 }
 
