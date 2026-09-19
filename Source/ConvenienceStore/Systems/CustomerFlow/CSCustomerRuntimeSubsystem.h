@@ -52,6 +52,11 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnCustomerForcedToLeave, ACSCustomerChara
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnPurchaseRejected, ACSCustomerCharacter*, Customer, FCSPurchaseRejectionInfo, Info);
 // 손님이 다른 손님이 흘린 쓰레기를 목격해 평판 반영 대상이 됐을 때 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnTrashWitnessed, ACSCustomerCharacter*, Customer);
+// 속마음 위젯이 실제로 화면에 표시될 때마다 방송. 튜토리얼의 "속마음이 보입니다" 팁이 이걸 구독함
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnInnerThoughtShown);
+// 손님 머리 위 아이콘(구매 거절/가격 반응 시)이 실제로 표시될 때마다 방송
+// 마법봉으로 봐야 하는 대화창(OnInnerThoughtShown)보다 훨씬 자주·먼저 뜨므로 튜토리얼 팁의 주 트리거로 씀
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnHeadIconShown, ACSCustomerCharacter*, Customer);
 
 UCLASS()
 class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
@@ -195,12 +200,23 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnTrashWitnessed OnTrashWitnessed; // 쓰레기 목격 순간 방송. 청결도 평판 반영은 구독하는 쪽(평판 서브시스템) 담당
 
+	// 손님 머리 위 아이콘이 표시됐을 때 호출. ACSCustomerCharacter::ShowHeadIcon()이 아이콘을 실제로
+	// 띄운 직후 이 래퍼를 거쳐 방송하게 해 캡슐화(NotifyPurchaseRejected와 동일한 이유)
+	void NotifyHeadIconShown(ACSCustomerCharacter* Customer);
+
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnHeadIconShown OnHeadIconShown; // 머리 위 아이콘 표시 순간 방송. 튜토리얼의 속마음 팁이 구독함
+
 	// =====================================================================
 	// 속마음 위젯
 	// =====================================================================
 
 	// 화면 하단 대화창 스타일 속마음 위젯을 Duration초간 표시
 	void ShowInnerThought(TSubclassOf<UCSInnerThoughtWidget> WidgetClass, const FText& InText, float Duration);
+
+	// 속마음 위젯이 실제로 표시된 순간 방송 (튜토리얼의 "속마음이 보입니다" 팁 트리거용)
+	UPROPERTY(BlueprintAssignable, Category = "Store")
+	FCSOnInnerThoughtShown OnInnerThoughtShown;
 
 	// =====================================================================
 	// 계산대 / 대기열

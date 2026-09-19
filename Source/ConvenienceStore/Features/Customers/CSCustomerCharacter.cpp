@@ -143,6 +143,12 @@ void ACSCustomerCharacter::ShowHeadIcon(UTexture2D* Icon, float Duration)
 			&ACSCustomerCharacter::HideHeadIcon,
 			FMath::Max(Duration, 0.01f),
 			false);
+
+		// 튜토리얼의 "속마음이 보입니다" 팁 트리거 - 아이콘이 실제로 표시된 순간에만 알림
+		if (UCSCustomerRuntimeSubsystem* Subsystem = World->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			Subsystem->NotifyHeadIconShown(this);
+		}
 	}
 }
 

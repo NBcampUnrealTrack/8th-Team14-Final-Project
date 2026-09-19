@@ -15,6 +15,7 @@ class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
 class UCSDeliveryToastWidget;
+class UCSNoticeBannerWidgetBase;
 class UTexture2D;
 enum class ECSStatusAnnouncementType : uint8;
 
@@ -32,6 +33,10 @@ struct FCSQueuedDeliveryToast
 	FText Title;
 	FText Message;
 };
+
+// 개점·마감 안내(WBP_StatusAnnouncement) 애니메이션이 끝났을 때 방송
+// 튜토리얼이 고정 시간 대신 이 시점에 맞춰 다음 안내를 띄우는 데 씀
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnStoreAnnouncementFinished);
 
 // 로컬 플레이어의 편의점 HUD와 마감 UI 입력 상태를 관리합니다.
 UCLASS()
@@ -84,6 +89,10 @@ public:
 	/** 배달 기한 초과처럼 입력을 막으면 안 되는 결과를 화면 토스트로 표시합니다. */
 	void ShowGameplayToast(const FText& Title, const FText& Message);
 
+	// 화면 중앙에 잠깐 떴다 사라지는 경고 배너를 표시합니다. 튜토리얼 진행 상태와 무관하게 동작하며
+	// 인스턴스 하나를 재사용하므로 어느 파트에서 호출해도 됩니다 (NoticeBannerWidgetClass는 사람이 지정)
+	void ShowNoticeBanner(const FText& Message);
+
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
 
@@ -100,6 +109,14 @@ public:
 	// UI 입력 잠금이 걸리거나 풀릴 때마다 방송
 	UPROPERTY(BlueprintAssignable, Category = "UI|Input")
 	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;
+
+	// "영업을 시작하였습니다" 안내 애니메이션이 끝났을 때 방송
+	UPROPERTY(BlueprintAssignable, Category = "UI|Announcement")
+	FCSOnStoreAnnouncementFinished OnStoreOpenedAnnouncementFinished;
+
+	// "영업시간이 종료되었습니다" 안내 애니메이션이 끝났을 때 방송
+	UPROPERTY(BlueprintAssignable, Category = "UI|Announcement")
+	FCSOnStoreAnnouncementFinished OnStoreClosedAnnouncementFinished;
 
 protected:
 	virtual void SetupInputComponent() override;
@@ -165,6 +182,12 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UCSDeliveryToastWidget> ActiveDeliveryToastWidget;
 	TArray<FCSQueuedDeliveryToast> QueuedDeliveryToasts;
+
+	// WBP_TutorialBanner를 복제해 UCSNoticeBannerWidgetBase로 리페어런트한 WBP를 지정
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Notice Banner")
+	TSubclassOf<UCSNoticeBannerWidgetBase> NoticeBannerWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSNoticeBannerWidgetBase> ActiveNoticeBannerWidget;
 
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
