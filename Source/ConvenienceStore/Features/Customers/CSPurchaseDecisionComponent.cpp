@@ -25,6 +25,26 @@ namespace
 			&& Info.Severity >= PriceUpsetSeverityFloor;
 	}
 
+	// PreferredCategoryMissing 속마음의 {Category} 자리표시자용 한글 카테고리명
+	// UI/Store/CSLedgerProductRowWidget.cpp에 같은 목적의 매핑이 이미 있지만 다른 파트 파일이라 여기 따로 둔다
+	FText GetProductCategoryDisplayName(ECSProductCategory Category)
+	{
+		switch (Category)
+		{
+		case ECSProductCategory::Alcohol: return FText::FromString(TEXT("주류"));
+		case ECSProductCategory::Beverage: return FText::FromString(TEXT("음료"));
+		case ECSProductCategory::FreshFood: return FText::FromString(TEXT("신선식품"));
+		case ECSProductCategory::FrozenFood: return FText::FromString(TEXT("냉동식품"));
+		case ECSProductCategory::Potion: return FText::FromString(TEXT("포션"));
+		case ECSProductCategory::Scroll: return FText::FromString(TEXT("두루마리"));
+		case ECSProductCategory::Snack: return FText::FromString(TEXT("간식"));
+		case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
+		case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
+		case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
+		case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
+		default: return FText::GetEmpty();
+		}
+	}
 }
 
 UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
@@ -80,6 +100,11 @@ float UCSPurchaseDecisionComponent::GetEffectiveRepeatCategoryPenalty() const
 float UCSPurchaseDecisionComponent::GetEffectivePriceRejectionThreshold() const
 {
 	return Archetype ? Archetype->PriceRejectionThreshold : FallbackPriceRejectionThreshold;
+}
+
+FText UCSPurchaseDecisionComponent::GetEffectivePreferredCategoryMissingTemplate() const
+{
+	return Archetype ? Archetype->PreferredCategoryMissingTemplate : FallbackPreferredCategoryMissingTemplate;
 }
 
 
@@ -898,6 +923,35 @@ TMap<ECSProductCategory, float> UCSPurchaseDecisionComponent::GetCategoryAttract
 	return Weights;
 }
 
+// 확률 굴림을 조건 분기보다 먼저 하는 이유는 다른 Roll* 함수들과 같다 -
+// 조건에 따라 굴림 여부가 갈리면 같은 시드인데 조건 차이로 그 뒤 결과가 밀린다
+bool UCSPurchaseDecisionComponent::RollPreferredCategoryMissing(
+	TFunctionRef<bool(ECSProductCategory)> HasStockAnywhere,
+	ECSProductCategory& OutCategory) const
+{
+	if (!RollChance(PreferredCategoryMissingChance) || Archetype == nullptr)
+	{
+		return false;
+	}
+
+	TArray<ECSProductCategory> MissingCandidates;
+	for (const TPair<ECSProductCategory, float>& Pair : Archetype->CategoryPreference)
+	{
+		if (Pair.Value >= PreferredCategoryThreshold && !HasStockAnywhere(Pair.Key))
+		{
+			MissingCandidates.Add(Pair.Key);
+		}
+	}
+
+	if (MissingCandidates.IsEmpty())
+	{
+		return false;
+	}
+
+	OutCategory = MissingCandidates[RandomStream.RandRange(0, MissingCandidates.Num() - 1)];
+	return true;
+}
+
 void UCSPurchaseDecisionComponent::InitializeRandomStream(int32 Seed)
 {
 	RandomStream.Initialize(Seed);
@@ -960,6 +1014,11 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 		{
 			RowName = Info.NewsRowName;
 		}
+		break;
+	case ECSPurchaseRejectReason::PreferredCategoryMissing:
+		// 문구는 이 행이 아니라 종족별 Archetype 문구(BuildInnerThoughtText 참고)를 쓴다.
+		// 여기서는 아이콘만 조회하는 용도로 행을 찾는다
+		RowName = TEXT("PreferredCategoryMissing");
 		break;
 	default:
 		return FCSPurchaseRejectionTier();
@@ -1066,6 +1125,15 @@ FText UCSPurchaseDecisionComponent::GetProductDisplayName(FName ProductId) const
 // 위 Tier의 InnerThoughtTemplate에 {ActualPrice}/{ReferencePrice}/{ProductName} 자리표시자를 실제 값으로 채운다
 FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const
 {
+	// PreferredCategoryMissing은 DT 공용 문구가 아니라 종족별 Archetype 문구를 쓴다 -
+	// 이게 이 사유를 만든 목적(종족 취향을 문구로 드러내기) 그 자체라서 DT로 빼면 의미가 없어진다
+	if (Info.Reason == ECSPurchaseRejectReason::PreferredCategoryMissing)
+	{
+		FFormatNamedArguments CategoryArgs;
+		CategoryArgs.Add(TEXT("Category"), GetProductCategoryDisplayName(Info.BlockedCategory));
+		return FText::Format(GetEffectivePreferredCategoryMissingTemplate(), CategoryArgs);
+	}
+
 	const FCSPurchaseRejectionTier Tier = GetRejectionDisplayTier(Info);
 
 	FFormatNamedArguments Args;

@@ -166,6 +166,38 @@ namespace
 		return Severity;
 	}
 
+	// Category가 매장 어딘가에 재고로 남아있는지 확인 ("선호 카테고리 텅 빔" 판정 전용)
+	// HasExactProductAnywhere와 같은 이유로 방문 여부는 보지 않는다 - 이미 지나친 진열대에
+	// 놓인 것까지 세야 진열해 둔 물건을 두고 "없다"고 하는 일이 없다
+	bool HasCategoryStockAnywhere(
+		const UCSCustomerRuntimeSubsystem& Subsystem,
+		ECSProductCategory Category)
+	{
+		for (const TObjectPtr<AActor>& Shelf : Subsystem.GetShelves())
+		{
+			if (!Subsystem.IsShelfSelectable(Shelf))
+			{
+				continue;
+			}
+
+			for (const AActor* ProductActor : Subsystem.GetProductsOnShelf(Shelf))
+			{
+				const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor);
+				if (Product == nullptr)
+				{
+					continue;
+				}
+				const FCSProductDataRow* ShelfRow = Product->GetProductRow().GetRow<FCSProductDataRow>(
+					TEXT("HasCategoryStockAnywhere"));
+				if (ShelfRow != nullptr && ShelfRow->Category == Category)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	bool HasCategoryMatchAnywhere(
 		const UCSCustomerRuntimeSubsystem& Subsystem,
 		const TArray<TObjectPtr<AActor>>& UnvisitedSelectableShelves,
@@ -1256,46 +1288,81 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 		Data.Actor->SetBasketDisplayVisible(false);
 	}
 
-	// 계획 상품 미발견 반응은 전부 이 자리 하나로 모았다.
-	// 진열대마다 띄우면 한 손님이 같은 대사를 여러 번 하고, 어떤 손님은 진열대에서
-	// 어떤 손님은 문 앞에서 말해 규칙이 없어 보인다 - 퇴장 시점 1회로 고정한다
-	// 걸어 나가는 동안 마법봉으로 맞혀야 문장이 보이므로, 퇴장 이동을 시작하기 전에 띄운다
-	// 매장에 들어와 보지도 못하고 돌아가는 손님(입구 판정 실패 등)은 찾아본 적 자체가 없으므로 제외
-	if (UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
-		Decision != nullptr && Subsystem != nullptr && State->HasEnteredStore() && !State->bPlannedMissingReported)
+	// 퇴장 시 속마음 반응 둘 다 매장에 들어와 본 손님 전용이다 - 입장 안 하고 지나치기만 한
+	// 행인도 이 태스크로 들어오는데(ShouldEnterStore 실패 시 바로 여기로 옴), 가드가 없으면
+	// 매장 안을 구경도 안 한 행인이 "계획한 걸 못 샀다"/"선호 카테고리가 없다"고 말하는
+	// 거짓 신호가 나간다(실측됨 - 매장에 들어오지 않은 손님이 대사를 띄움)
+	if (State->HasEnteredStore())
 	{
-		// 찾다가 포기한 것이 먼저다. 그 뒤가 아예 만나보지도 못한 계획 상품
-		TArray<FName> Unfulfilled = State->UnfulfilledPlannedProductIds;
-		Unfulfilled.Append(State->PlannedProductIds);
-
-		for (const FName PlannedId : Unfulfilled)
+		// 계획 상품 미발견 반응은 전부 이 자리 하나로 모았다.
+		// 진열대마다 띄우면 한 손님이 같은 대사를 여러 번 하고, 어떤 손님은 진열대에서
+		// 어떤 손님은 문 앞에서 말해 규칙이 없어 보인다 - 퇴장 시점 1회로 고정한다
+		// 걸어 나가는 동안 마법봉으로 맞혀야 문장이 보이므로, 퇴장 이동을 시작하기 전에 띄운다
+		if (UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
+			Decision != nullptr && Subsystem != nullptr && !State->bPlannedMissingReported)
 		{
-			// 진열은 돼 있는데 이 손님이 그 진열대까지 못 간 것뿐이면 아무 말도 안 한다.
-			// 갖다놓은 물건을 두고 없다고 하면 플레이어에게 거짓 신호가 된다
-			if (HasExactProductAnywhere(*Subsystem, PlannedId))
+			// 찾다가 포기한 것이 먼저다. 그 뒤가 아예 만나보지도 못한 계획 상품
+			TArray<FName> Unfulfilled = State->UnfulfilledPlannedProductIds;
+			Unfulfilled.Append(State->PlannedProductIds);
+
+			for (const FName PlannedId : Unfulfilled)
 			{
-				continue;
+				// 진열은 돼 있는데 이 손님이 그 진열대까지 못 간 것뿐이면 아무 말도 안 한다.
+				// 갖다놓은 물건을 두고 없다고 하면 플레이어에게 거짓 신호가 된다
+				if (HasExactProductAnywhere(*Subsystem, PlannedId))
+				{
+					continue;
+				}
+
+				FCSPurchaseRejectionInfo PlannedMissingInfo;
+				PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
+				PlannedMissingInfo.ProductId = PlannedId;
+				PlannedMissingInfo.Severity = CS_PlannedMissingSeverity(Context.GetWorld(), *Subsystem, *Decision, PlannedId);
+
+				State->LastRejectionInfo = PlannedMissingInfo;
+				State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
+				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon,
+					Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason));
+				Subsystem->NotifyPurchaseRejected(Data.Actor, PlannedMissingInfo);
+
+				// 이 태스크는 영업 종료 강제 퇴장 등으로 다시 들어올 수 있다.
+				// 플래그를 안 세우면 같은 손님이 같은 상품으로 두 번 반응한다(실측됨)
+				State->bPlannedMissingReported = true;
+				State->PlannedProductIds.Empty();
+				State->UnfulfilledPlannedProductIds.Empty();
+
+				// 나가면서 여러 개를 연달아 띄우면 마지막 것만 보이므로 하나만
+				break;
 			}
+		}
 
-			FCSPurchaseRejectionInfo PlannedMissingInfo;
-			PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
-			PlannedMissingInfo.ProductId = PlannedId;
-			PlannedMissingInfo.Severity = CS_PlannedMissingSeverity(Context.GetWorld(), *Subsystem, *Decision, PlannedId);
+		// 계획구매(뉴스/기념일/날씨) 관련 반응이 이번에도, 이전 호출에서도 안 뜬 "나머지" 손님 전용 채널.
+		// 이벤트 없는 날은 위 블록이 항상 비어서 퇴장 연출이 심심해지므로, 종족 선호 카테고리가
+		// 매장에 아예 없을 때 30%(PreferredCategoryMissingChance) 확률로 아쉬움을 대신 표현한다
+		if (UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
+			Decision != nullptr && Subsystem != nullptr &&
+			!State->bPlannedMissingReported && !State->bPreferredCategoryMissingReported)
+		{
+			ECSProductCategory MissingCategory = ECSProductCategory::Beverage;
+			const bool bFoundMissingCategory = Decision->RollPreferredCategoryMissing(
+				[Subsystem](ECSProductCategory Category) { return HasCategoryStockAnywhere(*Subsystem, Category); },
+				MissingCategory);
 
-			State->LastRejectionInfo = PlannedMissingInfo;
-			State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
-			Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon,
-				Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason));
-			Subsystem->NotifyPurchaseRejected(Data.Actor, PlannedMissingInfo);
+			// 굴림 자체는 성공/실패 무관하게 1회로 제한 - 안 그러면 강제 퇴장 재진입마다 다시 30%를 굴리게 된다
+			State->bPreferredCategoryMissingReported = true;
 
-			// 이 태스크는 영업 종료 강제 퇴장 등으로 다시 들어올 수 있다.
-			// 플래그를 안 세우면 같은 손님이 같은 상품으로 두 번 반응한다(실측됨)
-			State->bPlannedMissingReported = true;
-			State->PlannedProductIds.Empty();
-			State->UnfulfilledPlannedProductIds.Empty();
+			if (bFoundMissingCategory)
+			{
+				FCSPurchaseRejectionInfo MissingInfo;
+				MissingInfo.Reason = ECSPurchaseRejectReason::PreferredCategoryMissing;
+				MissingInfo.BlockedCategory = MissingCategory;
+				MissingInfo.Severity = 1.0f;
 
-			// 나가면서 여러 개를 연달아 띄우면 마지막 것만 보이므로 하나만
-			break;
+				State->LastRejectionInfo = MissingInfo;
+				State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
+				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(MissingInfo).Icon,
+					Decision->GetInstantDisplayDuration(MissingInfo.Reason));
+			}
 		}
 	}
 

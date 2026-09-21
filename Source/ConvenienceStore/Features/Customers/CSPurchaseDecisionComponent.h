@@ -68,6 +68,13 @@ public:
 	// 카테고리별 끌림 가중치
 	TMap<ECSProductCategory, float> GetCategoryAttractionWeights() const;
 
+	// 퇴장 시점 전용: 계획구매와 무관하게, 이 손님이 좋아하는 카테고리(PreferredCategoryThreshold 이상) 중
+	// 매장에 재고가 하나도 없는 것을 하나 고른다. PreferredCategoryMissingChance 확률 굴림까지 여기서 처리하므로
+	// 실패(확률에서 떨어지거나 해당 카테고리가 없음)하면 false.
+	// HasStockAnywhere는 "이 카테고리가 지금 매장 어딘가에 재고로 남아있는가"를 판정하는 콜백 -
+	// 매대 순회는 손님 개인 데이터가 아니라 서브시스템(RuntimeSubsystem) 소관이라 호출부가 넘겨준다
+	bool RollPreferredCategoryMissing(TFunctionRef<bool(ECSProductCategory)> HasStockAnywhere, ECSProductCategory& OutCategory) const;
+
 	// 스포너가 스폰 직후 파생 시드를 주입할 때 사용
 	// 이미 굴림이 시작된 뒤에 다시 부르면 그 시점부터 시퀀스가 바뀌므로 스폰 직후 1회만 호출 전제
 	UFUNCTION(BlueprintCallable, Category = "Purchase|Random")
@@ -153,6 +160,10 @@ protected:
 	// 같은 카테고리 반복 시 점수 감쇠 배수 폴백값
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
 	float FallbackRepeatCategoryPenalty = 0.7f;
+
+	// PreferredCategoryMissing 속마음 문구 폴백값. {Category} 자리표시자가 실제 카테고리명으로 치환됨
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Fallback")
+	FText FallbackPreferredCategoryMissingTemplate = FText::FromString(TEXT("{Category} 사러 왔는데 하나도 없네..."));
 
 	// 아래 값은 Archetype(종족별 데이터)이 아니라 판단 로직 자체의 튜닝값이라 컴포넌트에 남겨둠
 	// 종족마다 가중치 배분을 다르게 하고 싶어지면 그때 DA로 옮기는 걸 고려
@@ -242,6 +253,15 @@ protected:
 	// 계획 상품을 1개가 아니라 2개 뽑을 확률
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float PlannedProductSecondItemChance = 0.35f;
+
+	// 퇴장 시 계획구매 관련 속마음이 안 뜬 "나머지" 손님 중 이 비율만 선호 카테고리 품절 반응을 함.
+	// 전원에게 매번 띄우면 이번엔 반대로 매일 뜨는 게 뻔해져서, 이벤트 없는 날의 심심함을 못 없앤다
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float PreferredCategoryMissingChance = 0.4f;
+
+	// 이 값 이상인 카테고리만 "선호 카테고리"로 취급(0.5=평균이므로 그보다 확실히 높은 지점)
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Planned", meta = (ClampMin = "0.5", ClampMax = "1.0"))
+	float PreferredCategoryThreshold = 0.65f;
 
 	// 후보 하나에 점수를 매기는 함수
 	// 반환값 규약: 정상 후보는 0.0~1.0, 구매 불가(하드 차단/지갑 초과/데이터 없음)는 음수(-1.0)를 반환
@@ -342,6 +362,7 @@ private:
 	float GetEffectiveCountDecayLambda() const;
 	float GetEffectiveRepeatCategoryPenalty() const;
 	float GetEffectivePriceRejectionThreshold() const;
+	FText GetEffectivePreferredCategoryMissingTemplate() const;
 
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	// 살아남은 후보가 하나도 없으면(전부 -1.0) OutBestRejectionInfo에 대표 거절 사유를 채움
