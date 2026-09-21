@@ -100,6 +100,11 @@ public:
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float RepeatCategoryPenalty = 0.7f;
 
+	// 선호 카테고리가 매장에 아예 없어서 못 사고 나갈 때(PreferredCategoryMissing) 쓰는 종족별 속마음 문구
+	// {Category} 자리표시자가 실제 카테고리명으로 치환됨
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Archetype|Category")
+	FText PreferredCategoryMissingTemplate = FText::FromString(TEXT("{Category} 사러 왔는데 하나도 없네..."));
+
 	// 탐색 ---------
 
 	// 매장에 머무는 시간(초)

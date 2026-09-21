@@ -39,7 +39,8 @@ enum class ECSPurchaseRejectReason : uint8
 	HardWalletExceeded,  // 하드 지갑(물리적으로 낼 수 있는 최대 금액) 초과
 	ShelfEmpty,          // 진열대에 재고가 없음
 	PlannedProductMissing, // 계획 상품이 이 진열대에 없고, 같은 카테고리 대체품만 있음(대체품 자체가 없으면 조용히 포기 처리되므로 이 사유가 뜨지 않음)
-	NewsDemandRejected   // 오늘의 뉴스로 수요 보정이 깎여 총점 미달. 플레이어가 통제할 수 없는 외부 사건이라 가격 거절과 분리했고 평판 감점 대상도 아님
+	NewsDemandRejected,  // 오늘의 뉴스로 수요 보정이 깎여 총점 미달. 플레이어가 통제할 수 없는 외부 사건이라 가격 거절과 분리했고 평판 감점 대상도 아님
+	PreferredCategoryMissing // 계획구매와 무관하게, 이 손님이 좋아하는 카테고리가 매장에 아예 없어서 퇴장 시 아쉬워함(종족 취향 노출용)
 };
 
 // 거절 사유 상세 정보. UI 연출(디버그 텍스트/속마음 위젯)이 이 값을 읽어 문구를 조합한다
@@ -61,7 +62,7 @@ struct FCSPurchaseRejectionInfo
 	UPROPERTY(BlueprintReadOnly, Category = "Purchase|Rejection")
 	float ReferencePrice = 0.f;
 
-	// CategoryBlocked일 때만 의미 있음
+	// CategoryBlocked / PreferredCategoryMissing일 때만 의미 있음
 	UPROPERTY(BlueprintReadOnly, Category = "Purchase|Rejection")
 	ECSProductCategory BlockedCategory = ECSProductCategory::Beverage;
 
