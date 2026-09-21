@@ -97,6 +97,10 @@ public:
 		int32& OutRewardGold,
 		int32& OutReputationReward);
 
+	// 준비 표시와 실제 발송이 동일한 상품·수량 검사를 사용합니다. 상품을 소비하지 않습니다.
+	bool FindDispatchProducts(const TArray<ACSProductPickupActor*>& AvailableProducts,
+		TArray<ACSProductPickupActor*>& OutProducts, FText& OutMessage) const;
+
 	UFUNCTION(BlueprintPure, Category = "Delivery Order|Stock")
 	int32 GetReservedQuantity(FName ProductId) const;
 
