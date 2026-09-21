@@ -358,6 +358,44 @@ float ACSCheckoutCounterActor::GetQueueSlotStopRadius() const
 	return FMath::Clamp(QueueSlotStopRadius, MinStopRadius, UpperBound);
 }
 
+bool ACSCheckoutCounterActor::TryGetQueueEntryZone(const int32 CommittedCount,FVector& OutCenter,float& OutRadius) const
+{
+	OutCenter = FVector::ZeroVector;
+	OutRadius = 0.0f;
+
+	// 확정된 인원 다음의 빈 슬롯을 집결 지점으로 선택
+	// 슬롯 범위를 벗어나지 않도록 인덱스를 제한
+	const int32 EntryIndex = FMath::Clamp(CommittedCount, 0, GetConfiguredQueueSlotCount() - 1);
+
+	float SlotRadius = 0.0f;
+	if (!TryGetQueueSlotZone(EntryIndex, OutCenter, SlotRadius))
+	{
+		// 슬롯 영역을 구하지 못하면 집결 지점 조회 실패로 처리
+		return false;
+	}
+
+	// 슬롯 반경을 최소값으로 보장하고 슬롯 간격의 절반을 상한으로 설정
+	// 슬롯 반경이 간격의 절반보다 크면 상한도 슬롯 반경으로 조정
+	const float UpperBound = FMath::Max(QueueSlotSpacing * 0.5f, SlotRadius);
+	OutRadius = FMath::Clamp(QueueEntryRadius, SlotRadius, UpperBound);
+	return true;
+}
+
+bool ACSCheckoutCounterActor::IsPointInsideQueueEntryZone(const int32 CommittedCount,const FVector& WorldPoint) const
+{
+	FVector Center;
+	float Radius = 0.0f;
+	if (!TryGetQueueEntryZone(CommittedCount, Center, Radius))
+	{
+		// 내비게이션을 신뢰할 수 없으면 순번 확정이 막히지 않도록 판정을 통과
+		// 내비게이션이 정상인데 영역 조회에 실패하면 도달 불가로 처리
+		return !IsQueueNavigationTrustworthy();
+	}
+
+	// 높이 차이를 제외한 XY 평면 거리로 집결 지점 내부 여부를 판정
+	return FVector::Dist2D(WorldPoint, Center) <= Radius;
+}
+
 int32 ACSCheckoutCounterActor::GetConfiguredQueueSlotCount() const
 {
 	return FMath::Max(MaxQueueSlots + BonusQueueSlots, 1);

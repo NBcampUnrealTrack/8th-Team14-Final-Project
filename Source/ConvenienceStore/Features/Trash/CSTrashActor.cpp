@@ -14,6 +14,11 @@ ACSTrashActor::ACSTrashActor()
 	TrashMesh->SetupAttachment(SceneRoot);
 	// E키 조준(라인트레이스)이 이 메시를 인식하도록 Visibility 채널을 막아둠
 	TrashMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	// [백무송]
+	// 별도 드롭 처리를 거치지 않는 배치·투척 쓰레기도 포함해 내비게이션 영향을 차단
+	// 생성자에서 설정하고 이후 콜리전 응답 재설정에도 유지
+	TrashMesh->SetCanEverAffectNavigation(false);
 }
 
 void ACSTrashActor::Interact_Implementation(AActor* Interactor)
