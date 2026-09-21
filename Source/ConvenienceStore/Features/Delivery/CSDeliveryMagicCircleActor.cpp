@@ -15,6 +15,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
+#include "TimerManager.h"
 
 ACSDeliveryMagicCircleActor::ACSDeliveryMagicCircleActor()
 {
@@ -63,17 +64,26 @@ void ACSDeliveryMagicCircleActor::BeginPlay()
 	if (IsValid(StoreState))
 	{
 		StoreState->OnMagicCircleUpgraded.AddUniqueDynamic(this, &ThisClass::HandleMagicCircleUpgraded);
-		UpdateLevelVFX(StoreState->GetMagicCircleLevel(), false);
+		UpdateLevelVFX(StoreState->GetMagicCircleLevel());
 	}
 	if (UCSDeliveryOrderSubsystem* DeliverySubsystem = GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>())
 	{
 		DeliverySubsystem->ConfigureOrderSettings(OrderSettings);
+		DeliverySubsystem->OnDeliveryOrdersChanged.AddUniqueDynamic(this, &ThisClass::RefreshReadyState);
 	}
+	// 상품 이동·파괴도 감지하되 매 프레임 검사하지 않습니다.
+	GetWorldTimerManager().SetTimer(ReadyStateTimer, this, &ThisClass::RefreshReadyState, 0.1f, true);
+	RefreshReadyState();
 }
 
 void ACSDeliveryMagicCircleActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (IsValid(StoreState)) StoreState->OnMagicCircleUpgraded.RemoveDynamic(this, &ThisClass::HandleMagicCircleUpgraded);
+	GetWorldTimerManager().ClearTimer(ReadyStateTimer);
+	if (auto* Orders = GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>())
+	{
+		Orders->OnDeliveryOrdersChanged.RemoveDynamic(this, &ThisClass::RefreshReadyState);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -83,26 +93,60 @@ void ACSDeliveryMagicCircleActor::PlayOneShotVFX(UNiagaraSystem* Effect)
 		MagicCircleVFX->GetComponentLocation(), MagicCircleVFX->GetComponentRotation(), MagicCircleVFX->GetComponentScale());
 }
 
-void ACSDeliveryMagicCircleActor::UpdateLevelVFX(int32 Level, bool bPlayUpgrade)
+void ACSDeliveryMagicCircleActor::UpdateLevelVFX(int32 Level)
 {
 	MagicCircleVFX->DeactivateImmediate();
 	const FCSMagicCircleLevelVFX* Effects = LevelVFX.IsValidIndex(Level - 1) ? &LevelVFX[Level - 1] : nullptr;
 	MagicCircleVFX->SetAsset(Effects ? Effects->IdleEffect.Get() : nullptr);
 	if (Effects && IsValid(Effects->IdleEffect)) MagicCircleVFX->Activate(true);
-	if (bPlayUpgrade && Effects) PlayOneShotVFX(Effects->UpgradeEffect);
 	OnMagicCircleVisualUpdated(Level);
+	OnDeliveryReadyChanged(bProductsReady);
 }
 
-void ACSDeliveryMagicCircleActor::HandleMagicCircleUpgraded(int32 Level) { UpdateLevelVFX(Level, true); }
+void ACSDeliveryMagicCircleActor::HandleMagicCircleUpgraded(int32 Level) { UpdateLevelVFX(Level); }
+
+void ACSDeliveryMagicCircleActor::GetAvailableProducts(TArray<ACSProductPickupActor*>& OutProducts) const
+{
+	OutProducts.Reset();
+	TArray<AActor*> OverlappingActors;
+	DeliveryZone->GetOverlappingActors(OverlappingActors, ACSProductPickupActor::StaticClass());
+	for (AActor* Actor : OverlappingActors)
+	{
+		if (auto* Product = Cast<ACSProductPickupActor>(Actor); IsValid(Product)) OutProducts.Add(Product);
+	}
+}
+
+bool ACSDeliveryMagicCircleActor::HasRequiredProducts() const
+{
+	const auto* Orders = GetWorld() ? GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>() : nullptr;
+	if (!Orders) return false;
+	TArray<ACSProductPickupActor*> Products, MatchedProducts;
+	GetAvailableProducts(Products);
+	FText Message;
+	return Orders->FindDispatchProducts(Products, MatchedProducts, Message);
+}
+
+void ACSDeliveryMagicCircleActor::RefreshReadyState()
+{
+	const bool bReady = HasRequiredProducts();
+	if (bReady == bProductsReady) return;
+	bProductsReady = bReady;
+	if (bReady)
+	{
+		const int32 Index = IsValid(StoreState) ? StoreState->GetMagicCircleLevel() - 1 : 0;
+		if (LevelVFX.IsValidIndex(Index)) PlayOneShotVFX(LevelVFX[Index].ReadyEffect);
+	}
+	OnDeliveryReadyChanged(bReady);
+}
 
 void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 {
 	UCSDeliveryOrderSubsystem* DeliverySubsystem = GetWorld() == nullptr
 		? nullptr
 		: GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>();
-	// 수락 후 게시판에서 발송 준비까지 끝난 주문만 마법진에서 처리합니다.
+	// 수락한 주문의 상품이 모두 모였을 때만 발송합니다.
 	// 그 전에는 HUD 안내만 보이고, E를 눌러도 실패 정산 UI가 열리지 않습니다.
-	if (!IsValid(DeliverySubsystem) || !IsDispatchReady())
+	if (!IsValid(DeliverySubsystem) || !HasRequiredProducts())
 	{
 		return;
 	}
@@ -113,13 +157,8 @@ void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 	bool bSucceeded = false;
 	if (IsValid(DeliverySubsystem))
 	{
-		TArray<AActor*> OverlappingActors;
-		DeliveryZone->GetOverlappingActors(OverlappingActors, ACSProductPickupActor::StaticClass());
 		TArray<ACSProductPickupActor*> Products;
-		for (AActor* Actor : OverlappingActors)
-		{
-			if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Actor)) Products.Add(Product);
-		}
+		GetAvailableProducts(Products);
 		bSucceeded = DeliverySubsystem->TryCompleteDispatchOrder(Products, Message, RewardGold, ReputationReward);
 	}
 	else
@@ -151,8 +190,8 @@ void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 FText ACSDeliveryMagicCircleActor::GetInteractionText_Implementation() const
 {
 	// 빈 문자열은 일반 상호작용(E) 프롬프트를 표시하지 않는다는 뜻입니다.
-	return IsDispatchReady()
-		? NSLOCTEXT("Delivery", "DispatchThroughCircle", "마법진으로 발송")
+	return HasRequiredProducts()
+		? NSLOCTEXT("Delivery", "DispatchThroughCircle", "상품 준비 완료 · 발송")
 		: FText::GetEmpty();
 }
 
@@ -171,7 +210,9 @@ FText ACSDeliveryMagicCircleActor::GetUnavailableInteractionText() const
 		return NSLOCTEXT("Delivery", "NoDeliveryOrders", "배달 주문이 없습니다.");
 	}
 
-	return NSLOCTEXT("Delivery", "SelectDispatchOrder", "게시판에서 발송 주문을 선택하세요");
+	return IsDispatchReady()
+		? NSLOCTEXT("Delivery", "NeedDeliveryProducts", "주문 상품이 부족합니다")
+		: NSLOCTEXT("Delivery", "AcceptDispatchOrder", "게시판에서 배달 주문을 수락하세요");
 }
 
 bool ACSDeliveryMagicCircleActor::IsDispatchReady() const

@@ -1287,10 +1287,10 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		return;
 	}
 
-	// 마법진은 수락한 주문을 게시판에서 '발송 준비'로 선택했을 때만 E 상호작용을 제공합니다.
+	// 마법진에 수락한 주문의 상품이 모두 모였을 때만 E 상호작용을 제공합니다.
 	// 준비 전 상태는 단순 안내이므로 [E] 접두어 없이 표시하고, 상호작용도 실행되지 않습니다.
 	if (const ACSDeliveryMagicCircleActor* MagicCircle = Cast<ACSDeliveryMagicCircleActor>(TargetActor);
-		IsValid(MagicCircle) && !MagicCircle->IsDispatchReady())
+		IsValid(MagicCircle) && !MagicCircle->HasRequiredProducts())
 	{
 		StorePlayerController->SetInteractionPrompt(
 			MagicCircle->GetUnavailableInteractionText(),
@@ -2922,7 +2922,7 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 			{
 				StorePlayerController->SetInteractionPrompt(
 					Cast<ACSDeliveryCrateActor>(HeldActor) != nullptr
-						? NSLOCTEXT("Interaction", "PlaceCrateProductOnMagicCircle", "[Q] 상자에서 상품 하나 발송 준비")
+						? NSLOCTEXT("Interaction", "PlaceCrateProductOnMagicCircle", "[Q] 상자에서 상품 하나 올리기")
 						: NSLOCTEXT("Interaction", "PlaceProductOnMagicCircle", "[Q] 마법진에 상품 올리기"),
 					FLinearColor::White);
 			}
