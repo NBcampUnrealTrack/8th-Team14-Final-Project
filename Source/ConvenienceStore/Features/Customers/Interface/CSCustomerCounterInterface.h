@@ -69,6 +69,22 @@ public:
 		return false;
 	}
 
+	// 확정된 인원 다음의 빈 슬롯을 기준으로 집결 지점의 중심과 반경을 조회
+	// 영역을 지원하지 않으면 false를 반환해 호출부에서 꼬리 슬롯 좌표를 사용
+	virtual bool TryGetQueueEntryZone(const int32 CommittedCount, FVector& OutCenter, float& OutRadius) const
+	{
+		OutCenter = GetQueueSlotLocation(CommittedCount);
+		OutRadius = 0.0f;
+		return false;
+	}
+
+	// 지정한 좌표가 집결 지점 영역에 도착해 순번을 확정할 수 있는지 판정
+	// 영역을 지원하지 않으면 항상 통과시켜 도착 대기 없이 순번 확정을 허용
+	virtual bool IsPointInsideQueueEntryZone(const int32 CommittedCount, const FVector& WorldPoint) const
+	{
+		return true;
+	}
+
 	// 손님 AI가 슬롯으로 이동할 때 멈춰도 되는 반경입니다.
 	// TryGetQueueSlotZone이 돌려주는 도착 판정 반경보다 작거나 같아야 합니다.
 	// 크면 "이동은 완료인데 도착 판정은 안 되는" 구간이 생겨 손님이 그 자리에 영구히 멈춥니다.

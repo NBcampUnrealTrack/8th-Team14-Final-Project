@@ -1053,6 +1053,39 @@ void FCSTask_WaitInQueue::MoveToQueueSlot(
 	Controller.MoveToLocation(Subsystem.GetQueueSlotLocation(Index), FinalStopRadius);
 }
 
+// 순번을 받기 전 단계입니다. 줄 꼬리의 집결 지점으로 보냅니다.
+void FCSTask_WaitInQueue::MoveToQueueEntry(AAIController& Controller,const UCSCustomerRuntimeSubsystem& Subsystem)
+{
+	const float CounterStopRadius = Subsystem.GetQueueSlotStopRadius();
+
+	FVector EntryCenter;
+	float EntryRadius = 0.0f;
+	if (Subsystem.TryGetQueueEntryZone(EntryCenter, EntryRadius) && EntryRadius > 0.0f)
+	{
+		// 정지 반경이 집결 지점 판정 반경을 넘지 않도록 제한
+		// 계산대 정지 반경이 없으면 집결 지점 반경을 사용
+		float AcceptanceRadius = EntryRadius;
+		if (CounterStopRadius > 0.0f)
+		{
+			AcceptanceRadius = FMath::Min(CounterStopRadius, EntryRadius);
+		}
+
+		Controller.MoveToLocation(EntryCenter, AcceptanceRadius, false);
+		return;
+	}
+
+	// 집결 지점 영역이 없으면 슬롯 좌표를 이용해 이동
+	// 계산대 정지 반경이 없으면 엔진 기본값을 사용
+	float FinalStopRadius = UPathFollowingComponent::DefaultAcceptanceRadius;
+	if (CounterStopRadius > 0.0f)
+	{
+		FinalStopRadius = CounterStopRadius;
+	}
+
+	Controller.MoveToLocation(
+		Subsystem.GetQueueSlotLocation(Subsystem.GetCommittedQueueLength()), FinalStopRadius);
+}
+
 EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& Context,
 	const FStateTreeTransitionResult& Transition) const
 {
@@ -1070,30 +1103,26 @@ EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& 
 	}
 
 	// 정원이 찬 줄에는 서지 않습니다. 줄이 길어 보이면 그냥 포기하고 나가는 손님입니다.
-	// JoinQueue보다 반드시 먼저 와야 합니다.
+	// 정원에는 걸어오는 중인 인원도 포함되므로, 이 검사 하나로 집결 지점에 사람이
+	// 무한정 몰리는 것까지 같이 막힙니다.
 	// 아직 줄에 들어가지 않았으므로 AbandonCheckout 내부의 LeaveQueue는 무동작입니다.
-	if (Subsystem->IsQueueFull())
+	if (!Subsystem->BeginQueueApproach(Data.Actor))
 	{
-		// 기다린 시간이 0초인 포기입니다. 인내심 만료와 같은 채널로 방송되어 같은 집계에 들어갑니다.
+		// 등록에 실패하면 계산을 포기해 Checkout 상태 재진입을 방지
+		// 아직 대기하지 않았으므로 대기 시간은 0초로 전달
 		Subsystem->AbandonCheckout(Data.Actor, 0.0f);
 		return EStateTreeRunStatus::Failed;
 	}
 
-	// 대기열 등록 후 내 순번 위치로 이동
-	const int32 MyIndex = Subsystem->JoinQueue(Data.Actor);
-	if (MyIndex < 0)
-	{
-		// 등록 실패는 정원 초과가 유일한 정상 원인입니다.
-		// 포기 처리를 하지 않으면 bCheckoutAbandoned가 false로 남아
-		// HasAbandonedCheckout(Invert) 조건이 계속 통과해 Checkout 상태로 매 틱 재진입합니다.
-		Subsystem->AbandonCheckout(Data.Actor, 0.0f);
-		return EStateTreeRunStatus::Failed;
-	}
-
-	Data.CachedQueueIndex = MyIndex;
-	Data.ElapsedWaitTime = 0.0f; //손님이 대기열 상태에 새로 진입할 때마다 타이머를 0초부터 다시 시작하도록 초기화하는 역할 (혹시 모를 재진입시)
+	// 집결 지점 도착 후 순번을 확정하도록 미확정 상태로 초기화
+	Data.CachedQueueIndex = -1;
+	// 집결 지점 변경을 확인하기 위해 현재 확정 인원 수를 보관
+	Data.CachedEntryTargetCount = Subsystem->GetCommittedQueueLength();
+	// 상태 재진입 시 이전 대기 시간과 접근 시간을 초기화
+	Data.ElapsedWaitTime = 0.0f;
 	Data.ElapsedApproachTime = 0.0f;
-	MoveToQueueSlot(*Data.AIController, *Subsystem, MyIndex);
+	// 순번 확정 전 집결 지점으로 이동
+	MoveToQueueEntry(*Data.AIController, *Subsystem);
 
 	return EStateTreeRunStatus::Running;
 }
@@ -1120,6 +1149,53 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 	if (State->bCheckoutDone)
 	{
 		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 순번 확정 전 집결 지점 접근을 처리
+	const int32 QueueIndex = Subsystem->GetQueueIndex(Data.Actor);
+	if (QueueIndex < 0)
+	{
+		// 대기열과 접근 목록에 모두 없으면 계산을 포기해 무한 대기를 방지
+		if (!Subsystem->IsApproachingQueue(Data.Actor))
+		{
+			Subsystem->AbandonCheckout(Data.Actor, 0.0f);
+			return EStateTreeRunStatus::Failed;
+		}
+
+		// 집결 지점 접근 시간을 누적하고 제한 시간 초과 시 계산을 포기
+		Data.ElapsedApproachTime += DeltaTime;
+		if (Data.MaxApproachSeconds > 0.0f &&
+			Data.ElapsedApproachTime >= Data.MaxApproachSeconds)
+		{
+			Subsystem->AbandonCheckout(Data.Actor, Data.ElapsedWaitTime);
+			return EStateTreeRunStatus::Failed;
+		}
+
+		// 확정 인원 수가 바뀌면 새 집결 지점으로 이동을 다시 요청
+		const int32 CommittedCount = Subsystem->GetCommittedQueueLength();
+		if (CommittedCount != Data.CachedEntryTargetCount)
+		{
+			Data.CachedEntryTargetCount = CommittedCount;
+			MoveToQueueEntry(*Data.AIController, *Subsystem);
+		}
+
+		// 집결 지점에 도착한 손님을 순번 확정 후보로 등록
+		// 후보 간 거리 비교와 순번 확정은 서브시스템 틱에서 일괄 처리
+		if (Subsystem->IsCustomerInsideQueueEntryZone(Data.Actor))
+		{
+			Subsystem->RequestQueueCommit(Data.Actor);
+		}
+
+		return EStateTreeRunStatus::Running;
+	}
+
+	// 순번 확정 후에는 확정된 순서를 유지하며 슬롯 이동을 처리
+	// 순번을 처음 받거나 앞사람 이탈로 순번이 당겨지면 이동 목표를 변경
+	if (QueueIndex != Data.CachedQueueIndex)
+	{
+		Data.CachedQueueIndex = QueueIndex;
+		Data.ElapsedApproachTime = 0.0f;
+		MoveToQueueSlot(*Data.AIController, *Subsystem, QueueIndex);
 	}
 
 	// 자기 자리에 도착했는지가 인내심과 접근 타임아웃을 가르는 기준입니다.
@@ -1166,22 +1242,13 @@ EStateTreeRunStatus FCSTask_WaitInQueue::Tick(FStateTreeExecutionContext& Contex
 		}
 	}
 
-	// 줄이 줄어들어 내 순번이 바뀌었으면 앞자리로 이동
-	const int32 CurrentIndex = Subsystem->GetQueueIndex(Data.Actor);
-	if (CurrentIndex >= 0 && CurrentIndex != Data.CachedQueueIndex)
-	{
-		// 순번 인덱스 캐시와 다를 때만 갱신 후 이동합니다
-		Data.CachedQueueIndex = CurrentIndex;
-		Data.ElapsedApproachTime = 0.0f;
-		MoveToQueueSlot(*Data.AIController, *Subsystem, CurrentIndex);
-	}
+	// 앞사람 이탈에 따른 슬롯 이동은 순번 변경 처리에서 수행
 
-	// 자리에 도착한 손님은 계산대가 지정한 방향으로 돌아섭니다.
-	// MoveToLocation은 목표 회전을 받지 않아서, 지금까지는 마지막으로 걸어온 방향 그대로 서 있었습니다.
-	// 회전은 계산 가능 여부와 무관하므로 도착 게이트 조건에는 넣지 않습니다.
+	// 슬롯에 도착하면 계산대가 지정한 방향으로 부드럽게 회전
+	// 회전 완료 여부는 계산 가능 판정에서 제외
 	FRotator TargetFacing;
-	if (bArrivedAtSlot && CurrentIndex >= 0 &&
-		Subsystem->TryGetQueueSlotFacing(CurrentIndex, TargetFacing))
+	if (bArrivedAtSlot &&
+		Subsystem->TryGetQueueSlotFacing(QueueIndex, TargetFacing))
 	{
 		const FRotator CurrentRotation = Data.Actor->GetActorRotation();
 		Data.Actor->SetActorRotation(FRotator(
@@ -1210,7 +1277,11 @@ void FCSTask_WaitInQueue::ExitState(FStateTreeExecutionContext& Context,
 		UCSCustomerRuntimeSubsystem* Subsystem = Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 		if (Subsystem != nullptr)
 		{
+			// 상태를 떠나는 손님을 확정된 대기열에서 제거
 			Subsystem->LeaveQueue(Data.Actor);
+
+			// 순번 확정 전 이탈한 손님을 접근 목록에서 제거해 정원을 반환
+			Subsystem->CancelQueueApproach(Data.Actor);
 		}
 	}
 
