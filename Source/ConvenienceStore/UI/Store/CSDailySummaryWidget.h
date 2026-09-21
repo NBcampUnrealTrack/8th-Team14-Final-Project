@@ -25,6 +25,7 @@ public:
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> BusinessDayResultText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> MainNetProfitText;
