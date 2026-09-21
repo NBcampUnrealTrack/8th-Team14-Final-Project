@@ -45,6 +45,10 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable, Category = "UI|Summary")
+	void ToggleDailySummary();
+	bool IsDailySummaryReadOnly() const { return bDailySummaryReadOnly; }
+
 	UFUNCTION(BlueprintCallable, Category = "Journal")
 	void ToggleJournal();
 	UFUNCTION(BlueprintCallable, Category = "Journal")
@@ -141,6 +145,7 @@ protected:
 	UFUNCTION() void HandleDeliveryToastFinished();
 
 	void UpdateClosingInputMode();
+	void ShowDailySummary(bool bReadOnly);
 	void ShowStatusAnnouncement(ECSStatusAnnouncementType AnnouncementType);
 	void TryShowPendingClosingAnnouncement();
 	void TryShowQueuedDeliveryToast();
@@ -169,6 +174,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
 	TSubclassOf<UCSDailySummaryWidget> DailySummaryWidgetClass;
 	UPROPERTY(Transient) TObjectPtr<UCSDailySummaryWidget> ActiveDailySummaryWidget;
+	bool bDailySummaryReadOnly = false;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Announcement")
 	TSubclassOf<UCSStatusAnnouncementWidget> StatusAnnouncementWidgetClass;
 	UPROPERTY(Transient)
