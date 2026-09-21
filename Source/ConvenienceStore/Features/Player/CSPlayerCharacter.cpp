@@ -1046,9 +1046,6 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		// 튜토리얼 청소 단계에서 줍는 쓰레기 (상품과 동일한 방식으로 물리 정리)
 		TrashActor->PrepareForPickupPhysics();
-
-		// 쓰레기 메시가 화면을 너무 가려서 주웠을 때 메시 가림
-		TrashActor->HideMeshForPickup();
 	}
 
 	PickupActor->SetActorEnableCollision(false);
@@ -4481,6 +4478,8 @@ void ACSPlayerCharacter::ToggleCartPush()
 {
 	if (IsBuildMode())
 	{
+		// 기존 F의 Started 입력당 한 번만, 프리뷰와 최종 배치가 공유하는 회전값을 갱신합니다.
+		ApplyBuildRotationStep(45.0f);
 		return;
 	}
 

@@ -4,6 +4,7 @@
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSProductAnalysisWidget.h"
 void UCSDailySummaryWidget::NativeConstruct()
 {
@@ -84,6 +85,21 @@ void UCSDailySummaryWidget::NativeDestruct()
 	StoreGameState = nullptr;
 
 	Super::NativeDestruct();
+}
+
+FReply UCSDailySummaryWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	if (Event.GetKey() == EKeys::C)
+	{
+		if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(GetOwningPlayer());
+			IsValid(Controller) && Controller->IsDailySummaryReadOnly())
+		{
+			// UIOnly 모드와 자식 버튼 포커스에서도 C로 닫되, 키 반복은 무시합니다.
+			if (!Event.IsRepeat()) Controller->ToggleDailySummary();
+			return FReply::Handled();
+		}
+	}
+	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
 void UCSDailySummaryWidget::RefreshSummary()

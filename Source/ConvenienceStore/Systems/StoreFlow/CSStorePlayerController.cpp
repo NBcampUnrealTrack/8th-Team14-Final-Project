@@ -21,6 +21,7 @@ void ACSStorePlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
+	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
 }
 // 다른 조작 화면이나 일시 정지 상태와 충돌하지 않도록 확인한 뒤 수첩을 엽니다.
 void ACSStorePlayerController::ToggleJournal()
@@ -376,17 +377,46 @@ void ACSStorePlayerController::HandleClosingWarningFinished()
 
 void ACSStorePlayerController::HandleDailySummaryRequested()
 {
+	ShowDailySummary(false);
+}
+
+void ACSStorePlayerController::ToggleDailySummary()
+{
+	if (IsValid(ActiveDailySummaryWidget))
+	{
+		// C는 조회용 화면만 닫으며, 실제 마감 정산의 확인을 대신하지 않습니다.
+		if (bDailySummaryReadOnly) HandleDailySummaryConfirmed();
+		return;
+	}
+	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
+	if (!IsValid(StoreGameState) || StoreGameState->CurrentPhase == ECStorePhase::Finished ||
+		StoreGameState->CurrentEndOfDayTask != ECEndOfDayTask::None) return;
+	ShowDailySummary(true);
+}
+
+void ACSStorePlayerController::ShowDailySummary(bool bReadOnly)
+{
+	if (IsValid(ActiveDailySummaryWidget))
+	{
+		// 조회 중 실제 마감이 도착하면 같은 화면에서 원래 정산 확인 흐름으로 전환합니다.
+		if (!bReadOnly) bDailySummaryReadOnly = false;
+		return;
+	}
 	if (!IsLocalPlayerController() || IsValid(ActiveDailySummaryWidget) || DailySummaryWidgetClass == nullptr) return;
 	ActiveDailySummaryWidget = CreateWidget<UCSDailySummaryWidget>(this, DailySummaryWidgetClass);
 	if (!IsValid(ActiveDailySummaryWidget)) return;
+	bDailySummaryReadOnly = bReadOnly;
+	if (bReadOnly) ActiveDailySummaryWidget->SetIsFocusable(true);
 	ActiveDailySummaryWidget->OnDailySummaryConfirmed.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryConfirmed);
 	ActiveDailySummaryWidget->AddToViewport();
 	SetStoreHUDHidden(ActiveDailySummaryWidget, true);
 	SetGameplayUIInputLock(ActiveDailySummaryWidget, true);
+	if (bReadOnly) ActiveDailySummaryWidget->SetKeyboardFocus();
 }
 
 void ACSStorePlayerController::HandleDailySummaryConfirmed()
 {
+	const bool bCompleteClosingSummary = !bDailySummaryReadOnly;
 	if (IsValid(ActiveDailySummaryWidget))
 	{
 		SetGameplayUIInputLock(ActiveDailySummaryWidget, false);
@@ -394,7 +424,11 @@ void ACSStorePlayerController::HandleDailySummaryConfirmed()
 		ActiveDailySummaryWidget->RemoveFromParent();
 		ActiveDailySummaryWidget = nullptr;
 	}
-	if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode())) Mode->CompleteDailySummary();
+	bDailySummaryReadOnly = false;
+	if (bCompleteClosingSummary)
+	{
+		if (ACSStoreGameMode* Mode = Cast<ACSStoreGameMode>(GetWorld()->GetAuthGameMode())) Mode->CompleteDailySummary();
+	}
 }
 
 void ACSStorePlayerController::HandleEndOfDayTaskChanged(ECEndOfDayTask NewTask)
