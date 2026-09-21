@@ -1102,9 +1102,10 @@ EStateTreeRunStatus FCSTask_WaitInQueue::EnterState(FStateTreeExecutionContext& 
 		return EStateTreeRunStatus::Failed;
 	}
 
-	// 정원이 찬 줄에는 서지 않습니다. 줄이 길어 보이면 그냥 포기하고 나가는 손님입니다.
-	// 정원에는 걸어오는 중인 인원도 포함되므로, 이 검사 하나로 집결 지점에 사람이
-	// 무한정 몰리는 것까지 같이 막힙니다.
+	// 순번이 확정된 인원만으로 정원이 찼을 때만 여기서 바로 포기합니다.
+	// 줄이 다 찬 것을 보고 아예 서지 않고 나가는 손님입니다.
+	// 줄에 자리가 남아 있으면 걸어오는 인원이 몇 명이든 일단 집결 지점으로 출발하고,
+	// 도착했을 때 자리를 못 잡은 손님은 ResolvePendingQueueCommits에서 거부됩니다.
 	// 아직 줄에 들어가지 않았으므로 AbandonCheckout 내부의 LeaveQueue는 무동작입니다.
 	if (!Subsystem->BeginQueueApproach(Data.Actor))
 	{

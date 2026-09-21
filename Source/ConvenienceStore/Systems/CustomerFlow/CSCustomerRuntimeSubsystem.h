@@ -287,10 +287,6 @@ public:
 	// 대기열 2단계 : 확정 (순번 있음)
 	// =====================================================================
 
-	// 대기열에 등록
-	// 이미 줄에 있으면 기존 순번 반환, 줄에 없으면 맨 뒤에 추가하고 새 순번 반환
-	int32 JoinQueue(ACSCustomerCharacter* Customer);
-
 	// 대기열에 이미 등록된 손님은 기존 순번을 반환
 	// 미등록 손님은 대기열 끝에 추가하고 새 순번을 반환.
 	void LeaveQueue(ACSCustomerCharacter* Customer);
@@ -337,9 +333,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
 	int32 GetEffectiveMaxQueueLength() const;
 
-	// 대기줄이 정원까지 찼는지. 정원을 구할 수 없으면 예전처럼 무제한 설정
+	// 순번이 확정된 인원만으로 정원이 찼는지 판정합니다. 걸어오는 중인 인원은 세지 않습니다.
+	// BeginQueueApproach의 출발 게이트에서 사용합니다.
+	// 정원을 구할 수 없으면(계산대 없음 등) 무제한으로 둡니다.
 	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
-	bool IsQueueFull() const;
+	bool IsCommittedQueueFull() const;
 
 	// 맨 앞 손님의 계산을 완료 처리. 플레이어 파트가 계산 상호작용에서 호출.
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")

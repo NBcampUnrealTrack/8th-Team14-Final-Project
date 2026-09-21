@@ -910,8 +910,10 @@ bool UCSCustomerRuntimeSubsystem::BeginQueueApproach(ACSCustomerCharacter* Custo
 		return true;
 	}
 
-	// 접근 인원을 포함한 정원이 가득 차면 등록을 거부
-	if (IsQueueFull())
+	// 순번이 확정된 인원만으로 정원이 찼을 때만 등록을 거부합니다.
+	// 걸어오는 중인 인원은 세지 않으므로, 줄에 자리가 남아 있으면 일단 전원 출발합니다.
+	// 자리를 못 잡는 손님은 집결 지점에 도착한 뒤 ResolvePendingQueueCommits에서 거부됩니다.
+	if (IsCommittedQueueFull())
 	{
 		return false;
 	}
@@ -1072,33 +1074,6 @@ void UCSCustomerRuntimeSubsystem::ResolvePendingQueueCommits()
 	}
 }
 
-int32 UCSCustomerRuntimeSubsystem::JoinQueue(ACSCustomerCharacter* Customer)
-{
-	if (Customer == nullptr)
-	{
-		return -1;
-	}
-
-	// 이미 대기열에 포함되어 있는 손님이라면 중복 추가를 방지하고 기존 인덱스 반환
-	const int32 ExistingIndex = GetQueueIndex(Customer);
-	if (ExistingIndex != -1)
-	{
-		return ExistingIndex;
-	}
-
-	// 안전망. 정상 흐름은 WaitInQueue::EnterState의 IsQueueFull()에서 이미 걸러집니다.
-	// 여기서 -1을 받은 호출부는 반드시 AbandonCheckout으로 포기 처리를 해야 합니다.
-	// 안 그러면 bCheckoutAbandoned가 false로 남아 Checkout 상태로 매 틱 재진입합니다.
-	if (IsQueueFull())
-	{
-		return -1;
-	}
-
-	// 대기열 맨 끝에 손님을 추가하고, 해당 인덱스를 반환합니다.
-	Queue.Add(Customer);
-	return Queue.Num() - 1;
-}
-
 void UCSCustomerRuntimeSubsystem::LeaveQueue(ACSCustomerCharacter* Customer)
 {
 	Queue.Remove(Customer); // 배열 중간에서 삭제되더라도 TArray가 자동으로 빈 공간을 당겨주고 뒷 순번도 같이 갱신됨
@@ -1227,27 +1202,28 @@ int32 UCSCustomerRuntimeSubsystem::GetEffectiveMaxQueueLength() const
 	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
 	if (CounterInterface == nullptr)
 	{
-		// 계산대가 없으면 정원 개념이 없습니다. IsQueueFull이 무제한으로 처리
+		// 계산대가 없으면 정원 개념이 없습니다. 호출부가 무제한으로 처리
 		return 0;
 	}
 	// NavMesh나 벽에 막힌 슬롯을 제외한 '실제 설 수 있는 정원 수'를 가져옴
 	return CounterInterface->GetEffectiveMaxQueueLength();
 }
 
-bool UCSCustomerRuntimeSubsystem::IsQueueFull() const
+bool UCSCustomerRuntimeSubsystem::IsCommittedQueueFull() const
 {
 	const int32 Limit = GetEffectiveMaxQueueLength();
 
-	// 정원을 못 구했으면(계산대 없음 등) 예전처럼 무제한으로 둡니다.
-	// 여기서 true를 반환하면 계산대가 없는 맵에서 모든 손님이 포기
+	// 정원을 못 구했으면(계산대 없음 등) 무제한으로 둡니다.
+	// 이 분기를 빼면 계산대가 없는 레벨에서 손님이 전부 포기합니다.
 	if (Limit <= 0)
 	{
 		return false;
 	}
-	// 순번이 확정된 인원 + 집결 지점으로 걸어오는 중인 인원으로 셉니다.
-	// 걸어오는 인원을 빼면 정원 제한이 사실상 사라져, 몇 명이든 계산대로 몰려온 뒤
-	// 서로 통과하며 한 지점에 겹쳐 쌓입니다.
-	return Queue.Num() + Approaching.Num() >= Limit;
+
+	// 순번이 확정된 인원만 셉니다. 걸어오는 중인 인원(Approaching)을 빼는 것이 이 함수의 목적입니다.
+	// 줄에 자리가 한 칸이라도 남아 있으면 일단 출발시키고, 집결 지점 도착 시점에
+	// ResolvePendingQueueCommits가 정원을 다시 확인해 자리를 못 잡은 손님을 거부합니다.
+	return Queue.Num() >= Limit;
 }
 
 void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
@@ -1317,6 +1293,18 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 		return;
 	}
 
+	// 이미 포기 처리된 손님은 두 번 처리하지 않습니다.
+	// 집결 지점 도착 후 거부는 ResolvePendingQueueCommits가 1회차를 호출하고,
+	// 다음 틱에 WaitInQueue::Tick의 안전망 분기가 같은 함수를 2회차로 호출합니다.
+	// 그 분기는 거부당한 손님의 태스크를 Failed로 끝내는 유일한 경로라 지울 수 없으므로
+	// 여기서 막습니다. 가드가 없으면 OnCheckoutAbandoned가 두 번 방송되어
+	// 포기 집계와 평판 감점이 두 배가 되고, ShelfRandomStream 추첨이 한 번 더 소모됩니다.
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State != nullptr && State->bCheckoutAbandoned)
+	{
+		return;
+	}
+
 	// 대기열에서 먼저 제거
 	LeaveQueue(Customer);
 
@@ -1332,7 +1320,7 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	//DropCustomerItems(Customer);
 
 	// 다시 줄 서지 않도록 true로 지정
-	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	// State는 함수 진입부의 중복 포기 가드에서 이미 조회했습니다.
 	if (State != nullptr)
 	{
 		State->bCheckoutAbandoned = true;
