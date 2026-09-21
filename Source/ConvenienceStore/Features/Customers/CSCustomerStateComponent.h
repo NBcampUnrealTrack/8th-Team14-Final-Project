@@ -217,6 +217,12 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
 	TArray<FName> UnfulfilledPlannedProductIds;
 
+	// 계획구매 실패 반응이 안 뜬 손님을 대상으로 한 선호 카테고리 품절 반응을 이미 굴렸는지.
+	// bPlannedMissingReported와 같은 이유로 필요 - 이 태스크가 영업 종료 강제 퇴장 등으로
+	// 다시 들어올 수 있어서, 없으면 같은 손님에게 굴림을 여러 번 시도하게 된다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Browsing")
+	bool bPreferredCategoryMissingReported = false;
+
 	// 상품을 실제로 구매(집기)했을 때 지출을 기록
 	void RecordSpending(int32 Amount);
 
