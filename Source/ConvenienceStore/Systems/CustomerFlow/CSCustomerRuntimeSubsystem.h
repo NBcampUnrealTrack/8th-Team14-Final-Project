@@ -58,14 +58,35 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnInnerThoughtShown);
 // 마법봉으로 봐야 하는 대화창(OnInnerThoughtShown)보다 훨씬 자주·먼저 뜨므로 튜토리얼 팁의 주 트리거로 씀
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnHeadIconShown, ACSCustomerCharacter*, Customer);
 
+// 순번 확정 전 집결 지점으로 이동하는 손님 정보를 보관
+// 대기열에는 등록하지 않고 정원 계산에 포함
+USTRUCT()
+struct FCSQueueApproachEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TObjectPtr<ACSCustomerCharacter> Customer = nullptr;
+
+	// 거리 비교가 동률이면 계산을 결심한 순서로 결정하도록 번호표를 보관
+	UPROPERTY()
+	int32 Ticket = 0;
+};
+
+// 손님별 순번 확정 요청을 모아 서브시스템 틱에서 일괄 정렬하고 처리
 UCLASS()
-class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSCustomerRuntimeSubsystem : public UTickableWorldSubsystem
 {
 	GENERATED_BODY()
 public:
 	UCSCustomerRuntimeSubsystem();
 
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+
+	// 누적된 확정 후보를 정렬하고 대기열에 등록
+	virtual void Tick(float DeltaTime) override;
+	// 서브시스템 틱의 성능 측정에 사용할 통계 식별자를 반환
+	virtual TStatId GetStatId() const override;
 
 	// =====================================================================
 	// 진열대
@@ -228,12 +249,46 @@ public:
 	// 등록된 계산대가 제거될 때 Subsystem에 남은 참조를 정리합니다.
 	void UnregisterCounter(AActor* CounterActor);
 
-	// 대기열에 등록
-	// 이미 줄에 있으면 기존 순번 반환, 줄에 없으면 맨 뒤에 추가하고 새 순번 반환
-	int32 JoinQueue(ACSCustomerCharacter* Customer);
+	// =====================================================================
+	// 대기열 1단계 : 접근 (순번 없음)
+	// 대기열 접근 단계에서 손님을 등록하고 집결 지점 도착 후 순번 확정을 요청
+	// =====================================================================
 
-	// 줄에서 제거
-	// 계산 없이 상태를 떠날 때의 안전장치. 나중에 인내심 타임아웃(포기) 기능이 생기면 그때도 이 함수가 쓰인다.
+	// 접근 목록에 등록하고 번호표를 발급하며 정원이 가득 차면 false를 반환
+	// 등록 실패 시 호출부에서 AbandonCheckout으로 계산 포기를 처리
+	bool BeginQueueApproach(ACSCustomerCharacter* Customer);
+
+	// 접근을 중단한 손님을 접근 목록과 확정 후보에서 제거
+	void CancelQueueApproach(ACSCustomerCharacter* Customer);
+
+	// 손님이 순번 확정 전 접근 목록에 등록되어 있는지 확인
+	bool IsApproachingQueue(const ACSCustomerCharacter* Customer) const;
+
+	// 집결 지점 위치의 기준이 되는 확정 인원 수를 반환
+	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
+	int32 GetCommittedQueueLength() const;
+
+	// 집결 지점의 중심과 판정 반경을 조회하고 영역을 구하지 못하면 false를 반환
+	bool TryGetQueueEntryZone(FVector& OutCenter, float& OutRadius) const;
+
+	// 손님이 집결 지점 영역에 도착해 순번을 확정할 수 있는지 판정
+	bool IsCustomerInsideQueueEntryZone(const ACSCustomerCharacter* Customer) const;
+
+	// 손님을 확정 후보에 중복 없이 등록
+	// 실제 정렬과 순번 확정은 서브시스템 틱에서 일괄 처리
+	void RequestQueueCommit(ACSCustomerCharacter* Customer);
+
+	// 거리 비교에 사용할 구간 크기를 설정하고 0이면 실제 거리로 비교
+	// 같은 구간이거나 실제 거리가 같으면 번호표 발급 순으로 결정
+	UPROPERTY(EditAnywhere, Category = "Store|Checkout", meta = (ClampMin = "0.0"))
+	float QueueCommitTieEpsilon = 0.0f;
+
+	// =====================================================================
+	// 대기열 2단계 : 확정 (순번 있음)
+	// =====================================================================
+
+	// 대기열에 이미 등록된 손님은 기존 순번을 반환
+	// 미등록 손님은 대기열 끝에 추가하고 새 순번을 반환.
 	void LeaveQueue(ACSCustomerCharacter* Customer);
 
 	// 현재 순번 반환, 없으면 -1.
@@ -278,9 +333,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
 	int32 GetEffectiveMaxQueueLength() const;
 
-	// 대기줄이 정원까지 찼는지. 정원을 구할 수 없으면 예전처럼 무제한 설정
+	// 순번이 확정된 인원만으로 정원이 찼는지 판정합니다. 걸어오는 중인 인원은 세지 않습니다.
+	// BeginQueueApproach의 출발 게이트에서 사용합니다.
+	// 정원을 구할 수 없으면(계산대 없음 등) 무제한으로 둡니다.
 	UFUNCTION(BlueprintPure, Category = "Store|Checkout")
-	bool IsQueueFull() const;
+	bool IsCommittedQueueFull() const;
 
 	// 맨 앞 손님의 계산을 완료 처리. 플레이어 파트가 계산 상호작용에서 호출.
 	UFUNCTION(BlueprintCallable, Category = "Store|Checkout")
@@ -496,6 +553,25 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<ACSCustomerCharacter>> Queue; //계산 대기줄. 배열 순서가 줄 순서
 	//Queue를 사용하지 않는 이유 배열의 인덱스가 곧 줄 순번이라서 인덱스를 추적가능하게 해야해서
+
+	// 순번 확정 전 집결 지점으로 이동 중인 손님을 보관
+	// 과도한 접근을 막도록 대기열 정원에 포함
+	UPROPERTY()
+	TArray<FCSQueueApproachEntry> Approaching;
+
+	// 집결 지점에 도착해 순번 확정을 요청한 손님을 보관
+	// 서브시스템 틱에서 후보를 일괄 처리하고 목록을 초기화
+	UPROPERTY()
+	TArray<TObjectPtr<ACSCustomerCharacter>> PendingQueueCommits;
+
+	// 다음 접근 손님에게 발급할 번호표 값을 보관
+	int32 NextQueueTicket = 0;
+
+	// 확정 후보를 거리 기준과 번호표 순으로 정렬해 대기열에 등록
+	void ResolvePendingQueueCommits();
+
+	// 접근 목록에서 손님의 인덱스를 반환하고 없으면 -1을 반환
+	int32 GetApproachIndex(const ACSCustomerCharacter* Customer) const;
 
 	// ShowInnerThought()가 재사용하는 캐싱된 화면 하단 대화창 위젯 인스턴스
 	UPROPERTY()

@@ -854,31 +854,224 @@ void UCSCustomerRuntimeSubsystem::UnregisterCounter(AActor* CounterActor)
 	}
 }
 
-int32 UCSCustomerRuntimeSubsystem::JoinQueue(ACSCustomerCharacter* Customer)
+// 서브시스템 틱의 성능 측정에 사용할 통계 식별자를 반환
+TStatId UCSCustomerRuntimeSubsystem::GetStatId() const
+{
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UCSCustomerRuntimeSubsystem, STATGROUP_Tickables);
+}
+
+void UCSCustomerRuntimeSubsystem::Tick(float DeltaTime)
+{
+	// 누적된 순번 확정 후보를 일괄 처리
+	ResolvePendingQueueCommits();
+}
+
+// 접근 목록에서 손님의 인덱스를 조회
+int32 UCSCustomerRuntimeSubsystem::GetApproachIndex(const ACSCustomerCharacter* Customer) const
+{
+	for (int32 i = 0; i < Approaching.Num(); ++i)
+	{
+		if (Approaching[i].Customer == Customer)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+// 손님이 순번 확정 전 접근 단계에 있는지 확인
+bool UCSCustomerRuntimeSubsystem::IsApproachingQueue(const ACSCustomerCharacter* Customer) const
+{
+	return GetApproachIndex(Customer) != -1;
+}
+
+// 순번이 확정된 대기열 인원 수를 반환
+int32 UCSCustomerRuntimeSubsystem::GetCommittedQueueLength() const
+{
+	return Queue.Num();
+}
+
+bool UCSCustomerRuntimeSubsystem::BeginQueueApproach(ACSCustomerCharacter* Customer)
 {
 	if (Customer == nullptr)
 	{
-		return -1;
+		return false;
 	}
 
-	// 이미 대기열에 포함되어 있는 손님이라면 중복 추가를 방지하고 기존 인덱스 반환
-	const int32 ExistingIndex = GetQueueIndex(Customer);
-	if (ExistingIndex != -1)
+	// 이미 순번이 확정된 손님은 접근 단계로 되돌리지 않고 유지
+	if (GetQueueIndex(Customer) != -1)
 	{
-		return ExistingIndex;
+		return true;
 	}
 
-	// 안전망. 정상 흐름은 WaitInQueue::EnterState의 IsQueueFull()에서 이미 걸러집니다.
-	// 여기서 -1을 받은 호출부는 반드시 AbandonCheckout으로 포기 처리를 해야 합니다.
-	// 안 그러면 bCheckoutAbandoned가 false로 남아 Checkout 상태로 매 틱 재진입합니다.
-	if (IsQueueFull())
+	// 접근 중인 손님이 재진입하면 기존 번호표를 유지
+	if (IsApproachingQueue(Customer))
 	{
-		return -1;
+		return true;
 	}
 
-	// 대기열 맨 끝에 손님을 추가하고, 해당 인덱스를 반환합니다.
-	Queue.Add(Customer);
-	return Queue.Num() - 1;
+	// 순번이 확정된 인원만으로 정원이 찼을 때만 등록을 거부합니다.
+	// 걸어오는 중인 인원은 세지 않으므로, 줄에 자리가 남아 있으면 일단 전원 출발합니다.
+	// 자리를 못 잡는 손님은 집결 지점에 도착한 뒤 ResolvePendingQueueCommits에서 거부됩니다.
+	if (IsCommittedQueueFull())
+	{
+		return false;
+	}
+
+	// 접근 목록에 손님을 등록하고 번호표를 순서대로 발급
+	FCSQueueApproachEntry& Entry = Approaching.AddDefaulted_GetRef();
+	Entry.Customer = Customer;
+	Entry.Ticket = NextQueueTicket++;
+	return true;
+}
+
+void UCSCustomerRuntimeSubsystem::CancelQueueApproach(ACSCustomerCharacter* Customer)
+{
+	// 접근 목록에서 손님을 제거
+	const int32 Index = GetApproachIndex(Customer);
+	if (Index != -1)
+	{
+		Approaching.RemoveAt(Index);
+	}
+
+	// 이탈한 손님이 순번을 받지 않도록 확정 후보에서도 제거
+	PendingQueueCommits.Remove(Customer);
+}
+
+// 현재 확정 인원 수를 기준으로 집결 지점의 중심과 반경을 조회
+bool UCSCustomerRuntimeSubsystem::TryGetQueueEntryZone(FVector& OutCenter, float& OutRadius) const
+{
+	OutCenter = FVector::ZeroVector;
+	OutRadius = 0.0f;
+
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr)
+	{
+		return false;
+	}
+
+	return CounterInterface->TryGetQueueEntryZone(Queue.Num(), OutCenter, OutRadius);
+}
+
+// 손님이 현재 집결 지점 영역 안에 있는지 판정
+bool UCSCustomerRuntimeSubsystem::IsCustomerInsideQueueEntryZone(const ACSCustomerCharacter* Customer) const
+{
+	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
+	if (CounterInterface == nullptr || !IsValid(Customer))
+	{
+		return false;
+	}
+
+	return CounterInterface->IsPointInsideQueueEntryZone(Queue.Num(), Customer->GetActorLocation());
+}
+
+void UCSCustomerRuntimeSubsystem::RequestQueueCommit(ACSCustomerCharacter* Customer)
+{
+	// 유효하고 접근 목록에 등록된 손님만 확정 요청을 허용
+	if (!IsValid(Customer) || !IsApproachingQueue(Customer))
+	{
+		return;
+	}
+
+	// 반복 요청으로 같은 손님이 중복 등록되지 않도록 확정 후보에 추가
+	PendingQueueCommits.AddUnique(Customer);
+}
+
+void UCSCustomerRuntimeSubsystem::ResolvePendingQueueCommits()
+{
+	if (PendingQueueCommits.Num() == 0)
+	{
+		return;
+	}
+
+	// 계산대에 가까운 손님을 우선하도록 0번 슬롯을 거리 기준점으로 사용
+	const FVector FrontSlotLocation = GetQueueSlotLocation(0);
+
+	// 정렬 중 반복 계산을 줄이도록 후보별 거리와 번호표를 보관
+	struct FCommitCandidate
+	{
+		ACSCustomerCharacter* Customer = nullptr;
+		float Distance = 0.0f;
+		int32 DistanceBucket = 0;
+		int32 Ticket = 0;
+	};
+
+	const float Epsilon = FMath::Max(QueueCommitTieEpsilon, 0.0f);
+
+	TArray<FCommitCandidate> Candidates;
+	Candidates.Reserve(PendingQueueCommits.Num());
+
+	for (const TObjectPtr<ACSCustomerCharacter>& Pending : PendingQueueCommits)
+	{
+		ACSCustomerCharacter* Customer = Pending.Get();
+		const int32 ApproachIndex = GetApproachIndex(Customer);
+
+		// 요청 이후 파괴되거나 접근 목록에서 제거된 손님을 제외
+		if (!IsValid(Customer) || ApproachIndex == -1)
+		{
+			continue;
+		}
+
+		FCommitCandidate& Candidate = Candidates.AddDefaulted_GetRef();
+		Candidate.Customer = Customer;
+		Candidate.Distance = FVector::Dist2D(Customer->GetActorLocation(), FrontSlotLocation);
+
+		// 거리를 일정 크기의 구간으로 나누어 같은 구간의 후보를 동률로 처리
+		// 직접적인 근사 비교 대신 구간 번호를 사용해 정렬 순서의 일관성을 유지
+		if (Epsilon > 0.0f)
+		{
+			Candidate.DistanceBucket = FMath::FloorToInt(Candidate.Distance / Epsilon);
+		}
+		else
+		{
+			Candidate.DistanceBucket = 0;
+		}
+
+		Candidate.Ticket = Approaching[ApproachIndex].Ticket;
+	}
+
+	// 후보 정보를 옮긴 뒤 대기 중인 요청 목록을 초기화
+	PendingQueueCommits.Reset();
+
+	if (Candidates.Num() == 0)
+	{
+		return;
+	}
+
+	// 거리 구간을 사용하면 구간순으로 정렬하고 사용하지 않으면 실제 거리순으로 정렬
+	Candidates.Sort([Epsilon](const FCommitCandidate& A, const FCommitCandidate& B)
+	{
+		if (Epsilon > 0.0f)
+		{
+			if (A.DistanceBucket != B.DistanceBucket)
+			{
+				return A.DistanceBucket < B.DistanceBucket;
+			}
+		}
+		else if (A.Distance != B.Distance)
+		{
+			return A.Distance < B.Distance;
+		}
+
+		// 같은 거리 구간이거나 실제 거리가 같으면 번호표 발급 순으로 정렬
+		return A.Ticket < B.Ticket;
+	});
+
+	for (const FCommitCandidate& Candidate : Candidates)
+	{
+		// 런타임 정원 변경을 반영하도록 순번 확정 직전에 정원을 다시 확인
+		const int32 Limit = GetEffectiveMaxQueueLength();
+		if (Limit > 0 && Queue.Num() >= Limit)
+		{
+			// 정원을 초과한 손님은 계산을 포기하고 접근 목록을 정리
+			AbandonCheckout(Candidate.Customer, 0.0f);
+			continue;
+		}
+
+		// 접근 목록에서 제거하고 대기열 끝에 추가해 순번을 확정
+		CancelQueueApproach(Candidate.Customer);
+		Queue.Add(Candidate.Customer);
+	}
 }
 
 void UCSCustomerRuntimeSubsystem::LeaveQueue(ACSCustomerCharacter* Customer)
@@ -1009,24 +1202,27 @@ int32 UCSCustomerRuntimeSubsystem::GetEffectiveMaxQueueLength() const
 	const ICSCustomerCounterInterface* CounterInterface = Cast<ICSCustomerCounterInterface>(Counter);
 	if (CounterInterface == nullptr)
 	{
-		// 계산대가 없으면 정원 개념이 없습니다. IsQueueFull이 무제한으로 처리
+		// 계산대가 없으면 정원 개념이 없습니다. 호출부가 무제한으로 처리
 		return 0;
 	}
 	// NavMesh나 벽에 막힌 슬롯을 제외한 '실제 설 수 있는 정원 수'를 가져옴
 	return CounterInterface->GetEffectiveMaxQueueLength();
 }
 
-bool UCSCustomerRuntimeSubsystem::IsQueueFull() const
+bool UCSCustomerRuntimeSubsystem::IsCommittedQueueFull() const
 {
 	const int32 Limit = GetEffectiveMaxQueueLength();
 
-	// 정원을 못 구했으면(계산대 없음 등) 예전처럼 무제한으로 둡니다.
-	// 여기서 true를 반환하면 계산대가 없는 맵에서 모든 손님이 포기
+	// 정원을 못 구했으면(계산대 없음 등) 무제한으로 둡니다.
+	// 이 분기를 빼면 계산대가 없는 레벨에서 손님이 전부 포기합니다.
 	if (Limit <= 0)
 	{
 		return false;
 	}
-	// 현재 줄을 서 있는 인원이 실제 정원 한계치에 도달했는지 확인
+
+	// 순번이 확정된 인원만 셉니다. 걸어오는 중인 인원(Approaching)을 빼는 것이 이 함수의 목적입니다.
+	// 줄에 자리가 한 칸이라도 남아 있으면 일단 출발시키고, 집결 지점 도착 시점에
+	// ResolvePendingQueueCommits가 정원을 다시 확인해 자리를 못 잡은 손님을 거부합니다.
 	return Queue.Num() >= Limit;
 }
 
@@ -1097,8 +1293,24 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 		return;
 	}
 
+	// 이미 포기 처리된 손님은 두 번 처리하지 않습니다.
+	// 집결 지점 도착 후 거부는 ResolvePendingQueueCommits가 1회차를 호출하고,
+	// 다음 틱에 WaitInQueue::Tick의 안전망 분기가 같은 함수를 2회차로 호출합니다.
+	// 그 분기는 거부당한 손님의 태스크를 Failed로 끝내는 유일한 경로라 지울 수 없으므로
+	// 여기서 막습니다. 가드가 없으면 OnCheckoutAbandoned가 두 번 방송되어
+	// 포기 집계와 평판 감점이 두 배가 되고, ShelfRandomStream 추첨이 한 번 더 소모됩니다.
+	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	if (State != nullptr && State->bCheckoutAbandoned)
+	{
+		return;
+	}
+
 	// 대기열에서 먼저 제거
 	LeaveQueue(Customer);
+
+	// 아직 순번을 못 받고 걸어오던 중일 수도 있습니다.
+	// 여기서 안 빼면 떠난 손님이 계속 정원을 차지해 뒷사람이 입구에서 포기합니다.
+	CancelQueueApproach(Customer);
 
 	// 계산에 실패한 손님은 결제 성공 때와 같이 장바구니를 숨긴다(액터는 손님 파괴 때 함께 정리).
 	// 상품 목록(SelectProducts)은 남겨 두므로 아래 진열대 반환/바닥 낙하는 기존대로 동작한다.
@@ -1108,7 +1320,7 @@ void UCSCustomerRuntimeSubsystem::AbandonCheckout(ACSCustomerCharacter* Customer
 	//DropCustomerItems(Customer);
 
 	// 다시 줄 서지 않도록 true로 지정
-	UCSCustomerStateComponent* State = Customer->GetCustomerState();
+	// State는 함수 진입부의 중복 포기 가드에서 이미 조회했습니다.
 	if (State != nullptr)
 	{
 		State->bCheckoutAbandoned = true;
@@ -1135,6 +1347,10 @@ void UCSCustomerRuntimeSubsystem::NotifyCustomerDespawned(ACSCustomerCharacter* 
 	const UCSCustomerStateComponent* CustomerState = IsValid(Customer)
 		? Customer->GetCustomerState()
 		: nullptr;
+
+	// 파괴되는 손님이 접근 목록이나 확정 후보에 남아 있으면
+	// 사라진 사람이 계속 정원을 차지하거나, 다음 프레임에 순번을 받게 됩니다.
+	CancelQueueApproach(Customer);
 
 	// CustomerState가 없으면(비정상 상황) 빈손으로 취급
 	const bool bCheckoutDone = IsValid(CustomerState) && CustomerState->bCheckoutDone;

@@ -256,6 +256,11 @@ struct FCSTask_WaitInQueueInstanceData
 	UPROPERTY()
 	int32 CachedQueueIndex = -1;
 
+	// 집결 지점 변경 시에만 이동을 요청하도록 이전 확정 인원 수를 보관
+	// 이동 요청 전에는 -1로 초기화
+	UPROPERTY()
+	int32 CachedEntryTargetCount = -1;
+
 	// 인내심 시간
 	UPROPERTY(EditAnywhere, Category = "Parameter", meta = (ClampMin = "0.0"))
 	float PatienceOverride = 0.0f;
@@ -304,6 +309,9 @@ private:
 	// 대기줄 슬롯으로 이동 명령을 내립니다.
 	// EnterState(줄 서기)와 Tick(앞자리로 당기기)이 완전히 같은 인자로 호출해야 하므로 한 곳에 모음
 	static void MoveToQueueSlot(AAIController& Controller,const UCSCustomerRuntimeSubsystem& Subsystem, const int32 Index);
+
+	// 순번 확정 전 집결 지점으로 이동을 요청
+	static void MoveToQueueEntry(AAIController& Controller, const UCSCustomerRuntimeSubsystem& Subsystem);
 };
 
 // =====================================================================

@@ -58,6 +58,12 @@ public:
 	// QueueSlotStopRadius를 QueueSlotSpacing·QueueSlotRadius가 정하는 상한으로 잘라서 반환
 	virtual float GetQueueSlotStopRadius() const override;
 
+	// 확정된 인원 다음의 빈 슬롯을 기준으로 집결 지점의 중심과 반경을 조회
+	virtual bool TryGetQueueEntryZone(const int32 CommittedCount, FVector& OutCenter, float& OutRadius) const override;
+
+	// 지정한 좌표가 집결 지점 영역에 도착해 순번을 확정할 수 있는지 판정
+	virtual bool IsPointInsideQueueEntryZone(const int32 CommittedCount, const FVector& WorldPoint) const override;
+
 	// 데이터가 요구하는 정원과 실제로 설 자리가 있는 슬롯 수 중 작은 쪽
 	virtual int32 GetEffectiveMaxQueueLength() const override;
 
@@ -245,6 +251,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
 		meta = (ClampMin = "10.0", UIMin = "10.0"))
 	float QueueSlotStopRadius = 30.0f;
+
+	// 순번 확정을 위한 집결 지점의 도착 판정 반경을 설정
+	// 실제 반경은 슬롯 반경과 슬롯 간격을 기준으로 제한
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue",
+		meta = (ClampMin = "31.0", UIMin = "31.0"))
+	float QueueEntryRadius = 150.0f;
 
 	// 이 계산대에 기본으로 설 수 있는 사람 수
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Queue", meta = (ClampMin = "1"))
