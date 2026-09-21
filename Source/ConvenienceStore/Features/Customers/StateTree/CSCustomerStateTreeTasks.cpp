@@ -326,10 +326,14 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 
 	if (PickedShelf == nullptr)
 	{
-		// 정확 일치를 못 찾은 경우(계획이 없거나, 있어도 이번 라운드엔 못 찾음) - 연관구매 대상과
-		// 아직 살아있는 계획 카테고리를 함께 "끌림" 후보로 놓고, 그 안에서 카테고리 선호 가중치로 고른다
+		// 정확 일치를 못 찾은 경우 - 연관구매 대상 + 남은 계획 카테고리 + 선호 카테고리를 하드 필터로 합친다
+		// (장바구니가 비어있으면 연관구매 대상이 없어 사실상 선호 카테고리로 직행하게 됨)
 		TSet<ECSProductCategory> PullTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
 		PullTargets.Append(RemainingPlannedCategories);
+		if (Decision != nullptr)
+		{
+			PullTargets.Append(Decision->GetPreferredCategories());
+		}
 
 		const TMap<ECSProductCategory, float> AttractionWeights =
 			Decision != nullptr ? Decision->GetCategoryAttractionWeights() : TMap<ECSProductCategory, float>();
@@ -635,7 +639,9 @@ static void CS_HandlePriceReactionThenBuy(
 static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	FCSTask_BrowseShelfInstanceData& Data,
 	ACSCustomerCharacter& Customer,
+	AActor& ShelfActor,
 	UCSCustomerStateComponent& State,
+	UCSCustomerRuntimeSubsystem& Subsystem,
 	UCSPurchaseDecisionComponent& Decision)
 {
 	// 안전 상한 - 무한 루프 방지용 순수 방어 코드
@@ -660,6 +666,14 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
 	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
 	if (!Decision.RollContinueShopping(ItemsInBasket))
+	{
+		return EStateTreeRunStatus::Succeeded;
+	}
+
+	// 더 끌릴 게 없으면 머물지 않고 다음 진열대로 넘어간다 - 그래야 PickNextShelf의
+	// 카테고리 선호·연관구매 가중치가 동선에 반영된다
+	const TArray<FCSPurchaseCandidate> RemainingCandidates = Subsystem.BuildPurchaseCandidates(&ShelfActor);
+	if (!Decision.HasWorthwhileCandidateOnShelf(RemainingCandidates))
 	{
 		return EStateTreeRunStatus::Succeeded;
 	}
@@ -699,7 +713,7 @@ static EStateTreeRunStatus CS_CompletePendingProductTake(
 	}
 
 	Data.RoundCount++;
-	return CS_EvaluateSessionContinuation(Data, Customer, State, Decision);
+	return CS_EvaluateSessionContinuation(Data, Customer, *ShelfActor, State, Subsystem, Decision);
 }
 
 // 구매 확정 상품을 기억하고 Pick을 시작합니다. 애니메이션이 없으면 기존 즉시 획득으로 폴백합니다.
@@ -778,12 +792,11 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 			Data, *Customer, ShelfActor, *State, *Subsystem, *Decision);
 	}
 
-	// 거절 즉시표시(또는 가격 반응 표시)가 떠 있는 동안은 다른 판단을 전부 건너뛰고 대기만 함
-	// (손님이 다음 진열대로 넘어가지 않고 그 자리에 머무르게 하는 역할)
-	// 대기시간은 방금 저장된 사유(State->LastRejectionInfo.Reason)에 따라 달라짐 - ShelfEmpty만 짧음
+	// 거절/가격반응 표시가 떠 있는 동안 대기 - 손님이 멈춰 서는 시간(GetReactionHoldDuration)은
+	// 아이콘/속마음이 떠 있는 시간(GetInstantDisplayDuration)보다 짧다. 반응 하나로 너무 오래 얼어있지 않게 함
 	if (Data.Phase == ECSCustomerBrowsePhase::WaitingReaction)
 	{
-		if (Data.ElapsedTime < Decision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
+		if (Data.ElapsedTime < Decision->GetReactionHoldDuration(State->LastRejectionInfo.Reason))
 		{
 			return EStateTreeRunStatus::Running;
 		}
@@ -825,11 +838,8 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 		// 진열대가 비어있어도 와서 확인하는 데는 시간이 들었다고 보고 최소 1만큼 차감 (기존 else 분기 그대로 유지)
 		State->RemainingEvaluationBudget = FMath::Max(State->RemainingEvaluationBudget - 1, 0);
 
-		// 빈 진열대도 거절 연출 대상 - 사유 기록 + 디버그 텍스트 + 방송 + 대기상태 진입
-		FCSPurchaseRejectionInfo RejectionInfo;
-		RejectionInfo.Reason = ECSPurchaseRejectReason::ShelfEmpty;
-		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
-		return EStateTreeRunStatus::Running;
+		// 재고 없음은 흔한 일이라 반응 연출 없이 조용히 세션을 끝낸다
+		return EStateTreeRunStatus::Succeeded;
 	}
 
 	// 계획 상품 우선방문 결과 처리
@@ -979,18 +989,19 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// Reason==None: 반복 구매로 흥미가 떨어진 것뿐이라 알릴 이유가 없는 조용한 미구매
-		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 5초 멈춰 선다
-		// 연출 없이 바로 세션 종료
+		// None/ShelfEmpty/HardWalletExceeded는 흔한 사유라 매번 띄우면 소음이라 조용히 미구매 처리
+		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 멈춰 선다
 		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
+			RejectionInfo.Reason == ECSPurchaseRejectReason::ShelfEmpty ||
+			RejectionInfo.Reason == ECSPurchaseRejectReason::HardWalletExceeded ||
 			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
 			return EStateTreeRunStatus::Succeeded;
 		}
 
-		// 그 외 사유는 거절 연출(사유 기록/디버그 텍스트/방송) 후 대기상태 진입
-		Customer->ReleaseActionTransitionHold();
+		// 그 외 사유는 거절 연출 후 대기상태 진입. Hold를 여기서 풀면 포즈 스냅이 아이콘 등장과
+		// 겹쳐 보이므로, ExitState에서 자연히 풀리게 유지한다
 		CS_HandlePurchaseRejection(Data, *Customer, *State, *Subsystem, *Decision, RejectionInfo, Context.GetWorld());
 		return EStateTreeRunStatus::Running;
 	}
@@ -1002,7 +1013,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
 		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
-		Customer->ReleaseActionTransitionHold();
+		// Hold를 미리 풀지 않는다 - Pick 시작 시 PlayPickAnimation이 덮어쓰고, 아니면 ExitState가 정리한다
 		CS_HandlePriceReactionThenBuy(Data, *Customer, *State, *Decision, RejectionInfo, Selected.ProductActor, Context.GetWorld());
 		return EStateTreeRunStatus::Running;
 	}

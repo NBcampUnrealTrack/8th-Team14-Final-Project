@@ -68,6 +68,9 @@ public:
 	// 카테고리별 끌림 가중치
 	TMap<ECSProductCategory, float> GetCategoryAttractionWeights() const;
 
+	// PreferredCategoryThreshold 이상 카테고리. PickNextShelf가 연관구매 대상과 합쳐 하드 필터로 씀
+	TSet<ECSProductCategory> GetPreferredCategories() const;
+
 	// 퇴장 시점 전용: 계획구매와 무관하게, 이 손님이 좋아하는 카테고리(PreferredCategoryThreshold 이상) 중
 	// 매장에 재고가 하나도 없는 것을 하나 고른다. PreferredCategoryMissingChance 확률 굴림까지 여기서 처리하므로
 	// 실패(확률에서 떨어지거나 해당 카테고리가 없음)하면 false.
@@ -95,6 +98,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Purchase")
 	int32 GetEffectiveTopCandidateCount() const;
 
+	// Candidates 중 MinPurchaseUtility 이상이 있는지 (RNG 미사용). 진열대 체류/이동 판정에 씀
+	UFUNCTION(BlueprintCallable, Category = "Purchase")
+	bool HasWorthwhileCandidateOnShelf(const TArray<FCSPurchaseCandidate>& Candidates) const;
+
 	// =====================================================================
 	// 거절 연출 (인지 채널)
 	// =====================================================================
@@ -108,6 +115,14 @@ public:
 	float GetInstantDisplayDuration(ECSPurchaseRejectReason Reason) const
 	{
 		return Reason == ECSPurchaseRejectReason::ShelfEmpty ? EmptyShelfDisplayDuration : InstantDisplayDuration;
+	}
+
+	// 손님이 멈춰 서 있는 시간. GetInstantDisplayDuration(아이콘/마법봉 표시시간)과 분리 -
+	// 손님까지 그만큼 얼어있으면 부자연스럽다
+	UFUNCTION(BlueprintCallable, Category = "Purchase|Rejection")
+	float GetReactionHoldDuration(ECSPurchaseRejectReason Reason) const
+	{
+		return Reason == ECSPurchaseRejectReason::ShelfEmpty ? EmptyShelfDisplayDuration : ReactionHoldSeconds;
 	}
 
 	// Info.Reason에 대응하는 DT 행을 찾아 Severity에 맞는 Tier를 반환
@@ -232,7 +247,11 @@ protected:
 	// 거절 즉시표시(디버그 텍스트)를 몇 초간 유지할지. 마법봉 시간 게이트도 같은 값을 참조함
 	// 손님마다 달라질 이유가 없는 값이라 Archetype/Fallback 이중화 대상이 아님
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
-	float InstantDisplayDuration = 5.0f;
+	float InstantDisplayDuration = 12.0f;
+
+	// 손님이 실제로 멈춰 서 있는 시간(초). GetReactionHoldDuration이 참조
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
+	float ReactionHoldSeconds = 3.5f;
 
 	// ShelfEmpty 전용 즉시표시 대기시간. 재고가 없어서 그냥 지나가는 것뿐인데
 	// 다른 거절 사유와 똑같이 5초씩 붙잡아두면 너무 길다

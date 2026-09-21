@@ -588,7 +588,8 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 			State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
 			(World->GetTimeSeconds() - State->LastRejectionTime) <= PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
 		{
-			Subsystem->ShowInnerThought(InnerThoughtWidgetClass, PurchaseDecision->BuildInnerThoughtText(State->LastRejectionInfo), 4.0f);
+			// 표시 지속시간 - GetInstantDisplayDuration(판정 창)과는 별개 값
+			Subsystem->ShowInnerThought(InnerThoughtWidgetClass, PurchaseDecision->BuildInnerThoughtText(State->LastRejectionInfo), 8.0f);
 		}
 	}
 	// ==== 트리거 지점 끝 ====

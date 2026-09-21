@@ -587,6 +587,20 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 // 구매하지 않고 false를 반환(=손님이 살 게 없어서 빈손으로 지나감)
 // 그 외에는 상위 후보들 중 하나를 확률적으로 골라 OutSelected에 채우고 true를 반환
 // false를 반환하는 모든 경로에서 OutRejectionInfo에 대표 거절 사유를 채운다
+bool UCSPurchaseDecisionComponent::HasWorthwhileCandidateOnShelf(const TArray<FCSPurchaseCandidate>& Candidates) const
+{
+	const float MinUtility = GetEffectiveMinPurchaseUtility();
+	for (const FCSPurchaseCandidate& Candidate : Candidates)
+	{
+		FCSPurchaseRejectionInfo Unused;
+		if (ScoreCandidate(Candidate, Unused) >= MinUtility)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool UCSPurchaseDecisionComponent::DecidePurchase(const TArray<FCSPurchaseCandidate>& Candidates, FCSPurchaseCandidate& OutSelected, FCSPurchaseRejectionInfo& OutRejectionInfo) const
 {
 
@@ -923,6 +937,24 @@ TMap<ECSProductCategory, float> UCSPurchaseDecisionComponent::GetCategoryAttract
 	return Weights;
 }
 
+TSet<ECSProductCategory> UCSPurchaseDecisionComponent::GetPreferredCategories() const
+{
+	TSet<ECSProductCategory> Result;
+	if (Archetype == nullptr)
+	{
+		return Result;
+	}
+
+	for (const TPair<ECSProductCategory, float>& Pair : Archetype->CategoryPreference)
+	{
+		if (Pair.Value >= PreferredCategoryThreshold && !Archetype->BlockedCategories.Contains(Pair.Key))
+		{
+			Result.Add(Pair.Key);
+		}
+	}
+	return Result;
+}
+
 // 확률 굴림을 조건 분기보다 먼저 하는 이유는 다른 Roll* 함수들과 같다 -
 // 조건에 따라 굴림 여부가 갈리면 같은 시드인데 조건 차이로 그 뒤 결과가 밀린다
 bool UCSPurchaseDecisionComponent::RollPreferredCategoryMissing(
@@ -1232,6 +1264,7 @@ float UCSPurchaseDecisionComponent::ComputeAffinityBonus(ECSProductCategory Targ
 		Bonus += W_Affinity * Strength * RatioPower;
 		RatioPower *= AffinityDiminishingRatio;
 	}
+
 	return Bonus;
 }
 
