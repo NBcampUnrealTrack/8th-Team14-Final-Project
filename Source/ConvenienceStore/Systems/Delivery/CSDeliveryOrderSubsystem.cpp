@@ -6,6 +6,7 @@
 #include "Data/CSDeliveryOrderSettingsDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -13,6 +14,33 @@
 
 namespace
 {
+#if !UE_BUILD_SHIPPING
+FAutoConsoleCommandWithWorld CmdDeliveryOrderNow(
+	TEXT("cs.DeliveryOrderNow"),
+	TEXT("배달 주문 대기 시간을 건너뜁니다. 영업시간, 하루 한도, 주문 한 건 제한은 유지합니다."),
+	FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
+	{
+		auto* Orders = World ? World->GetSubsystem<UCSDeliveryOrderSubsystem>() : nullptr;
+		if (!Orders)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Delivery] 플레이 중인 게임에서 실행하세요."));
+			return;
+		}
+		FText Message;
+		const bool bGenerated = Orders->GenerateOrderNow(Message);
+		UE_LOG(LogTemp, Display, TEXT("[Delivery] %s"), *Message.ToString());
+		// 성공 알림은 기존 주문 생성 경로에서 표시합니다.
+		if (!bGenerated)
+		{
+			if (auto* Controller = Cast<ACSStorePlayerController>(World->GetFirstPlayerController()))
+			{
+				Controller->ShowGameplayToast(
+					NSLOCTEXT("Delivery", "DebugOrderRejected", "테스트 주문 생성 불가"), Message);
+			}
+		}
+	}));
+#endif
+
 bool IsOrderInProgress(const ECSDeliveryOrderStatus Status)
 {
 	return Status == ECSDeliveryOrderStatus::PendingAcceptance || Status == ECSDeliveryOrderStatus::Accepted;
@@ -55,7 +83,7 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 	}
 
 	const int32 DailyOrderLimit = GetDailyOrderLimit();
-	if (!IsStoreOperating() || GeneratedOrderCountToday >= DailyOrderLimit) return;
+	if (!IsStoreOperating() || !DeliveryOrders.IsEmpty() || GeneratedOrderCountToday >= DailyOrderLimit) return;
 	// 당일 강화는 이미 도착한 주문을 되돌리지 않으며, 다음 주문만 새 한도에 맞춰 분산합니다.
 	if (LastScheduledDailyOrderLimit != DailyOrderLimit)
 	{
@@ -160,12 +188,13 @@ bool UCSDeliveryOrderSubsystem::AcceptOrder(const int32 OrderId, FText& OutMessa
 		Order->DeliveryDeadlineMinutes = FMath::Min(StoreGameState->AutomaticClosingTimeMinutes, StoreGameState->CurrentGameMinutes + DeliveryWindowMinutes);
 	}
 	Order->Status = ECSDeliveryOrderStatus::Accepted;
+	ActiveDispatchOrderId = OrderId;
 	BroadcastOrdersChanged(*Order);
 	OutMessage = NSLOCTEXT("Delivery", "OrderAccepted", "배달 주문을 수락했습니다.");
 	ShowDeliveryToast(
 		NSLOCTEXT("Delivery", "OrderAcceptedToastTitle", "배달 주문 수락"),
 		FText::Format(
-			NSLOCTEXT("Delivery", "OrderAcceptedToast", "{0} 주문을 수락했습니다.\n게시판에서 발송 준비를 선택하세요."),
+			NSLOCTEXT("Delivery", "OrderAcceptedToast", "{0} 주문을 수락했습니다.\n마법진에 주문 상품을 올려 발송하세요."),
 			Order->RecipientDisplayName));
 	return true;
 }
@@ -240,23 +269,20 @@ FCSDeliveryOrderRuntime UCSDeliveryOrderSubsystem::GetActiveDispatchOrder() cons
 	return Order == nullptr ? FCSDeliveryOrderRuntime() : *Order;
 }
 
-bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
+bool UCSDeliveryOrderSubsystem::FindDispatchProducts(
 	const TArray<ACSProductPickupActor*>& AvailableProducts,
-	FText& OutMessage,
-	int32& OutRewardGold,
-	int32& OutReputationReward)
+	TArray<ACSProductPickupActor*>& OutProducts, FText& OutMessage) const
 {
-	OutRewardGold = 0;
-	OutReputationReward = 0;
+	OutProducts.Reset();
+	OutMessage = FText::GetEmpty();
 	const int32 OrderIndex = FindDispatchOrderIndex();
 	if (!DeliveryOrders.IsValidIndex(OrderIndex))
 	{
-		OutMessage = NSLOCTEXT("Delivery", "NoDispatchOrder", "게시판에서 발송할 주문을 먼저 선택하세요.");
+		OutMessage = NSLOCTEXT("Delivery", "NoDispatchOrder", "게시판에서 배달 주문을 먼저 수락하세요.");
 		return false;
 	}
 
 	const FCSDeliveryOrderRuntime& Order = DeliveryOrders[OrderIndex];
-	TArray<ACSProductPickupActor*> ProductsToDeliver;
 	TSet<ACSProductPickupActor*> UsedProducts;
 	for (const FCSDeliveryOrderLine& OrderLine : Order.RequiredProducts)
 	{
@@ -265,17 +291,33 @@ bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
 		{
 			if (IsValid(Product) && !UsedProducts.Contains(Product) && Product->GetProductRow() == OrderLine.ProductRow)
 			{
-				ProductsToDeliver.Add(Product);
+				OutProducts.Add(Product);
 				UsedProducts.Add(Product);
 				if (++FoundCount >= OrderLine.Quantity) break;
 			}
 		}
 		if (FoundCount < OrderLine.Quantity)
 		{
+			OutProducts.Reset();
 			OutMessage = NSLOCTEXT("Delivery", "MissingMagicCircleProducts", "마법진 위에 주문 상품이 부족합니다.");
 			return false;
 		}
 	}
+	return true;
+}
+
+bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
+	const TArray<ACSProductPickupActor*>& AvailableProducts,
+	FText& OutMessage, int32& OutRewardGold, int32& OutReputationReward)
+{
+	OutRewardGold = 0;
+	OutReputationReward = 0;
+	TArray<ACSProductPickupActor*> ProductsToDeliver;
+	if (!FindDispatchProducts(AvailableProducts, ProductsToDeliver, OutMessage)) return false;
+	const int32 OrderIndex = FindDispatchOrderIndex();
+	const FCSDeliveryOrderRuntime Order = DeliveryOrders[OrderIndex];
+	// Destroy 및 보상 알림에서 재진입하더라도 같은 주문을 다시 발송할 수 없도록 먼저 종료합니다.
+	RemoveOrderAt(OrderIndex, ECSDeliveryOrderStatus::Completed);
 
 	for (ACSProductPickupActor* Product : ProductsToDeliver)
 	{
@@ -293,7 +335,6 @@ bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
 		Order.RecipientDisplayName,
 		FText::AsNumber(OutRewardGold),
 		FText::AsNumber(OutReputationReward));
-	RemoveOrderAt(OrderIndex, ECSDeliveryOrderStatus::Completed);
 	return true;
 }
 
@@ -318,6 +359,12 @@ bool UCSDeliveryOrderSubsystem::GenerateOrderNow(FText& OutMessage)
 
 bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 {
+	// 자동 생성과 디버그 생성 모두 수락 대기·진행 중 주문을 합쳐 한 건만 허용합니다.
+	if (!DeliveryOrders.IsEmpty())
+	{
+		OutMessage = NSLOCTEXT("Delivery", "ExistingOrder", "기존 배달 주문을 먼저 처리하세요.");
+		return false;
+	}
 	if (GetWorld() == nullptr)
 	{
 		OutMessage = NSLOCTEXT("Delivery", "NoWorld", "월드를 찾을 수 없습니다.");
@@ -466,7 +513,8 @@ void UCSDeliveryOrderSubsystem::ScheduleNextOrder(const float CurrentGameMinutes
 		? FMath::Clamp(Settings->DistributedOrderTimeJitterPercent, 0.0f, 0.45f) : 0.2f;
 	const float Jitter = TargetInterval * JitterPercent;
 	const float ScheduledInterval = FMath::Max(FirstOrderMinimum, TargetInterval + FMath::FRandRange(-Jitter, Jitter));
-	NextOrderGenerationMinutes = FMath::Min(CurrentGameMinutes + ScheduledInterval, LastOrderTime - KINDA_SMALL_NUMBER);
+	// 마감에 맞춰 간격을 줄이지 않습니다. 시간이 부족하면 오늘 최대 건수를 채우지 않습니다.
+	NextOrderGenerationMinutes = CurrentGameMinutes + ScheduledInterval;
 }
 
 int32 UCSDeliveryOrderSubsystem::GetDailyOrderLimit() const
@@ -567,6 +615,11 @@ void UCSDeliveryOrderSubsystem::RemoveOrderAt(const int32 OrderIndex, const ECSD
 		}
 	}
 	DeliveryOrders.RemoveAt(OrderIndex);
+	NextOrderGenerationMinutes = -1.0f;
+	if (IsStoreOperating())
+	{
+		ScheduleNextOrder(GetWorld()->GetGameState<ACSStoreGameState>()->CurrentGameMinutes);
+	}
 	BroadcastOrdersChanged(FinishedOrder);
 }
 

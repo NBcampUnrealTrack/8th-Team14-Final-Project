@@ -12,6 +12,11 @@ void UCSNoticeBoardDeliveryOrderEntryWidget::InitializeDeliveryOrderEntry(
 	FText AvailabilityMessage;
 	const bool bCanAccept = CanAcceptDisplayedOrder(AvailabilityMessage);
 	RefreshDeliveryOrderEntryView(DisplayedOrder, bCanAccept, AvailabilityMessage);
+	// 기존 WBP의 클릭 그래프는 호환성을 위해 남기되 수동 선택 버튼은 표시하지 않습니다.
+	if (UWidget* PrepareButton = GetWidgetFromName(TEXT("Button_PrepareDispatch")))
+	{
+		PrepareButton->RemoveFromParent();
+	}
 }
 
 bool UCSNoticeBoardDeliveryOrderEntryWidget::CanAcceptDisplayedOrder(FText& OutReason) const

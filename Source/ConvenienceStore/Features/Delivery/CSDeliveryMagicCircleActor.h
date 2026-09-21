@@ -22,7 +22,7 @@ struct FCSMagicCircleLevelVFX
 {
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> IdleEffect;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> UpgradeEffect;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> ReadyEffect;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UNiagaraSystem> DispatchEffect;
 };
 
@@ -44,6 +44,7 @@ public:
 	/** 발송할 수 없는 상태일 때, 조준 HUD에 표시할 안내 문구입니다. */
 	FText GetUnavailableInteractionText() const;
 	bool IsDispatchReady() const;
+	bool HasRequiredProducts() const;
 	bool PlaceProduct(ACSProductPickupActor* Product);
 	bool PlaceOneProductFromCrate(ACSDeliveryCrateActor* DeliveryCrate);
 
@@ -74,6 +75,9 @@ protected:
 	void OnMagicCircleVisualUpdated(int32 Level);
 	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery Order|VFX")
 	void OnDeliveryDispatched();
+	// 지속 외형을 추가할 때도 같은 준비 상태를 사용합니다. HUD는 이 상태를 즉시 검사합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Delivery Order|VFX")
+	void OnDeliveryReadyChanged(bool bReady);
 
 	/** 상품 후보와 원격 수신처 목록을 담은 설정 에셋입니다. */
 	// 모든 동일 마법진 인스턴스가 BP 기본값의 같은 주문 설정을 사용합니다.
@@ -85,7 +89,11 @@ protected:
 
 private:
 	UFUNCTION() void HandleMagicCircleUpgraded(int32 Level);
-	void UpdateLevelVFX(int32 Level, bool bPlayUpgrade);
+	void UpdateLevelVFX(int32 Level);
+	void GetAvailableProducts(TArray<ACSProductPickupActor*>& OutProducts) const;
+	UFUNCTION() void RefreshReadyState();
+	bool bProductsReady = false;
+	FTimerHandle ReadyStateTimer;
 	void PlayOneShotVFX(UNiagaraSystem* Effect);
 	UPROPERTY(Transient) TObjectPtr<ACSStoreGameState> StoreState;
 };
