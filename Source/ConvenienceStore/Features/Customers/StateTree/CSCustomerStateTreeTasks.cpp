@@ -1331,8 +1331,9 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 	// 진열대마다 띄우면 한 손님이 같은 대사를 여러 번 하고, 어떤 손님은 진열대에서
 	// 어떤 손님은 문 앞에서 말해 규칙이 없어 보인다 - 퇴장 시점 1회로 고정한다
 	// 걸어 나가는 동안 마법봉으로 맞혀야 문장이 보이므로, 퇴장 이동을 시작하기 전에 띄운다
+	// 매장에 들어와 보지도 못하고 돌아가는 손님(입구 판정 실패 등)은 찾아본 적 자체가 없으므로 제외
 	if (UCSPurchaseDecisionComponent* Decision = Data.Actor->FindComponentByClass<UCSPurchaseDecisionComponent>();
-		Decision != nullptr && Subsystem != nullptr && !State->bPlannedMissingReported)
+		Decision != nullptr && Subsystem != nullptr && State->HasEnteredStore() && !State->bPlannedMissingReported)
 	{
 		// 찾다가 포기한 것이 먼저다. 그 뒤가 아예 만나보지도 못한 계획 상품
 		TArray<FName> Unfulfilled = State->UnfulfilledPlannedProductIds;

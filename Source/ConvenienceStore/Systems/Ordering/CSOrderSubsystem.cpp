@@ -113,6 +113,222 @@ void UCSOrderSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+bool UCSOrderSubsystem::IsProductUnlocked(const FDataTableRowHandle& Row) const
+{
+	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSProductDataRow::StaticStruct()) return false;
+	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	const FCSProductDataRow* Data = Row.GetRow<FCSProductDataRow>(TEXT("Order unlock"));
+	return State && Data && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
+		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition);
+}
+
+bool UCSOrderSubsystem::IsFacilityUnlocked(const FDataTableRowHandle& Row) const
+{
+	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSFacilityDataRow::StaticStruct()) return false;
+	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	const FCSFacilityDataRow* Data = Row.GetRow<FCSFacilityDataRow>(TEXT("Order unlock"));
+	int32 Level = 1;
+	return State && Data && TryParseRequiredStoreLevel(Data->StoreLevelUnlockCondition, Level)
+		&& State->IsStoreLevelRequirementMet(Level)
+		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition)
+		&& Data->QuestUnlockCondition.IsNone();
+}
+
+TArray<FName> UCSOrderSubsystem::GetUnlockedFacilityRowNames(UDataTable* Table) const
+{
+	TArray<FName> Names;
+	if (Table && Table->GetRowStruct() == FCSFacilityDataRow::StaticStruct())
+	{
+		for (FName Name : Table->GetRowNames())
+		{
+			FDataTableRowHandle Row;
+			Row.DataTable = Table;
+			Row.RowName = Name;
+			if (IsFacilityUnlocked(Row)) Names.Add(Name);
+		}
+	}
+	return Names;
+}
+
+FCSCombinedOrderResult UCSOrderSubsystem::EvaluateCombinedOrder(
+	const TArray<FCSOrderLine>& Products, const TArray<FCSFacilityOrderLine>& Facilities,
+	ECSOrderDeliveryType DeliveryType) const
+{
+	FCSCombinedOrderResult Result;
+	Result.DeliveryType = DeliveryType;
+	auto Fail = [&Result](ECSCombinedOrderFailure Reason, const FText& Message)
+	{
+		Result.bSuccess = false;
+		Result.Failure = Reason;
+		Result.Message = Message;
+		return Result;
+	};
+	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	if (!State) return Fail(ECSCombinedOrderFailure::Unavailable,
+		NSLOCTEXT("Order", "Unavailable", "발주 정보를 불러올 수 없습니다."));
+	Result.CurrentFunds = State->GetCurrentFunds();
+	Result.RemainingFunds = Result.CurrentFunds;
+	for (const auto& Line : Products)
+	{
+		if (Line.CrateCount != 0 && (!Line.ProductRow.DataTable ||
+			Line.ProductRow.DataTable->GetRowStruct() != FCSProductDataRow::StaticStruct()))
+			return Fail(ECSCombinedOrderFailure::ProductInvalid,
+				NSLOCTEXT("Order", "ProductTable", "상품 데이터 테이블을 확인해 주세요."));
+	}
+	for (const auto& Line : Facilities)
+	{
+		if (Line.Quantity != 0 && (!Line.FacilityRow.DataTable ||
+			Line.FacilityRow.DataTable->GetRowStruct() != FCSFacilityDataRow::StaticStruct()))
+			return Fail(ECSCombinedOrderFailure::FacilityInvalid,
+				NSLOCTEXT("Order", "FacilityTable", "시설 데이터 테이블을 확인해 주세요."));
+	}
+	Result.Products = EvaluateOrderWithDelivery(Products, DeliveryType);
+	Result.Facilities = EvaluateFacilityOrderWithDelivery(Facilities, DeliveryType);
+	const bool HasProducts = Result.Products.FailureReason != ECOrderFailureReason::EmptyOrder;
+	const bool HasFacilities = Result.Facilities.FailureReason != ECFacilityOrderFailureReason::EmptyOrder;
+	if (!HasProducts && !HasFacilities) return Fail(ECSCombinedOrderFailure::EmptyCart,
+		NSLOCTEXT("Order", "Empty", "발주할 항목을 선택해 주세요."));
+	if (HasProducts && !Result.Products.bSuccess && Result.Products.FailureReason != ECOrderFailureReason::InsufficientFunds)
+		return Fail(ECSCombinedOrderFailure::ProductInvalid,
+			NSLOCTEXT("Order", "ProductInvalid", "상품의 수량 또는 가격 정보를 확인해 주세요."));
+	if (HasFacilities && !Result.Facilities.bSuccess && Result.Facilities.FailureReason != ECFacilityOrderFailureReason::InsufficientFunds)
+		return Fail(ECSCombinedOrderFailure::FacilityInvalid,
+			NSLOCTEXT("Order", "FacilityInvalid", "시설의 해금 조건, 수량 또는 가격 정보를 확인해 주세요."));
+	for (const FCSOrderLine& Line : Products)
+	{
+		if (Line.CrateCount > 0 && !IsProductUnlocked(Line.ProductRow))
+			return Fail(ECSCombinedOrderFailure::ProductLocked,
+				NSLOCTEXT("Order", "Locked", "아직 해금되지 않은 상품이 포함되어 있습니다."));
+	}
+	const int64 Total = int64(Result.Products.TotalCost) + Result.Facilities.TotalCost;
+	if (Total > MAX_int32) return Fail(ECSCombinedOrderFailure::CostOverflow,
+		NSLOCTEXT("Order", "Overflow", "발주 가능한 금액을 초과했습니다."));
+	Result.TotalCost = int32(Total);
+	Result.RemainingFunds = Result.CurrentFunds - Result.TotalCost;
+	if (!State->CanAfford(Result.TotalCost)) return Fail(ECSCombinedOrderFailure::InsufficientFunds,
+		NSLOCTEXT("Order", "Funds", "보유 자금이 부족합니다."));
+	Result.bSuccess = true;
+	return Result;
+}
+
+FCSCombinedOrderResult UCSOrderSubsystem::PlaceCombinedOrder(
+	const TArray<FCSOrderLine>& Products, const TArray<FCSFacilityOrderLine>& Facilities,
+	ECSOrderDeliveryType DeliveryType)
+{
+	FCSCombinedOrderResult Result = EvaluateCombinedOrder(Products, Facilities, DeliveryType);
+	auto Fail = [&Result](ECSCombinedOrderFailure Reason, const FText& Message)
+	{
+		Result.bSuccess = false;
+		Result.Products.bSuccess = false;
+		Result.Facilities.bSuccess = false;
+		Result.Failure = Reason;
+		Result.Message = Message;
+		return Result;
+	};
+	if (bCombinedCheckoutInProgress) return Fail(ECSCombinedOrderFailure::Busy,
+		NSLOCTEXT("Order", "Busy", "발주 처리 중입니다."));
+	if (!Result.bSuccess) return Result;
+	TGuardValue<bool> Guard(bCombinedCheckoutInProgress, true);
+	const bool HasProducts = Result.Products.TotalCrateCount > 0;
+	const bool HasFacilities = Result.Facilities.TotalFacilityCount > 0;
+	ACSDeliveryPortalActor* ProductPortal = RegisteredDeliveryPortal.Get();
+	ACSFacilityDeliveryPortalActor* FacilityPortal = RegisteredFacilityDeliveryPortal.Get();
+	if ((HasProducts && (!IsValid(ProductPortal) || !ProductPortal->IsDeliveryConfigured())) ||
+		(HasFacilities && (!IsValid(FacilityPortal) || !FacilityPortal->IsDeliveryConfigured())))
+		return Fail(ECSCombinedOrderFailure::DeliveryUnavailable,
+			NSLOCTEXT("Order", "Delivery", "배송 준비가 되어 있지 않습니다."));
+	if (HasFacilities)
+	{
+		const auto Reason = FacilityPortal->ValidateOrderFacilities(Facilities);
+		if (Reason != ECFacilityOrderFailureReason::None)
+		{
+			Result.Facilities.FailureReason = Reason;
+			return Fail(ECSCombinedOrderFailure::DeliveryUnavailable,
+				NSLOCTEXT("Order", "FacilityClass", "시설 배송 설정을 확인해 주세요."));
+		}
+	}
+	ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
+	TrySubscribeToStoreGameState();
+	TArray<AActor*> SpawnedActors;
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		EnsureDeliverySpawnIndicesForBusinessDay(State->CurrentBusinessDay);
+		if (Result.Products.TotalCrateCount > MAX_int32 - NextProductDeliverySpawnIndex ||
+			Result.Facilities.TotalFacilityCount > MAX_int32 - NextFacilityDeliverySpawnIndex)
+			return Fail(ECSCombinedOrderFailure::CostOverflow,
+				NSLOCTEXT("Order", "SpawnOverflow", "배송 가능한 수량을 초과했습니다."));
+		bool SpawnOK = true;
+		if (HasProducts)
+		{
+			TArray<ACSDeliveryCrateActor*> Crates;
+			SpawnOK = ProductPortal->SpawnOrderCrates(Products, Crates, NextProductDeliverySpawnIndex)
+				&& Crates.Num() == Result.Products.TotalCrateCount;
+			for (ACSDeliveryCrateActor* Crate : Crates) SpawnedActors.Add(Crate);
+		}
+		if (SpawnOK && HasFacilities)
+		{
+			TArray<AActor*> Actors;
+			Result.Facilities.FailureReason = FacilityPortal->SpawnOrderFacilities(Facilities, Actors, NextFacilityDeliverySpawnIndex);
+			SpawnOK = Result.Facilities.FailureReason == ECFacilityOrderFailureReason::None
+				&& Actors.Num() == Result.Facilities.TotalFacilityCount;
+			SpawnedActors.Append(Actors);
+		}
+		if (!SpawnOK)
+		{
+			DestroySpawnedActors(SpawnedActors);
+			return Fail(ECSCombinedOrderFailure::SpawnFailed,
+				NSLOCTEXT("Order", "Spawn", "배송에 실패하여 결제하지 않았습니다. 다시 시도해 주세요."));
+		}
+	}
+	if (!State->TrySpendFunds(Result.TotalCost))
+	{
+		DestroySpawnedActors(SpawnedActors);
+		return Fail(ECSCombinedOrderFailure::InsufficientFunds,
+			NSLOCTEXT("Order", "Funds", "보유 자금이 부족합니다."));
+	}
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		NextProductDeliverySpawnIndex += Result.Products.TotalCrateCount;
+		NextFacilityDeliverySpawnIndex += Result.Facilities.TotalFacilityCount;
+	}
+	else
+	{
+		const int32 Day = State->CurrentBusinessDay < MAX_int32 ? State->CurrentBusinessDay + 1 : MAX_int32;
+		if (HasProducts)
+		{
+			auto& Pending = PendingProductOrders.AddDefaulted_GetRef();
+			Pending.OrderLines = Products;
+			Pending.DeliveryBusinessDay = Day;
+		}
+		if (HasFacilities)
+		{
+			auto& Pending = PendingFacilityOrders.AddDefaulted_GetRef();
+			Pending.OrderLines = Facilities;
+			Pending.DeliveryBusinessDay = Day;
+		}
+	}
+	Result.RemainingFunds = State->GetCurrentFunds();
+	Result.Message = NSLOCTEXT("Order", "Complete", "발주가 완료되었습니다.");
+	if (HasProducts)
+	{
+		Result.Products.bSuccess = true;
+		Result.Products.FailureReason = ECOrderFailureReason::None;
+		OnOrderPlaced.Broadcast(Result.Products);
+	}
+	if (HasFacilities)
+	{
+		Result.Facilities.bSuccess = true;
+		Result.Facilities.FailureReason = ECFacilityOrderFailureReason::None;
+		OnFacilityOrderPlaced.Broadcast(Result.Facilities);
+	}
+	if (DeliveryType == ECSOrderDeliveryType::Immediate)
+	{
+		if (HasProducts && IsValid(ProductPortal)) ProductPortal->OnOrderDelivered(Result.Products.TotalCrateCount);
+		if (HasFacilities && IsValid(FacilityPortal)) FacilityPortal->OnFacilityOrderDelivered(Result.Facilities.TotalFacilityCount);
+	}
+	return Result;
+}
+
 FCSOrderResult UCSOrderSubsystem::EvaluateOrder(
 	const TArray<FCSOrderLine>& OrderLines) const
 {
@@ -241,6 +457,13 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrderWithDelivery(
 	const TArray<FCSOrderLine>& OrderLines,
 	ECSOrderDeliveryType DeliveryType)
 {
+	if (bCombinedCheckoutInProgress)
+	{
+		FCSOrderResult Busy;
+		Busy.FailureReason = ECOrderFailureReason::DeliveryUnavailable;
+		return Busy;
+	}
+	TGuardValue<bool> CheckoutGuard(bCombinedCheckoutInProgress, true);
 	FCSOrderResult Result = EvaluateOrderWithDelivery(OrderLines, DeliveryType);
 	if (!Result.bSuccess)
 	{
@@ -488,6 +711,13 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 	const TArray<FCSFacilityOrderLine>& OrderLines,
 	ECSOrderDeliveryType DeliveryType)
 {
+	if (bCombinedCheckoutInProgress)
+	{
+		FCSFacilityOrderResult Busy;
+		Busy.FailureReason = ECFacilityOrderFailureReason::DeliveryUnavailable;
+		return Busy;
+	}
+	TGuardValue<bool> CheckoutGuard(bCombinedCheckoutInProgress, true);
 	FCSFacilityOrderResult Result = EvaluateFacilityOrderWithDelivery(
 		OrderLines,
 		DeliveryType);

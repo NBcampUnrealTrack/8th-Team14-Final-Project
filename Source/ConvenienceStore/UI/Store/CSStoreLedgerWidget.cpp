@@ -6,6 +6,7 @@
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSLedgerLeftPageWidget.h"
 #include "UI/Store/CSLedgerProductRowWidget.h"
 #include "UI/Store/CSLedgerRightPageWidget.h"
@@ -82,6 +83,7 @@ void UCSStoreLedgerWidget::SelectProduct(const FDataTableRowHandle& ProductRow)
 	DetailState = ProductData.bUnlocked
 		? ECSLedgerDetailState::UnlockedProduct
 		: ECSLedgerDetailState::LockedProduct;
+	bPriceLockedNoticeShown = false;
 
 	// 목록을 다시 그려 현재 선택 행 하나에만 선택 연출이 적용되도록 합니다.
 	RebuildProductList();
@@ -269,18 +271,38 @@ void UCSStoreLedgerWidget::HandleProductRowSelected(FDataTableRowHandle ProductR
 
 void UCSStoreLedgerWidget::HandleSalePriceEdited(int32 NewSalePrice)
 {
-	SetPendingSalePrice(NewSalePrice);
-
 	// 별도의 적용 버튼 없이 증감과 직접 입력이 확정되는 즉시 가격 시스템에 저장합니다.
 	if (DetailState != ECSLedgerDetailState::UnlockedProduct ||
 		SelectedProduct.ProductRow.DataTable == nullptr)
 	{
+		SetPendingSalePrice(NewSalePrice);
 		return;
 	}
 
 	UWorld* World = GetWorld();
 	UCSStorePricingSubsystem* PricingSubsystem =
 		World ? World->GetSubsystem<UCSStorePricingSubsystem>() : nullptr;
+
+	FText BlockedReason;
+	if (IsValid(PricingSubsystem) && !PricingSubsystem->CanChangeSalePrice(BlockedReason))
+	{
+		// 영업 중에는 저장하지 않고 스핀박스도 원래 판매가로 되돌려 "바뀐 것처럼" 보이지 않게 함
+		SetPendingSalePrice(SelectedProduct.CurrentSalePrice);
+
+		// 스핀박스 증감 한 번에도 편집 이벤트가 여러 번 들어오므로, 상품을 바꾸기 전까진 한 번만 안내함
+		if (!bPriceLockedNoticeShown)
+		{
+			bPriceLockedNoticeShown = true;
+			if (ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(GetOwningPlayer()))
+			{
+				PlayerController->ShowNoticeBanner(BlockedReason);
+			}
+		}
+		return;
+	}
+
+	SetPendingSalePrice(NewSalePrice);
+
 	if (IsValid(PricingSubsystem) &&
 		PricingSubsystem->SetSalePrice(SelectedProduct.ProductRow, PendingSalePrice))
 	{

@@ -8,11 +8,13 @@
 #include "Blueprint/UserWidget.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UI/HUD/CSStoreHUDWidget.h"
+#include "UI/HUD/CSStoreTopBarWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "UI/Store/CSClosingWarningWidget.h"
 #include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
 
 // 게임 입력 상태에서는 Tab으로 수첩을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
@@ -26,7 +28,7 @@ void ACSStorePlayerController::ToggleJournal()
 	if (IsValid(ActiveJournalWidget)) { CloseJournal(); return; }
 	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
 	// WBP가 준비되지 않았으면 입력과 HUD 상태를 변경하지 않습니다.
-	UClass* WidgetClass = JournalWidgetClass.LoadSynchronous();
+	UClass* WidgetClass = JournalWidgetClass.Get();
 	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Journal] JournalWidgetClass에 CSJournalWidget 기반 WBP를 지정해 주세요."));
@@ -78,6 +80,16 @@ void ACSStorePlayerController::BeginPlay()
 			}
 		}
 	}
+	if (IsLocalPlayerController() && StoreTopBarWidgetClass != nullptr)
+	{
+		StoreTopBarWidget = CreateWidget<UCSStoreTopBarWidget>(this, StoreTopBarWidgetClass);
+		if (IsValid(StoreTopBarWidget))
+		{
+			// 발주창 등 Viewport UI보다 위에 두고, 타이틀과 엔딩에서는 별도로 숨깁니다.
+			StoreTopBarWidget->AddToViewport(2000);
+			StoreTopBarWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+	}
 
 	// Temporary Title Screen: 이 한 줄을 제거하면 기존 시작 흐름으로 즉시 복귀합니다.
 	ShowTemporaryTitleScreen();
@@ -101,12 +113,12 @@ void ACSStorePlayerController::BeginPlay()
 void ACSStorePlayerController::ShowTemporaryTitleScreen()
 {
 	if (!bUseTemporaryTitleScreen || !IsLocalPlayerController() ||
-		TemporaryTitleWidgetClass.IsNull() || IsValid(ActiveTemporaryTitleWidget))
+		!TemporaryTitleWidgetClass || IsValid(ActiveTemporaryTitleWidget))
 	{
 		return;
 	}
 
-	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.LoadSynchronous();
+	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.Get();
 	if (LoadedTitleWidgetClass == nullptr)
 	{
 		return;
@@ -120,6 +132,7 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 
 	ActiveTemporaryTitleWidget->AddToViewport(1001);
 	SetStoreHUDHidden(ActiveTemporaryTitleWidget, true);
+	SetStoreTopBarHidden(ActiveTemporaryTitleWidget, true);
 	SetGameplayUIInputLock(ActiveTemporaryTitleWidget, true);
 	SetPause(true);
 }
@@ -141,6 +154,7 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 	SetPause(false);
 	SetGameplayUIInputLock(TitleWidgetToClose, false);
 	SetStoreHUDHidden(TitleWidgetToClose, false);
+	SetStoreTopBarHidden(TitleWidgetToClose, false);
 	TitleWidgetToClose->RemoveFromParent();
 	ActiveTemporaryTitleWidget = nullptr;
 }
@@ -184,6 +198,11 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActiveDeliveryToastWidget->RemoveFromParent();
 		ActiveDeliveryToastWidget = nullptr;
 	}
+	if (IsValid(ActiveNoticeBannerWidget))
+	{
+		ActiveNoticeBannerWidget->RemoveFromParent();
+		ActiveNoticeBannerWidget = nullptr;
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -222,6 +241,15 @@ void ACSStorePlayerController::HandleStatusAnnouncementFinished()
 		return;
 	}
 
+	if (ActiveStatusAnnouncementWidget->GetAnnouncementType() == ECSStatusAnnouncementType::Opened)
+	{
+		OnStoreOpenedAnnouncementFinished.Broadcast();
+	}
+	else
+	{
+		OnStoreClosedAnnouncementFinished.Broadcast();
+	}
+
 	ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
 		this, &ACSStorePlayerController::HandleStatusAnnouncementFinished);
 	ActiveStatusAnnouncementWidget->RemoveFromParent();
@@ -236,6 +264,33 @@ void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText
 	}
 	QueuedDeliveryToasts.Add({ Title, Message });
 	TryShowQueuedDeliveryToast();
+}
+
+void ACSStorePlayerController::ShowNoticeBanner(const FText& Message)
+{
+	if (!IsLocalPlayerController())
+	{
+		return;
+	}
+
+	if (NoticeBannerWidgetClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[UI] NoticeBannerWidgetClass가 지정되지 않았습니다."));
+		return;
+	}
+
+	if (!IsValid(ActiveNoticeBannerWidget))
+	{
+		ActiveNoticeBannerWidget = CreateWidget<UCSNoticeBannerWidgetBase>(this, NoticeBannerWidgetClass);
+		if (!IsValid(ActiveNoticeBannerWidget))
+		{
+			return;
+		}
+		ActiveNoticeBannerWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		ActiveNoticeBannerWidget->AddToViewport(500);
+	}
+
+	ActiveNoticeBannerWidget->ShowMessage(Message);
 }
 
 void ACSStorePlayerController::TryShowQueuedDeliveryToast()
@@ -499,6 +554,19 @@ void ACSStorePlayerController::SetStoreHUDHidden(
 	{
 		StoreHUDWidget->SetVisibility(StoreHUDVisibilityBeforeHide);
 		bHasStoredHUDVisibilityBeforeHide = false;
+	}
+}
+
+void ACSStorePlayerController::SetStoreTopBarHidden(UObject* Requester, bool bShouldHide)
+{
+	if (!IsValid(Requester)) return;
+	if (bShouldHide) StoreTopBarHideRequesters.AddUnique(Requester);
+	else StoreTopBarHideRequesters.Remove(Requester);
+	if (IsValid(StoreTopBarWidget))
+	{
+		StoreTopBarWidget->SetVisibility(StoreTopBarHideRequesters.IsEmpty()
+			? ESlateVisibility::HitTestInvisible
+			: ESlateVisibility::Collapsed);
 	}
 }
 

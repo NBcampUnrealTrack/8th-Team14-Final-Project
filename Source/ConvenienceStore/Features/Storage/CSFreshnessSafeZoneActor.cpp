@@ -6,6 +6,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
 #include "NavigationSystem.h"
+#include "EngineUtils.h"
+#include "Engine/World.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -140,11 +142,13 @@ FText ACSFreshnessSafeZoneActor::GetInteractionText_Implementation() const
 	return FText::FromString(TEXT("창고: 상자 또는 상품을 드세요."));
 }
 
-bool ACSFreshnessSafeZoneActor::CanStoreCrate(const ACSDeliveryCrateActor* Crate) const
+bool ACSFreshnessSafeZoneActor::CanStoreCrate(const ACSDeliveryCrateActor* Crate, bool bAllowFloorStorage) const
 {
+	FVector FloorLocation;
 	return bAllowEmployeeStorage && IsValid(Crate) &&
 		Crate->GetRemainingQuantity() > 0 && IsStorageTypeCompatible(Crate) &&
-		FindEmptyStorageSlot() != INDEX_NONE;
+		(FindEmptyStorageSlot() != INDEX_NONE ||
+			(bAllowFloorStorage && FindCrateFloorLocation(Crate, FloorLocation)));
 }
 
 bool ACSFreshnessSafeZoneActor::TryGetStorageApproachPoint(FVector& OutLocation) const
@@ -170,7 +174,7 @@ bool ACSFreshnessSafeZoneActor::TryGetStorageApproachPoint(FVector& OutLocation)
 	return true;
 }
 
-bool ACSFreshnessSafeZoneActor::TryStoreCrate(ACSDeliveryCrateActor* Crate)
+bool ACSFreshnessSafeZoneActor::TryStoreCrate(ACSDeliveryCrateActor* Crate, bool bAllowFloorStorage)
 {
 	if (StoredCrates.Num() != CrateStorageSlotPoints.Num())
 	{
@@ -178,7 +182,104 @@ bool ACSFreshnessSafeZoneActor::TryStoreCrate(ACSDeliveryCrateActor* Crate)
 		StoredCrates.SetNum(CrateStorageSlotPoints.Num());
 	}
 
-	return StoreCrateAtSlot(Crate, FindEmptyStorageSlot());
+	const int32 SlotIndex = FindEmptyStorageSlot();
+	if (SlotIndex != INDEX_NONE)
+	{
+		return StoreCrateAtSlot(Crate, SlotIndex);
+	}
+	FVector FloorLocation;
+	if (!bAllowFloorStorage || !bAllowEmployeeStorage || !IsValid(Crate) ||
+		Crate->GetRemainingQuantity() <= 0 || !IsStorageTypeCompatible(Crate))
+	{
+		return false;
+	}
+	Crate->PrepareForPickupPhysics();
+	if (!FindCrateFloorLocation(Crate, FloorLocation))
+	{
+		return false;
+	}
+	Crate->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	Crate->SetActorLocation(FloorLocation);
+	Crate->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+	Crate->SetActorEnableCollision(true);
+	Crate->SetHeldByPlayerForFreshness(false);
+	Crate->SetAwaitingStockroomIntake(false);
+	RegisterOverlappingActor(Crate);
+	return true;
+}
+
+bool ACSFreshnessSafeZoneActor::FindCrateFloorLocation(
+	const ACSDeliveryCrateActor* Crate, FVector& OutLocation) const
+{
+	// 냉장·냉동 창고에만 바닥 보관을 허용합니다. 상자는 물리로 굴러가지 않게 고정합니다.
+	const UStaticMeshComponent* Mesh = IsValid(Crate) ? Crate->GetCrateMeshComponent() : nullptr;
+	const UNavigationSystemV1* Nav = UNavigationSystemV1::GetCurrent(GetWorld());
+	if (!IsSupportedSafeStorageType() || !IsValid(SafeZoneBox) || !IsValid(Mesh) || Nav == nullptr)
+	{
+		return false;
+	}
+	const FVector Extent = Mesh->Bounds.BoxExtent + FVector(3.0f);
+	const FVector CenterOffset = Mesh->Bounds.Origin - Crate->GetActorLocation();
+	const FBox ZoneBounds = SafeZoneBox->Bounds.GetBox();
+	const FTransform ZoneTransform = SafeZoneBox->GetComponentTransform();
+	const FBox LocalZone(-SafeZoneBox->GetUnscaledBoxExtent(), SafeZoneBox->GetUnscaledBoxExtent());
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(EmployeeCrateFloor), false);
+	Params.AddIgnoredActor(Crate);
+	if (AActor* Carrier = Crate->GetAttachParentActor())
+	{
+		if (Carrier != this) Params.AddIgnoredActor(Carrier);
+	}
+	// 충돌이 꺼진 슬롯 재고도 배치 후보에서 제외합니다.
+	TArray<FBox> InventoryBounds;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		if (*It != Crate && (It->IsA<ACSDeliveryCrateActor>() || It->IsA<ACSProductPickupActor>()))
+		{
+			InventoryBounds.Add(It->GetComponentsBoundingBox(true));
+		}
+	}
+	const float Step = FMath::Max(50.0f, 2.0f * FMath::Max(Extent.X, Extent.Y));
+	for (double X = ZoneBounds.Min.X + Extent.X; X <= ZoneBounds.Max.X - Extent.X; X += Step)
+	{
+		for (double Y = ZoneBounds.Min.Y + Extent.Y; Y <= ZoneBounds.Max.Y - Extent.Y; Y += Step)
+		{
+			FNavLocation NavLocation;
+			if (!Nav->ProjectPointToNavigation(FVector(X, Y, ZoneBounds.Min.Z), NavLocation,
+				FVector(40.0f, 40.0f, 250.0f))) continue;
+			FHitResult Ground;
+			if (!GetWorld()->LineTraceSingleByChannel(Ground,
+				NavLocation.Location + FVector(0, 0, 50), NavLocation.Location - FVector(0, 0, 100),
+				ECC_Visibility, Params) || Ground.ImpactNormal.Z < 0.95f) continue;
+			const FVector Center = Ground.ImpactPoint + FVector(0, 0, Extent.Z + 2.0f);
+			bool bSupported = true;
+			for (int32 Corner = 0; Corner < 4; ++Corner)
+			{
+				const FVector Foot = Ground.ImpactPoint + FVector(
+					(Corner & 1) ? Extent.X : -Extent.X, (Corner & 2) ? Extent.Y : -Extent.Y, 0);
+				FHitResult Support;
+				bSupported &= GetWorld()->LineTraceSingleByChannel(Support,
+					Foot + FVector(0, 0, 10), Foot - FVector(0, 0, 10), ECC_Visibility, Params) &&
+					Support.ImpactNormal.Z >= 0.95f && FMath::Abs(Support.ImpactPoint.Z - Ground.ImpactPoint.Z) <= 3.0f;
+			}
+			if (!bSupported) continue;
+			const FBox Candidate(Center - Extent, Center + Extent);
+			bool bInsideZone = true;
+			for (int32 Corner = 0; Corner < 8; ++Corner)
+			{
+				const FVector Point((Corner & 1) ? Candidate.Max.X : Candidate.Min.X,
+					(Corner & 2) ? Candidate.Max.Y : Candidate.Min.Y,
+					(Corner & 4) ? Candidate.Max.Z : Candidate.Min.Z);
+				bInsideZone &= LocalZone.IsInsideOrOn(ZoneTransform.InverseTransformPosition(Point));
+			}
+			if (!bInsideZone || InventoryBounds.ContainsByPredicate(
+				[&Candidate](const FBox& Bounds) { return Candidate.Intersect(Bounds); }) ||
+				GetWorld()->OverlapBlockingTestByChannel(Center, FQuat::Identity, ECC_Visibility,
+					FCollisionShape::MakeBox(Extent), Params)) continue;
+			OutLocation = Center - CenterOffset;
+			return true;
+		}
+	}
+	return false;
 }
 
 bool ACSFreshnessSafeZoneActor::TryStoreCrateInSlot(
@@ -430,13 +531,13 @@ void ACSFreshnessSafeZoneActor::RemoveStoredLooseProduct(ACSProductPickupActor* 
 
 void ACSFreshnessSafeZoneActor::RemoveStoredCrate(ACSDeliveryCrateActor* Crate)
 {
+	// 바닥 보관 상자는 슬롯 배열에 없지만 동일하게 신선도 보호를 해제합니다.
+	UnregisterOverlappingActor(Crate);
 	for (int32 StorageSlotIndex = 0; StorageSlotIndex < StoredCrates.Num(); ++StorageSlotIndex)
 	{
 		if (StoredCrates[StorageSlotIndex] == Crate)
 		{
 			StoredCrates[StorageSlotIndex] = nullptr;
-			// 직원이 상자를 다시 들면 더 이상 창고의 냉장·냉동 보호를 받지 않도록 즉시 해제합니다.
-			UnregisterOverlappingActor(Crate);
 			return;
 		}
 	}

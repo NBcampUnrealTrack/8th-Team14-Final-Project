@@ -9,11 +9,13 @@
 class UCSJournalWidget;
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
+class UCSStoreTopBarWidget;
 class UUserWidget;
 class UCSDailySummaryWidget;
 class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
 class UCSDeliveryToastWidget;
+class UCSNoticeBannerWidgetBase;
 class UTexture2D;
 enum class ECSStatusAnnouncementType : uint8;
 
@@ -31,6 +33,10 @@ struct FCSQueuedDeliveryToast
 	FText Title;
 	FText Message;
 };
+
+// 개점·마감 안내(WBP_StatusAnnouncement) 애니메이션이 끝났을 때 방송
+// 튜토리얼이 고정 시간 대신 이 시점에 맞춰 다음 안내를 띄우는 데 씀
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnStoreAnnouncementFinished);
 
 // 로컬 플레이어의 편의점 HUD와 마감 UI 입력 상태를 관리합니다.
 UCLASS()
@@ -56,6 +62,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "UI|HUD")
 	void SetStoreHUDHidden(UObject* Requester, bool bShouldHide);
 
+	// 타이틀과 엔딩처럼 게임 화면을 완전히 덮는 장면에서만 상단 바를 숨깁니다.
+	void SetStoreTopBarHidden(UObject* Requester, bool bShouldHide);
+
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
 
@@ -80,6 +89,10 @@ public:
 	/** 배달 기한 초과처럼 입력을 막으면 안 되는 결과를 화면 토스트로 표시합니다. */
 	void ShowGameplayToast(const FText& Title, const FText& Message);
 
+	// 화면 중앙에 잠깐 떴다 사라지는 경고 배너를 표시합니다. 튜토리얼 진행 상태와 무관하게 동작하며
+	// 인스턴스 하나를 재사용하므로 어느 파트에서 호출해도 됩니다 (NoticeBannerWidgetClass는 사람이 지정)
+	void ShowNoticeBanner(const FText& Message);
+
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
 
@@ -97,13 +110,20 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "UI|Input")
 	FCSOnGameplayUIInputLockChanged OnGameplayUIInputLockChanged;
 
+	// "영업을 시작하였습니다" 안내 애니메이션이 끝났을 때 방송
+	UPROPERTY(BlueprintAssignable, Category = "UI|Announcement")
+	FCSOnStoreAnnouncementFinished OnStoreOpenedAnnouncementFinished;
+
+	// "영업시간이 종료되었습니다" 안내 애니메이션이 끝났을 때 방송
+	UPROPERTY(BlueprintAssignable, Category = "UI|Announcement")
+	FCSOnStoreAnnouncementFinished OnStoreClosedAnnouncementFinished;
+
 protected:
 	virtual void SetupInputComponent() override;
 	virtual void BeginPlay() override;
 	// UI 담당자가 제작한 CSJournalWidget 기반 WBP를 지정해 주시면 됩니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Journal")
-	TSoftClassPtr<UCSJournalWidget> JournalWidgetClass = TSoftClassPtr<UCSJournalWidget>(
-  FSoftObjectPath(TEXT("/Game/ConvenienceStore/UI/Journal/WBP_Journal.WBP_Journal_C")));
+	TSubclassOf<UCSJournalWidget> JournalWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSJournalWidget> ActiveJournalWidget;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -136,9 +156,7 @@ protected:
 	bool bUseTemporaryTitleScreen = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Temporary Title")
-	TSoftClassPtr<UUserWidget> TemporaryTitleWidgetClass =
-		TSoftClassPtr<UUserWidget>(FSoftObjectPath(
-			TEXT("/Game/ConvenienceStore/UI/Title/WBP_Title.WBP_Title_C")));
+	TSubclassOf<UUserWidget> TemporaryTitleWidgetClass;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> ActiveTemporaryTitleWidget;
@@ -146,6 +164,8 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Top Bar")
+	TSubclassOf<UCSStoreTopBarWidget> StoreTopBarWidgetClass;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Closing")
 	TSubclassOf<UCSDailySummaryWidget> DailySummaryWidgetClass;
 	UPROPERTY(Transient) TObjectPtr<UCSDailySummaryWidget> ActiveDailySummaryWidget;
@@ -163,8 +183,18 @@ protected:
 	TObjectPtr<UCSDeliveryToastWidget> ActiveDeliveryToastWidget;
 	TArray<FCSQueuedDeliveryToast> QueuedDeliveryToasts;
 
+	// WBP_TutorialBanner를 복제해 UCSNoticeBannerWidgetBase로 리페어런트한 WBP를 지정
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Notice Banner")
+	TSubclassOf<UCSNoticeBannerWidgetBase> NoticeBannerWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSNoticeBannerWidgetBase> ActiveNoticeBannerWidget;
+
 	UPROPERTY()
 	TObjectPtr<UCSStoreHUDWidget> StoreHUDWidget;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreTopBarWidget> StoreTopBarWidget;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UObject>> StoreTopBarHideRequesters;
 
 	// HUD 생성 순서와 무관하게 퀵바 초기 상태를 전달하기 위한 캐시입니다.
 	int32 CachedQuickbarSlotCount = 0;

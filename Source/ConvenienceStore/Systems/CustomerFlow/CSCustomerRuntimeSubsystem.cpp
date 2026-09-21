@@ -20,6 +20,8 @@
 #include "Components/CapsuleComponent.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "Engine/World.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Engine/Engine.h"
@@ -430,11 +432,11 @@ void UCSCustomerRuntimeSubsystem::LoadAndValidateCategoryAffinityTable()
 {
 	ValidatedAffinityRows.Reset();
 
-	const UDataTable* AffinityTable = CategoryAffinityDataTableAsset.LoadSynchronous();
+	const ACSStoreGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACSStoreGameMode>() : nullptr;
+	const UDataTable* AffinityTable = GameMode ? GameMode->GetCategoryAffinityDataTable() : nullptr;
 	if (!IsValid(AffinityTable))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[연관구매] DT_CategoryAffinity를 찾지 못했습니다: %s"),
-			*CategoryAffinityDataTableAsset.ToSoftObjectPath().ToString());
+		UE_LOG(LogTemp, Warning, TEXT("[연관구매] GameMode의 CategoryAffinityDataTable을 지정해 주세요."));
 	}
 	else if (AffinityTable->GetRowStruct() != FCSCategoryAffinityRow::StaticStruct())
 	{
@@ -676,6 +678,16 @@ void UCSCustomerRuntimeSubsystem::NotifyTrashWitnessed(ACSCustomerCharacter* Cus
 	OnTrashWitnessed.Broadcast(Customer);
 }
 
+void UCSCustomerRuntimeSubsystem::NotifyHeadIconShown(ACSCustomerCharacter* Customer)
+{
+	if (Customer == nullptr)
+	{
+		return;
+	}
+
+	OnHeadIconShown.Broadcast(Customer);
+}
+
 // 화면 하단 대화창 스타일 위젯 인스턴스 하나를 캐싱해서 재사용
 void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWidget> WidgetClass, const FText& InText, float Duration)
 {
@@ -707,6 +719,7 @@ void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWi
 
 	CachedInnerThoughtWidget->SetThoughtText(InText);
 	CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Visible);
+	OnInnerThoughtShown.Broadcast();
 
 	World->GetTimerManager().SetTimer(
 		InnerThoughtHideTimerHandle,

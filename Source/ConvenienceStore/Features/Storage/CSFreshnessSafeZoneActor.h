@@ -29,11 +29,11 @@ public:
 	virtual FText GetInteractionText_Implementation() const override;
 
 	// 이 포인트가 지정 상품 보관 타입의 배송 상자를 받을 수 있는지 확인합니다.
-	bool CanStoreCrate(const ACSDeliveryCrateActor* Crate) const;
+	bool CanStoreCrate(const ACSDeliveryCrateActor* Crate, bool bAllowFloorStorage = false) const;
 	// 직원이 이 위치까지 이동할 수 있도록 NavMesh에 맞춘 접근 지점을 반환합니다.
 	bool TryGetStorageApproachPoint(FVector& OutLocation) const;
 	// 배송 상자를 다음 빈 보관 슬롯에 고정하여, 실제 창고 재고로 보관합니다.
-	bool TryStoreCrate(ACSDeliveryCrateActor* Crate);
+	bool TryStoreCrate(ACSDeliveryCrateActor* Crate, bool bAllowFloorStorage = false);
 	// 플레이어가 조준한 상자 슬롯에만 배송 상자를 적재합니다.
 	bool TryStoreCrateInSlot(
 		ACSDeliveryCrateActor* Crate,
@@ -173,6 +173,7 @@ private:
 	int32 FindEmptyStorageSlot() const;
 	bool CanStoreCrateAtIndex(const ACSDeliveryCrateActor* Crate, int32 SlotIndex) const;
 	bool StoreCrateAtSlot(ACSDeliveryCrateActor* Crate, int32 SlotIndex);
+	bool FindCrateFloorLocation(const ACSDeliveryCrateActor* Crate, FVector& OutLocation) const;
 	int32 FindEmptyLooseProductStorageSlot() const;
 	int32 GetLooseProductStorageCapacity() const;
 	FTransform GetLooseProductStorageSlotWorldTransform(int32 SlotIndex) const;

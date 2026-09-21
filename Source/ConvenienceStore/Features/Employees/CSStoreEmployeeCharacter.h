@@ -48,7 +48,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Employee|Hiring") bool CanWork() const;
 	FText GetHiringRoleName() const;
 	// 고용소에서 지연 생성한 직원의 BeginPlay 전에 설정합니다.
-	void ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSoftClassPtr<UCSEmployeeHiringWidget> WidgetClass = nullptr);
+	void ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSubclassOf<UCSEmployeeHiringWidget> WidgetClass = nullptr);
 	void RefreshEmploymentPresentation();
 
 	// 현재 역할이 처리할 수 있는 업무인지 서브시스템이 확인할 수 있도록 제공합니다.
@@ -79,8 +79,7 @@ public:
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring")
-	TSoftClassPtr<UCSEmployeeHiringWidget> HiringWidgetClass = TSoftClassPtr<UCSEmployeeHiringWidget>(FSoftObjectPath(
-		TEXT("/Game/ConvenienceStore/UI/Employee/WBP_EmployeeHiring.WBP_EmployeeHiring_C")));
+	TSubclassOf<UCSEmployeeHiringWidget> HiringWidgetClass;
 	// 기존 업무 전용 배치 직원은 그대로 동작합니다. 고용소가 생성하는 지원자는 true입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") bool bRequiresHiring = false;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring", meta = (EditCondition = "bRequiresHiring"))
