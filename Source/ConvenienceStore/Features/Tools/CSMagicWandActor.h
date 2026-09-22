@@ -6,6 +6,7 @@
 
 class ACSMagicProjectileActor;
 class USceneComponent;
+class UCSMagicWandCrosshairWidget;
 
 // 주 사용 입력으로 마법 투사체를 발사하는 지팡이 도구입니다.
 UCLASS()
@@ -40,8 +41,17 @@ protected:
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float PrimaryUseCooldown = 0.35f;
 
+	// 장착 중에만 화면에 띄우는 조준점 WBP
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Magic|UI")
+	TSubclassOf<UCSMagicWandCrosshairWidget> CrosshairWidgetClass;
+
 private:
 	void RestoreWorldScale();
+	void ShowCrosshairWidget(ACSPlayerCharacter* NewOwner);
+	void HideCrosshairWidget();
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCSMagicWandCrosshairWidget> ActiveCrosshairWidget;
 
 	// 장착 중에만 유지합니다. 복원 후 비워 다음 획득에서도 원래 월드 크기를 기록합니다.
 	TOptional<FVector> CachedWorldScale;

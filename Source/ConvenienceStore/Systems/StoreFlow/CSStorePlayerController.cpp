@@ -715,6 +715,14 @@ void ACSStorePlayerController::ClearInteractionContext()
 	}
 }
 
+void ACSStorePlayerController::SetDefaultCrosshairVisible(bool bVisible)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetDefaultCrosshairVisible(bVisible);
+	}
+}
+
 void ACSStorePlayerController::SetBuildModeHUDState(
 	bool bIsBuildMode,
 	bool bPlayTransition)

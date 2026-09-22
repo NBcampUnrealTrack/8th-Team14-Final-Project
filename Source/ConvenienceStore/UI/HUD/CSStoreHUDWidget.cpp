@@ -243,6 +243,14 @@ void UCSStoreHUDWidget::SetQuickbarData(
 	}
 }
 
+void UCSStoreHUDWidget::SetDefaultCrosshairVisible(bool bVisible)
+{
+	if (IsValid(CrosshairDot))
+	{
+		CrosshairDot->SetVisibility(bVisible ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+}
+
 void UCSStoreHUDWidget::HandlePhaseChanged(ECStorePhase NewPhase)
 {
 	UpdatePhaseNameDisplay();
