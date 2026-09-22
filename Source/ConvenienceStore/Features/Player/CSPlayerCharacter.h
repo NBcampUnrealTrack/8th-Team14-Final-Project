@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "GameFramework/Character.h"
+#include "UI/HUD/CSInteractionPrompt.h"
 #include "CSPlayerCharacter.generated.h"
 
 class UCameraComponent;
@@ -67,6 +68,9 @@ public:
 
 	// 상호작용한 물체를 플레이어 손 위치에 부착합니다.
 	bool TryPickUp(AActor* PickupActor);
+	// 낱개 집기와 상자 포장을 동일한 회수 경로로 처리합니다.
+	bool TryCollectProduct(ACSProductPickupActor* Product);
+	TArray<FCSInteractionPrompt> GetShelfInteractionPrompts(const ACSShelfActor* Shelf, FVector AimPoint, const ACSProductPickupActor* DirectProduct = nullptr) const;
 	// 제출할 도구를 손과 퀵바에서 함께 제거하여 파괴 후 참조가 남지 않게 합니다.
 	bool ConsumeQuickbarTool(ACSUsableToolActor* Tool);
 	// 전시대 등에 넘길 도구를 파괴하지 않고 손과 퀵바에서 분리합니다.
@@ -447,6 +451,13 @@ private:
 	void StartCrouch();
 	void StopCrouch();
 	void TryInteract();
+	FText GetProductCollectionPrompt(const ACSProductPickupActor* Product) const;
+	bool CanCollectProductForPrompt(const ACSProductPickupActor* Product) const;
+	void ShowProductCollectionFailure(const ACSProductPickupActor* Product) const;
+	void UpdateHeldCollectionHUD();
+	void PrepareInventoryForPlayerPickup(AActor* Inventory);
+	UPROPERTY(EditDefaultsOnly, Category = "Interaction|Packing") TSubclassOf<ACSDeliveryCrateActor> PackingCrateClass;
+
 	void HandleDropActionStarted();
 	void HandleDropActionReleased();
 	void HandleDropActionCanceled();

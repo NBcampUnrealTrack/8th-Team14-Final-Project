@@ -515,6 +515,18 @@ bool UCSStoreEmployeeSubsystem::TryClaimBestTask(
 	return true;
 }
 
+bool UCSStoreEmployeeSubsystem::ReplaceAssignedTaskSource(int32 TaskId, ACSStoreEmployeeCharacter* Employee, AActor* NewSource, int32 Quantity)
+{
+	ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(NewSource);
+	if (!IsValid(Crate) || !IsTaskAssignedToEmployee(TaskId, Employee)) return false;
+	FCSStoreEmployeeTask* Task = Tasks.FindByPredicate([TaskId](const FCSStoreEmployeeTask& Value) { return Value.TaskId == TaskId; });
+	if (!Task || !Crate->TryReserveForEmployee(Employee, TaskId)) return false;
+	ReleaseTaskSourceReservation(*Task, Employee);
+	Task->SourceActor = Crate;
+	Task->RequestedQuantity = Quantity;
+	return true;
+}
+
 bool UCSStoreEmployeeSubsystem::CancelTaskForPlayerPickup(AActor* SourceActor)
 {
 	if (!IsValid(SourceActor))
@@ -522,6 +534,9 @@ bool UCSStoreEmployeeSubsystem::CancelTaskForPlayerPickup(AActor* SourceActor)
 		return false;
 	}
 
+	TArray<TWeakObjectPtr<ACSStoreEmployeeCharacter>> AffectedEmployees;
+	if (ACSStoreEmployeeCharacter* Carrier = Cast<ACSStoreEmployeeCharacter>(SourceActor->GetAttachParentActor()))
+		AffectedEmployees.AddUnique(Carrier);
 	for (FCSStoreEmployeeTask& Task : Tasks)
 	{
 		if (Task.SourceActor != SourceActor ||
@@ -531,6 +546,7 @@ bool UCSStoreEmployeeSubsystem::CancelTaskForPlayerPickup(AActor* SourceActor)
 			continue;
 		}
 
+		if (IsValid(Task.AssignedEmployee)) AffectedEmployees.AddUnique(Task.AssignedEmployee);
 		ReleaseTaskSourceReservation(Task, Task.AssignedEmployee);
 		Task.AssignedEmployee = nullptr;
 		Task.Status = ECSStoreEmployeeTaskStatus::Cancelled;
@@ -538,10 +554,14 @@ bool UCSStoreEmployeeSubsystem::CancelTaskForPlayerPickup(AActor* SourceActor)
 			TEXT("[StoreEmployee] 플레이어가 %s을(를) 집어 %d번 직원 업무를 취소했습니다."),
 			*SourceActor->GetName(),
 			Task.TaskId);
-		return true;
 	}
-
-	return false;
+	// 콜백이 업무 배열을 변경할 수 있으므로 순회를 마친 뒤 직원 상태를 정리합니다.
+	for (const TWeakObjectPtr<ACSStoreEmployeeCharacter>& Employee : AffectedEmployees)
+		if (Employee.IsValid()) Employee->RelinquishInventoryToPlayer(SourceActor);
+	// 이미 사라진 업무의 예약도 플레이어 집기를 막지 않도록 남은 예약을 해제합니다.
+	if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(SourceActor)) Product->ClearEmployeeReservationForPlayer();
+	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(SourceActor)) Crate->ClearEmployeeReservationForPlayer();
+	return true;
 }
 
 bool UCSStoreEmployeeSubsystem::IsTaskAssignedToEmployee(

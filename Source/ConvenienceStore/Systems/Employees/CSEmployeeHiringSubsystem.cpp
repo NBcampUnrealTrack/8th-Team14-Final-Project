@@ -73,6 +73,13 @@ bool UCSEmployeeHiringSubsystem::CanHire(const ACSStoreEmployeeCharacter* Applic
 		OutReason = NSLOCTEXT("EmployeeHiring", "WrongRole", "고용 자리와 직원의 담당 업무가 일치하지 않습니다.");
 		return false;
 	}
+	// 화면 외부에서 고용을 요청해도 동일한 레벨 조건을 검증합니다.
+	if (!State->IsStoreLevelRequirementMet(State->GetEmployeeRequiredStoreLevel(Slot)))
+	{
+		OutReason = FText::Format(NSLOCTEXT("EmployeeHiring", "StoreLevelRequired", "가게 레벨 {0}이 필요합니다. (현재 {1})"),
+			FText::AsNumber(State->GetEmployeeRequiredStoreLevel(Slot)), FText::AsNumber(State->GetStoreLevel()));
+		return false;
+	}
 	if (!State->CanAfford(State->GetEmployeeHireCost(Slot)))
 	{
 		OutReason = NSLOCTEXT("EmployeeHiring", "InsufficientFunds", "고용비를 지불할 자금이 부족합니다.");

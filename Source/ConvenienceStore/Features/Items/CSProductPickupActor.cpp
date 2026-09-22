@@ -91,7 +91,7 @@ void ACSProductPickupActor::Interact_Implementation(AActor* Interactor)
 {
 	if (ACSPlayerCharacter* PlayerCharacter = Cast<ACSPlayerCharacter>(Interactor))
 	{
-		PlayerCharacter->TryPickUp(this);
+		PlayerCharacter->TryCollectProduct(this);
 	}
 }
 

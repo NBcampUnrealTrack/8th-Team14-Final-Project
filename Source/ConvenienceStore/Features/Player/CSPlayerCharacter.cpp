@@ -6,6 +6,7 @@
 #include "Features/Ending/CSEndingDisplayActor.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 #include "Features/Employees/CSEmployeeWaitingArea.h"
 #include "Features/Delivery/CSDeliveryMagicCircleActor.h"
@@ -182,6 +183,8 @@ void PlayPlayerGameplaySFX(const AActor* WorldContextActor, ECSAudioEvent AudioE
 
 ACSPlayerCharacter::ACSPlayerCharacter()
 {
+	static ConstructorHelpers::FClassFinder<ACSDeliveryCrateActor> PackingClass(TEXT("/Game/ConvenienceStore/Blueprints/Delivery/BP_DeliveryCrateBase"));
+	PackingCrateClass = PackingClass.Class;
     // 진열 프리뷰는 물체를 들고 있을 때만 갱신합니다.
     PrimaryActorTick.bCanEverTick = true;
 	// 상호작용 안내는 물체를 들지 않은 상태에서도 갱신해야 하므로 항상 Tick을 유지합니다.
@@ -861,6 +864,8 @@ void ACSPlayerCharacter::Tick(float DeltaTime)
 		else
 		{
 			UpdatePlacementPreview();
+			// 프리뷰가 안내를 초기화한 뒤 E 회수와 Q 진열 안내를 함께 작성합니다.
+			UpdateHeldCollectionHUD();
 		}
 	}
 	else
@@ -958,47 +963,7 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
         return false;
     }
 
-	// 직원이 아직 손에 들지 않은 예약 재고는 플레이어가 우선해서 집을 수 있습니다.
-	// 이 경우 예약과 업무를 함께 취소해야 직원이 같은 대상으로 이동을 계속하지 않습니다.
-	if (const ACSDeliveryCrateActor* DeliveryCrate = Cast<ACSDeliveryCrateActor>(PickupActor);
-		IsValid(DeliveryCrate) && DeliveryCrate->IsReservedByEmployee())
-	{
-		if (Cast<ACSStoreEmployeeCharacter>(PickupActor->GetAttachParentActor()) != nullptr)
-		{
-			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 이미 상자를 운반 중입니다.")));
-			return false;
-		}
-
-		ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상자를 운반할 예정입니다. 직원 업무를 취소하고 집습니다.")));
-		UCSStoreEmployeeSubsystem* EmployeeSubsystem = GetWorld() != nullptr
-			? GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>()
-			: nullptr;
-		if (!IsValid(EmployeeSubsystem) || !EmployeeSubsystem->CancelTaskForPlayerPickup(PickupActor))
-		{
-			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원 업무 취소에 실패했습니다. 잠시 후 다시 시도하세요.")));
-			return false;
-		}
-	}
-
-	if (const ACSProductPickupActor* ProductActor = Cast<ACSProductPickupActor>(PickupActor);
-		IsValid(ProductActor) && ProductActor->IsReservedByEmployee())
-	{
-		if (Cast<ACSStoreEmployeeCharacter>(PickupActor->GetAttachParentActor()) != nullptr)
-		{
-			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 이미 상품을 운반 중입니다.")));
-			return false;
-		}
-
-		ShowEmployeeReservationWarning(FText::FromString(TEXT("직원이 상품을 운반할 예정입니다. 직원 업무를 취소하고 집습니다.")));
-		UCSStoreEmployeeSubsystem* EmployeeSubsystem = GetWorld() != nullptr
-			? GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>()
-			: nullptr;
-		if (!IsValid(EmployeeSubsystem) || !EmployeeSubsystem->CancelTaskForPlayerPickup(PickupActor))
-		{
-			ShowEmployeeReservationWarning(FText::FromString(TEXT("직원 업무 취소에 실패했습니다. 잠시 후 다시 시도하세요.")));
-			return false;
-		}
-	}
+	PrepareInventoryForPlayerPickup(PickupActor);
 
     // 진열대에서 다시 집은 상품은 기존 슬롯 점유를 먼저 해제합니다.
 	if (AActor* PreviousParent = PickupActor->GetAttachParentActor();
@@ -1180,6 +1145,8 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
     }
 
 	AActor* TargetActor = HitResult.GetActor();
+	if (const ACSStoreEmployeeCharacter* Employee = Cast<ACSStoreEmployeeCharacter>(TargetActor))
+		if (AActor* Inventory = Employee->GetCarriedInventoryForPlayer()) TargetActor = Inventory;
 	if (!IsValid(TargetActor))
 	{
 		return;
@@ -1280,10 +1247,8 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 
 	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(TargetActor))
 	{
-		// 진열대의 E는 상품 집기·배치에 남겨 두고, 구성 관리 화면은 F 입력으로만 열도록 구분합니다.
-		StorePlayerController->SetInteractionPrompt(
-			NSLOCTEXT("Interaction", "ShelfConfigurationPrompt", "[F] 진열 구성 관리"),
-			FLinearColor::White);
+		StorePlayerController->SetInteractionPrompts(
+			GetShelfInteractionPrompts(Shelf, HitResult.ImpactPoint, Cast<ACSProductPickupActor>(HitResult.GetActor())));
 		return;
 	}
 
@@ -1337,7 +1302,7 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 	}
 
 	StorePlayerController->SetInteractionPrompt(
-		FText::Format(
+		Cast<ACSProductPickupActor>(TargetActor) ? GetProductCollectionPrompt(Cast<ACSProductPickupActor>(TargetActor)) : FText::Format(
 			NSLOCTEXT("Interaction", "UsePrompt", "[E] {0}"),
 			InteractionText),
 		FLinearColor::White);
@@ -4371,6 +4336,151 @@ void ACSPlayerCharacter::ShowEmployeeReservationWarning(const FText& Message) co
 	}
 }
 
+void ACSPlayerCharacter::PrepareInventoryForPlayerPickup(AActor* Inventory)
+{
+	if (!IsValid(Inventory) || (!Inventory->IsA<ACSProductPickupActor>() && !Inventory->IsA<ACSDeliveryCrateActor>())) return;
+	if (UCSStoreEmployeeSubsystem* Employees = GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>())
+		Employees->CancelTaskForPlayerPickup(Inventory);
+}
+
+TArray<FCSInteractionPrompt> ACSPlayerCharacter::GetShelfInteractionPrompts(const ACSShelfActor* Shelf, FVector AimPoint, const ACSProductPickupActor* DirectProduct) const
+{
+	TArray<FCSInteractionPrompt> Prompts;
+	const FText Manage = NSLOCTEXT("Packing", "ManageShelf", "[F] 진열 구성 관리");
+	if (!IsValid(Shelf)) return Prompts;
+	const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
+	const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor);
+	// 물건을 든 동안에는 실제로 열 수 없는 구성 관리 안내를 표시하지 않습니다.
+	if (IsValid(HeldActor) && !HeldProduct && !Crate) return Prompts;
+	const FDataTableRowHandle Row = HeldProduct ? HeldProduct->GetProductRow() : Crate ? Crate->GetProductRow() : FDataTableRowHandle();
+	const ACSProductPickupActor* Candidate = DirectProduct;
+	if (!Candidate || Candidate->GetAttachParentActor() != Shelf || !ACSDeliveryCrateActor::CanPackProduct(Candidate, this) ||
+		(!Row.IsNull() && (Row.DataTable != Candidate->GetProductRow().DataTable || Row.RowName != Candidate->GetProductRow().RowName)))
+		Candidate = Shelf->FindRetrievableProduct(AimPoint, Row, this);
+	// 빈 단에는 회수 안내를 생략하되, 들고 계신 상품의 배치 안내는 유지합니다.
+	if (Shelf->GetProductCountOnAimedLevel(AimPoint) > 0)
+		Prompts.Add({GetProductCollectionPrompt(Candidate), !CanCollectProductForPrompt(Candidate)});
+	if (IsValid(HeldActor))
+	{
+		ACSProductPickupActor* PlacementProduct = HeldProduct ? const_cast<ACSProductPickupActor*>(HeldProduct) : PlacementPreviewActor.Get();
+		if (IsValid(PlacementProduct))
+		{
+			FTransform PreviewTransform;
+			const ECSShelfPlacementPreviewState State = Shelf->GetPlacementPreviewState_Implementation(PlacementProduct, AimPoint, PreviewTransform);
+			const bool bInvalid = State == ECSShelfPlacementPreviewState::Invalid;
+			Prompts.Add({bInvalid ? Shelf->GetPlayerPlacementFailureText(PlacementProduct, AimPoint)
+				: NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"), bInvalid});
+		}
+		else if (Crate)
+		{
+			Prompts.Add({FText::FromString(Crate->GetRemainingQuantity() == 0
+				? TEXT("상자에 진열할 상품이 없습니다.") : TEXT("진열 미리보기를 표시할 수 없습니다.")), true});
+		}
+	}
+	if (!IsValid(HeldActor)) Prompts.Add({Manage, false});
+	return Prompts;
+}
+
+void ACSPlayerCharacter::UpdateHeldCollectionHUD()
+{
+	ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(GetController());
+	if (!StoreController || StoreController->IsGameplayUIInputLocked() || !FirstPersonCamera) return;
+	FHitResult Hit;
+	FCollisionQueryParams Query;
+	Query.AddIgnoredActor(this);
+	Query.AddIgnoredActor(HeldActor);
+	const FVector Start = FirstPersonCamera->GetComponentLocation();
+	if (!GetWorld()->LineTraceSingleByChannel(Hit, Start, Start + FirstPersonCamera->GetForwardVector() * InteractionDistance, ECC_Visibility, Query)) return;
+	AActor* Target = Hit.GetActor();
+	if (const ACSStoreEmployeeCharacter* Employee = Cast<ACSStoreEmployeeCharacter>(Target))
+		if (AActor* Inventory = Employee->GetCarriedInventoryForPlayer()) Target = Inventory;
+	ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Target);
+	ACSShelfActor* Shelf = Cast<ACSShelfActor>(Target);
+	if (!Shelf && Product) Shelf = Cast<ACSShelfActor>(Product->GetAttachParentActor());
+	if (Shelf)
+	{
+		StoreController->SetInteractionPrompts(GetShelfInteractionPrompts(Shelf, Hit.ImpactPoint, Product));
+	}
+	else if (Product) StoreController->SetInteractionPrompts({{GetProductCollectionPrompt(Product), !CanCollectProductForPrompt(Product)}});
+}
+
+bool ACSPlayerCharacter::CanCollectProductForPrompt(const ACSProductPickupActor* Product) const
+{
+	if (!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return false;
+	if (!IsValid(HeldActor)) return true;
+	const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor);
+	const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
+	if (Crate && (!Crate->IsPackingCrate() || Crate->GetRemainingQuantity() >= ACSDeliveryCrateActor::PackingCapacity)) return false;
+	if (!Crate && (!HeldProduct || !PackingCrateClass)) return false;
+	const FDataTableRowHandle Row = Crate ? Crate->GetProductRow() : HeldProduct->GetProductRow();
+	return Row.DataTable == Product->GetProductRow().DataTable && Row.RowName == Product->GetProductRow().RowName;
+}
+
+FText ACSPlayerCharacter::GetProductCollectionPrompt(const ACSProductPickupActor* Product) const
+{
+	const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor);
+	if (IsValid(Crate) && (!Crate->IsPackingCrate() || Crate->GetRemainingQuantity() >= ACSDeliveryCrateActor::PackingCapacity))
+		return FText::FromString(Crate->IsPackingCrate() ? TEXT("상자가 가득 찼습니다 · 6/6") : TEXT("배송 상자에는 상품을 추가할 수 없습니다."));
+	if (!IsValid(Product)) return FText::FromString(TEXT("회수 불가: 이 단에 같은 종류의 상품이 없습니다."));
+	if (!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return FText::FromString(TEXT("회수할 수 없는 상품입니다."));
+	if (!IsValid(HeldActor)) return FText::Format(NSLOCTEXT("Packing", "PickOne", "[E] {0} 회수"), Product->GetProductDisplayName());
+	const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
+	const FDataTableRowHandle Row = Crate ? Crate->GetProductRow() : HeldProduct ? HeldProduct->GetProductRow() : FDataTableRowHandle();
+	if (Row.DataTable != Product->GetProductRow().DataTable || Row.RowName != Product->GetProductRow().RowName)
+		return FText::FromString(TEXT("회수 불가: 같은 종류의 상품만 담을 수 있습니다."));
+	if (HeldProduct && !PackingCrateClass) return FText::FromString(TEXT("회수 불가: 포장 상자가 설정되지 않았습니다."));
+	// 새 상자를 처음 만들 때는 아직 손에 든 상품까지 합산한 수량을 표시하지 않습니다.
+	if (HeldProduct) return FText::Format(NSLOCTEXT("Packing", "CreateBox", "[E] {0} 회수하여 상자 만들기"), Product->GetProductDisplayName());
+	return FText::Format(NSLOCTEXT("Packing", "Collect", "[E] {0} 회수 · 상자 {1}/6"),
+		Product->GetProductDisplayName(), FText::AsNumber(Crate ? Crate->GetRemainingQuantity() : 1));
+}
+
+void ACSPlayerCharacter::ShowProductCollectionFailure(const ACSProductPickupActor* Product) const
+{
+	// 회수 실패 입력도 조준 안내와 동일한 빨간 위험 스타일로 표시합니다.
+	if (ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(GetController()))
+		StoreController->SetInteractionPrompt(GetProductCollectionPrompt(Product), FLinearColor::Red);
+}
+
+bool ACSPlayerCharacter::TryCollectProduct(ACSProductPickupActor* Product)
+{
+	if (IsBuildMode() || IsValid(PushedCart) || !IsValid(HeldItemAnchor) || Product == HeldActor ||
+		!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return false;
+	if (!IsValid(HeldActor)) return TryPickUp(Product);
+	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor))
+	{
+		// 담을 수 없는 입력으로 직원 업무가 취소되지 않도록 용량과 품목을 먼저 확인합니다.
+		if (Crate->IsPackingCrate() && Crate->GetRemainingQuantity() < ACSDeliveryCrateActor::PackingCapacity &&
+			Crate->GetProductRow().DataTable == Product->GetProductRow().DataTable && Crate->GetProductRow().RowName == Product->GetProductRow().RowName)
+			PrepareInventoryForPlayerPickup(Product);
+		if (Crate->TryAddPackedProduct(Product, this)) return true;
+		ShowProductCollectionFailure(Product);
+		return false;
+	}
+	ACSProductPickupActor* First = Cast<ACSProductPickupActor>(HeldActor);
+	if (!IsValid(First) || !PackingCrateClass || First->GetProductRow().DataTable != Product->GetProductRow().DataTable ||
+		First->GetProductRow().RowName != Product->GetProductRow().RowName)
+	{
+		ShowProductCollectionFailure(Product);
+		return false;
+	}
+	// 상품의 개별 크기 배율이 새 상자에 복사되지 않도록 위치만 전달합니다.
+	const FTransform Transform(FRotator::ZeroRotator, First->GetActorLocation());
+	ACSDeliveryCrateActor* Crate = GetWorld()->SpawnActorDeferred<ACSDeliveryCrateActor>(PackingCrateClass, Transform,
+		nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(Crate)) return false;
+	if (!Crate->InitializePackedProducts({First, Product})) { Crate->Destroy(); return false; }
+	Crate->FinishSpawning(Transform);
+	if (!IsValid(Crate)) return false;
+	// 집기 실패 시 기존 상품을 그대로 유지하여 회수 중 재고가 사라지지 않게 합니다.
+	HeldActor = nullptr;
+	if (!TryPickUp(Crate)) { HeldActor = First; Crate->Destroy(); return false; }
+	PrepareInventoryForPlayerPickup(Product);
+	ACSDeliveryCrateActor::RemovePackedSource(First);
+	ACSDeliveryCrateActor::RemovePackedSource(Product);
+	return true;
+}
+
 void ACSPlayerCharacter::TryInteract()
 {
 	// 수레를 잡은 상태에서는 E로 물건을 집거나 다른 상호작용을 실행하지 않습니다.
@@ -4415,6 +4525,8 @@ void ACSPlayerCharacter::TryInteract()
     }
 
     AActor* HitActor = HitResult.GetActor();
+	if (const ACSStoreEmployeeCharacter* Employee = Cast<ACSStoreEmployeeCharacter>(HitActor))
+		if (AActor* Inventory = Employee->GetCarriedInventoryForPlayer()) HitActor = Inventory;
 	if (IsBuildMode())
 	{
 		if (IsValid(HitActor) && HitActor->Implements<UCSBuildableFacility>())
@@ -4449,6 +4561,25 @@ void ACSPlayerCharacter::TryInteract()
 		Display->InteractWithSlot(this, HitResult.GetComponent());
 		return;
     }
+
+	ACSProductPickupActor* HitProduct = Cast<ACSProductPickupActor>(HitActor);
+	ACSShelfActor* Shelf = Cast<ACSShelfActor>(HitActor);
+	if (!Shelf && HitProduct) Shelf = Cast<ACSShelfActor>(HitProduct->GetAttachParentActor());
+	if (Shelf)
+	{
+		if (Shelf->GetProductCountOnAimedLevel(HitResult.ImpactPoint) == 0) return;
+		FDataTableRowHandle RequiredRow;
+		if (const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor)) RequiredRow = HeldProduct->GetProductRow();
+		else if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor)) RequiredRow = Crate->GetProductRow();
+		else if (IsValid(HeldActor)) return;
+		const bool bDirectMatch = HitProduct && ACSDeliveryCrateActor::CanPackProduct(HitProduct, this) &&
+			(RequiredRow.IsNull() || (RequiredRow.DataTable == HitProduct->GetProductRow().DataTable && RequiredRow.RowName == HitProduct->GetProductRow().RowName));
+		ACSProductPickupActor* Product = bDirectMatch ? HitProduct : Shelf->FindRetrievableProduct(HitResult.ImpactPoint, RequiredRow, this);
+		if (Product) TryCollectProduct(Product);
+		else ShowProductCollectionFailure(nullptr);
+		return;
+	}
+	if (HitProduct) { TryCollectProduct(HitProduct); return; }
 
     if (IsValid(HitActor) && HitActor->Implements<UCSInteractable>())
     {

@@ -93,6 +93,10 @@ class CONVENIENCESTORE_API ACSShelfActor : public AActor,
 
 public:
 	ACSShelfActor();
+	// 조준한 단의 뒤쪽 슬롯부터 회수 가능한 상품을 찾습니다. 다른 단으로 넘어가지 않습니다.
+	ACSProductPickupActor* FindRetrievableProduct(FVector AimPoint, const FDataTableRowHandle& RequiredRow, const AActor* Collector = nullptr) const;
+	int32 GetProductCountOnAimedLevel(FVector AimPoint) const;
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -221,6 +225,10 @@ protected:
 		ECSShelfSlotLevel PreferredLevel,
 		bool bIgnoreStorageCompatibility = false,
 		bool bAllowOtherLevelFallback = true) const;
+	// 직원은 플레이어가 지정한 같은 상품의 단을 먼저 채우고, 그 단이 가득 찬 뒤에만 기본 순서를 사용합니다.
+	int32 FindEmptyEmployeeRestockSlot(
+		const FDataTableRowHandle& ProductRow,
+		bool bAllowCrossTierDuplicateFallback) const;
 	bool CanPlaceProductInLevel(
 		const FDataTableRowHandle& ProductRow,
 		ECSShelfSlotLevel SlotLevel,

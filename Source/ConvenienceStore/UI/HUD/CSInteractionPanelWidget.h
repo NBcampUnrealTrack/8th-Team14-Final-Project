@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/HUD/CSInteractionPrompt.h"
 #include "CSInteractionPanelWidget.generated.h"
 
 class UImage;
@@ -25,6 +26,7 @@ class CONVENIENCESTORE_API UCSInteractionPanelWidget : public UUserWidget
 
 public:
 	void SetInteractionPrompt(const FText& Message, const FLinearColor& RequestedColor);
+	void SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts);
 	void SetProductPrice(const FText& Message);
 	void SetProductShelfLife(const FText& Message, const FLinearColor& RequestedColor);
 	void SetProductFreshness(const FText& Message, const FLinearColor& RequestedColor);
@@ -32,6 +34,7 @@ public:
 	void ClearInteractionContext();
 
 protected:
+	virtual void NativeOnInitialized() override;
 	virtual void NativeConstruct() override;
 
 	UPROPERTY(meta = (BindWidgetOptional))
@@ -98,6 +101,14 @@ protected:
 	FLinearColor PriceTextColor = FLinearColor(1.0f, 0.85f, 0.35f, 1.0f);
 
 private:
+	// 추가 안내는 기존 안내와 같은 배경과 글꼴을 사용하는 독립 행에 표시합니다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> AdditionalPromptRows;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UImage>> AdditionalPromptBackgrounds;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> AdditionalPromptTexts;
+
 	enum class EInteractionVisualStyle : uint8
 	{
 		Normal,

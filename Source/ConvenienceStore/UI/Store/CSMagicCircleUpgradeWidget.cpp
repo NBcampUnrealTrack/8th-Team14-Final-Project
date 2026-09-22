@@ -28,6 +28,7 @@ void UCSMagicCircleUpgradeWidget::NativeConstruct()
 	if (IsValid(CancelButton)) CancelButton->OnClicked.AddUniqueDynamic(this, &ThisClass::Close);
 	if (IsValid(StoreState))
 	{
+		StoreState->OnStoreLevelChanged.AddUniqueDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnFundsChanged.AddUniqueDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnMagicCircleUpgraded.AddUniqueDynamic(this, &ThisClass::HandleUpgraded);
 		StoreState->OnDailySummaryRequested.AddUniqueDynamic(this, &ThisClass::Close);
@@ -43,6 +44,7 @@ void UCSMagicCircleUpgradeWidget::NativeDestruct()
 	if (IsValid(CancelButton)) CancelButton->OnClicked.RemoveDynamic(this, &ThisClass::Close);
 	if (IsValid(StoreState))
 	{
+		StoreState->OnStoreLevelChanged.RemoveDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnFundsChanged.RemoveDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnMagicCircleUpgraded.RemoveDynamic(this, &ThisClass::HandleUpgraded);
 		StoreState->OnDailySummaryRequested.RemoveDynamic(this, &ThisClass::Close);
@@ -72,6 +74,8 @@ void UCSMagicCircleUpgradeWidget::RefreshView()
 			ViewData.NextLevel = FMath::Min(5, ViewData.CurrentLevel + 1);
 			ViewData.DailyOrderLimit = ViewData.CurrentLevel;
 			ViewData.NextDailyOrderLimit = ViewData.NextLevel;
+			ViewData.RequiredStoreLevel = State->GetMagicCircleRequiredStoreLevel();
+			ViewData.CurrentStoreLevel = State->GetStoreLevel();
 			ViewData.UpgradeCost = State->GetMagicCircleUpgradeCost();
 			ViewData.CurrentFunds = State->GetCurrentFunds();
 			ViewData.FundsAfterUpgrade = static_cast<int32>(FMath::Clamp<int64>(static_cast<int64>(ViewData.CurrentFunds) - ViewData.UpgradeCost, MIN_int32, MAX_int32));
@@ -85,7 +89,7 @@ void UCSMagicCircleUpgradeWidget::RefreshView()
 	if (IsValid(DailyOrderLimitText)) DailyOrderLimitText->SetText(FText::Format(NSLOCTEXT("MagicCircle", "LimitChange", "하루 최대 {0}건 → {1}건"), FText::AsNumber(ViewData.DailyOrderLimit), FText::AsNumber(ViewData.NextDailyOrderLimit)));
 	if (IsValid(TodayOrdersText)) TodayOrdersText->SetText(FText::Format(NSLOCTEXT("MagicCircle", "TodayOrders", "오늘 도착한 주문: {0} / {1}건"), FText::AsNumber(ViewData.TodayGeneratedOrderCount), FText::AsNumber(ViewData.DailyOrderLimit)));
 	const auto Gold = [](int32 Amount) { return FText::Format(NSLOCTEXT("MagicCircle", "Gold", "{0}G"), FText::AsNumber(Amount)); };
-	if (IsValid(UpgradeCostText)) UpgradeCostText->SetText(Gold(ViewData.UpgradeCost));
+	if (IsValid(UpgradeCostText)) UpgradeCostText->SetText(FText::Format(NSLOCTEXT("StoreRequirements", "CostAndLevel", "{0} · 가게 레벨 {1} 필요 (현재 {2})"), Gold(ViewData.UpgradeCost), FText::AsNumber(ViewData.RequiredStoreLevel), FText::AsNumber(ViewData.CurrentStoreLevel)));
 	if (IsValid(CurrentFundsText)) CurrentFundsText->SetText(Gold(ViewData.CurrentFunds));
 	if (IsValid(FundsAfterUpgradeText)) FundsAfterUpgradeText->SetText(Gold(ViewData.FundsAfterUpgrade));
 	if (IsValid(AvailabilityText)) AvailabilityText->SetText(ViewData.Message);

@@ -25,6 +25,15 @@ class CONVENIENCESTORE_API UCSStoreEconomyDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	// 고용 자리와 강화 목표 단계별 요구 레벨을 에디터에서 조정하실 수 있습니다.
+	UPROPERTY(EditAnywhere, EditFixedSize, BlueprintReadOnly, Category = "Store|Economy|MagicCircle", meta = (ClampMin = "1", ClampMax = "10"))
+	TArray<int32> MagicCircleRequiredStoreLevels = { 3, 5, 7, 9 };
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Economy|Employees", meta = (ClampMin = "1", ClampMax = "10"))
+	int32 FirstRestockRequiredStoreLevel = 2;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Economy|Employees", meta = (ClampMin = "1", ClampMax = "10"))
+	int32 CheckoutRequiredStoreLevel = 4;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Store|Economy|Employees", meta = (ClampMin = "1", ClampMax = "10"))
+	int32 SecondRestockRequiredStoreLevel = 6;
 	// 배열 0~3은 각각 2~5단계로 강화하는 비용입니다.
 	UPROPERTY(EditAnywhere, EditFixedSize, BlueprintReadOnly, Category = "Store|Economy|MagicCircle", meta = (ClampMin = "1"))
 	TArray<int32> MagicCircleUpgradeCosts = { 10000, 30000, 50000, 100000 };

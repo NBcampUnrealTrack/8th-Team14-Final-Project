@@ -18,6 +18,8 @@ struct FCSMagicCircleUpgradeViewData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 DailyOrderLimit = 2;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 NextDailyOrderLimit = 3;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 TodayGeneratedOrderCount = 1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 RequiredStoreLevel = 1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 CurrentStoreLevel = 1;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 UpgradeCost = 30000;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 CurrentFunds = 45000;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 FundsAfterUpgrade = 15000;
