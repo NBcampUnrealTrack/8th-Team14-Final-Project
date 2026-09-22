@@ -618,8 +618,8 @@ int32 ACSShelfActor::TryRestockFromCrate(
 	int32 RestockedQuantity = 0;
 	for (int32 Index = 0; Index < RequestedQuantity && SourceCrate->GetRemainingQuantity() > 0; ++Index)
 	{
-		const int32 EmptySlotIndex = FindEmptySlotForProduct(
-			SourceCrate->GetProductRow(), false, ECSShelfSlotLevel::Lower);
+		const int32 EmptySlotIndex = FindEmptyEmployeeRestockSlot(
+			SourceCrate->GetProductRow(), false);
 		if (EmptySlotIndex == INDEX_NONE)
 		{
 			break;
@@ -656,8 +656,7 @@ bool ACSShelfActor::CanEmployeeRestockProduct(
 	bool bAllowCrossTierDuplicateFallback) const
 {
 	return bIsInstalled && ProductRow.DataTable != nullptr && !ProductRow.RowName.IsNone() &&
-		FindEmptySlotForProduct(ProductRow, bAllowCrossTierDuplicateFallback,
-			ECSShelfSlotLevel::Lower) != INDEX_NONE;
+		FindEmptyEmployeeRestockSlot(ProductRow, bAllowCrossTierDuplicateFallback) != INDEX_NONE;
 }
 
 bool ACSShelfActor::OpenShelfConfiguration(AActor* Interactor)
@@ -671,8 +670,8 @@ bool ACSShelfActor::GetNextEmployeeRestockSlotLocation(
 	FVector& OutSlotLocation) const
 {
 	OutSlotLocation = FVector::ZeroVector;
-	const int32 SlotIndex = FindEmptySlotForProduct(
-		ProductRow, bAllowCrossTierDuplicateFallback, ECSShelfSlotLevel::Lower);
+	const int32 SlotIndex = FindEmptyEmployeeRestockSlot(
+		ProductRow, bAllowCrossTierDuplicateFallback);
 	if (SlotIndex == INDEX_NONE)
 	{
 		return false;
@@ -691,8 +690,8 @@ bool ACSShelfActor::TryPlaceEmployeeProduct(
 		return false;
 	}
 
-	return PlaceItemInSlot(Product, FindEmptySlotForProduct(
-		Product->GetProductRow(), bAllowCrossTierDuplicateFallback, ECSShelfSlotLevel::Lower));
+	return PlaceItemInSlot(Product, FindEmptyEmployeeRestockSlot(
+		Product->GetProductRow(), bAllowCrossTierDuplicateFallback));
 }
 
 bool ACSShelfActor::ShouldEmployeeReorganizeProduct(const ACSProductPickupActor* Product) const
@@ -1096,6 +1095,38 @@ int32 ACSShelfActor::FindEmptySlotForProduct(
 	return INDEX_NONE;
 }
 
+int32 ACSShelfActor::FindEmptyEmployeeRestockSlot(
+	const FDataTableRowHandle& ProductRow,
+	bool bAllowCrossTierDuplicateFallback) const
+{
+	const ECSShelfSlotLevel Levels[] = {
+		ECSShelfSlotLevel::Lower,
+		ECSShelfSlotLevel::Middle,
+		ECSShelfSlotLevel::Upper
+	};
+	for (const ECSShelfSlotLevel Level : Levels)
+	{
+		const FCSShelfLevelConfiguration* Configuration = FindLevelConfiguration(Level);
+		if (Configuration == nullptr || !Configuration->bIsPlayerConfigured ||
+			!IsProductRowEqual(Configuration->ProductRow, ProductRow))
+		{
+			continue;
+		}
+
+		for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
+		{
+			if (Slots[SlotIndex].SlotLevel == Level && !IsValid(Slots[SlotIndex].OccupyingItem))
+			{
+				return SlotIndex;
+			}
+		}
+	}
+
+	// 일치하는 플레이어 지정 단이 없거나 모두 찼을 때만 기존의 하단 우선 배치를 사용합니다.
+	return FindEmptySlotForProduct(
+		ProductRow, bAllowCrossTierDuplicateFallback, ECSShelfSlotLevel::Lower);
+}
+
 bool ACSShelfActor::PlaceItemInSlot(AActor* ItemActor, int32 SlotIndex)
 {
 	if (!IsValid(ItemActor) || !Slots.IsValidIndex(SlotIndex) || IsValid(Slots[SlotIndex].OccupyingItem))
@@ -1256,6 +1287,29 @@ bool ACSShelfActor::TryPlaceItem_Implementation(
 	}
 
 	return PlaceItemInSlot(ItemActor, SlotIndex);
+}
+
+int32 ACSShelfActor::GetProductCountOnAimedLevel(FVector AimPoint) const
+{
+	const ECSShelfSlotLevel Level = FindAimedSlotLevel(AimPoint);
+	int32 Count = 0;
+	for (const FCSShelfSlot& Slot : Slots)
+		if (Slot.SlotLevel == Level && IsValid(Slot.OccupyingItem)) ++Count;
+	return Count;
+}
+
+ACSProductPickupActor* ACSShelfActor::FindRetrievableProduct(FVector AimPoint, const FDataTableRowHandle& RequiredRow, const AActor* Collector) const
+{
+	if (!bIsInstalled) return nullptr;
+	const ECSShelfSlotLevel Level = FindAimedSlotLevel(AimPoint);
+	for (int32 Index = Slots.Num() - 1; Index >= 0; --Index)
+	{
+		const FCSShelfSlot& Slot = Slots[Index];
+		ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Slot.OccupyingItem);
+		if (Slot.SlotLevel == Level && ACSDeliveryCrateActor::CanPackProduct(Product, Collector) &&
+			(RequiredRow.IsNull() || IsProductRowEqual(Product->GetProductRow(), RequiredRow))) return Product;
+	}
+	return nullptr;
 }
 
 void ACSShelfActor::RemovePlacedItem_Implementation(AActor* ItemActor)

@@ -32,6 +32,14 @@ class CONVENIENCESTORE_API ACSDeliveryCrateActor : public AActor,
 
 public:
 	ACSDeliveryCrateActor();
+	static constexpr int32 PackingCapacity = 6;
+	// 포장 중에는 원본을 유지하며, 운반자가 상자를 확보한 뒤에만 원본을 제거합니다.
+	bool InitializePackedProducts(const TArray<ACSProductPickupActor*>& Products);
+	bool TryAddPackedProduct(ACSProductPickupActor* Product, AActor* Carrier, int32 TaskId = INDEX_NONE);
+	static bool CanPackProduct(const ACSProductPickupActor* Product, const AActor* Carrier = nullptr, int32 TaskId = INDEX_NONE);
+	static void RemovePackedSource(ACSProductPickupActor* Product);
+	UFUNCTION(BlueprintPure, Category = "Delivery|Packing") bool IsPackingCrate() const { return bPackingCrate; }
+
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
@@ -84,6 +92,7 @@ public:
 	bool CanBeReservedByEmployee(const ACSStoreEmployeeCharacter* Employee, int32 TaskId) const;
 	void ReleaseEmployeeReservation(const ACSStoreEmployeeCharacter* Employee, int32 TaskId);
 	bool IsReservedByEmployee() const;
+	void ClearEmployeeReservationForPlayer() { ReservedByEmployee = nullptr; ReservationTaskId = INDEX_NONE; ReservationStartTimeSeconds = 0.0f; }
 
 	ACSProductPickupActor* SpawnProductActor() const;
 
@@ -115,6 +124,9 @@ public:
 	void OnCrateDepleted();
 
 protected:
+	// 상품마다 유통기한과 신선도를 보존하여 포장으로 상품 상태가 초기화되지 않게 합니다.
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Delivery|Packing") bool bPackingCrate = false;
+	UPROPERTY(Transient) TArray<FCSProductRuntimeState> PackedProductStates;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

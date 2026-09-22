@@ -83,9 +83,9 @@ UCSWorldOrderWidget::UCSWorldOrderWidget(const FObjectInitializer& ObjectInitial
 	NativeProductRowClass = ProductRow.Class;
 	NativeFacilityRowClass = FacilityRow.Class;
 	// Existing WBP defaults, now editable on the native parent's Class Defaults.
-	const TCHAR* Names[] = { TEXT("FAC_ChilledShelf"), TEXT("FAC_FreezerShelf"), TEXT("FAC_PotionShelf"),
+	const TCHAR* FacilityNames[] = { TEXT("FAC_ChilledShelf"), TEXT("FAC_FreezerShelf"), TEXT("FAC_PotionShelf"),
 		TEXT("FAC_ScrollRack"), TEXT("FAC_ToolRack"), TEXT("FAC_TrashCan") };
-	for (const TCHAR* Name : Names)
+	for (const TCHAR* Name : FacilityNames)
 	{
 		const FString Path = FString::Printf(TEXT("/Game/Demo/KJW/Icon/Shelf_Icon/%s_Icon"), Name);
 		ConstructorHelpers::FObjectFinder<UTexture2D> Icon(*Path);

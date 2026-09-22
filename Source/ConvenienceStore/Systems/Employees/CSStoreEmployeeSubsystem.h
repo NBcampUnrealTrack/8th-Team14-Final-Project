@@ -32,6 +32,9 @@ public:
 		FString* OutNoClaimReason = nullptr);
 	// 플레이어가 아직 직원 손에 들리지 않은 예약 재고를 집을 때 해당 업무를 취소합니다.
 	bool CancelTaskForPlayerPickup(AActor* SourceActor);
+	// 낱개 상품을 포장했을 때 진행 중인 업무의 예약 대상을 새 상자로 넘깁니다.
+	bool ReplaceAssignedTaskSource(int32 TaskId, ACSStoreEmployeeCharacter* Employee, AActor* NewSource, int32 Quantity);
+
 	// 직원이 외부 취소된 업무를 계속 수행하지 않도록 현재 배정 상태를 확인합니다.
 	bool IsTaskAssignedToEmployee(int32 TaskId, const ACSStoreEmployeeCharacter* Employee) const;
 	// 직원이 업무를 끝냈거나 실패했을 때 상태와 참조를 정리합니다.

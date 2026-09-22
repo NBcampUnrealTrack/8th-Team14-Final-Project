@@ -29,6 +29,8 @@ ACSMagicProjectileActor::ACSMagicProjectileActor()
 void ACSMagicProjectileActor::BeginPlay()
 {
 	Super::BeginPlay();
+	// 캐릭터끼리 통과하더라도 마법 피격은 프로젝트의 전용 투사체 채널로 판정합니다.
+	CollisionSphere->SetCollisionObjectType(ECC_GameTraceChannel1);
 	SetLifeSpan(ProjectileLifetime);
 
 	// 발사자와 투사체가 즉시 충돌하지 않도록 소유자를 충돌 대상에서 제외합니다.

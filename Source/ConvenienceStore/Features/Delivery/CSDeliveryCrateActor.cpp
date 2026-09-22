@@ -10,7 +10,10 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Features/Items/CSProductPlacementPreviewActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "Features/Shelves/CSShelfActor.h"
+#include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
@@ -213,6 +216,8 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 			World->GetTimeSeconds());
 	}
 
+	bPackingCrate = false;
+	PackedProductStates.Reset();
 	ProductRow = InProductRow;
 	RemainingQuantity = InQuantity;
 	ProductRuntimeState = NewRuntimeState;
@@ -221,6 +226,72 @@ bool ACSDeliveryCrateActor::InitializeCrate(
 	{
 		RefreshSpoiledVFXTimer();
 	}
+	UpdateSpoiledVFX();
+	return true;
+}
+
+bool ACSDeliveryCrateActor::CanPackProduct(const ACSProductPickupActor* Product, const AActor* Carrier, int32 TaskId)
+{
+	if (!IsValid(Product) || Product->IsA<ACSProductPlacementPreviewActor>() ||
+		Product->IsExcludedFromStockCount() || Product->GetProductId().IsNone()) return false;
+	// 플레이어는 직원 예약보다 우선합니다. 실제 회수 직전에 직원 업무를 취소합니다.
+	const bool bPlayerCollector = Cast<ACSPlayerCharacter>(Carrier) != nullptr;
+	if (Product->IsReservedByEmployee() && !bPlayerCollector)
+	{
+		const ACSStoreEmployeeCharacter* Employee = Cast<ACSStoreEmployeeCharacter>(Carrier);
+		if (!Employee || !Product->CanBeReservedByEmployee(Employee, TaskId)) return false;
+	}
+	const AActor* Parent = Product->GetAttachParentActor();
+	return !IsValid(Parent) || Parent == Carrier || Cast<ACSShelfActor>(Parent) || Cast<ACSFreshnessSafeZoneActor>(Parent) ||
+		(bPlayerCollector && Cast<ACSStoreEmployeeCharacter>(Parent));
+}
+
+bool ACSDeliveryCrateActor::InitializePackedProducts(const TArray<ACSProductPickupActor*>& Products)
+{
+	if (Products.Num() < 2 || Products.Num() > PackingCapacity || !IsValid(Products[0])) return false;
+	const FDataTableRowHandle Row = Products[0]->GetProductRow();
+	TSet<ACSProductPickupActor*> UniqueProducts;
+	for (ACSProductPickupActor* Product : Products)
+	{
+		if (!IsValid(Product) || Product->IsExcludedFromStockCount() || UniqueProducts.Contains(Product) ||
+			Product->GetProductRow().DataTable != Row.DataTable || Product->GetProductRow().RowName != Row.RowName) return false;
+		UniqueProducts.Add(Product);
+	}
+	if (!InitializeCrate(Row, Products.Num())) return false;
+	bPackingCrate = true;
+	bAwaitingStockroomIntake = false;
+	ProductActorClass = Products[0]->GetClass();
+	VisualRegistry = Products[0]->GetVisualRegistry();
+	for (const ACSProductPickupActor* Product : Products) PackedProductStates.Add(Product->GetProductRuntimeState());
+	ProductRuntimeState = PackedProductStates[0];
+	UpdateFreshnessDecayState();
+	UpdateSpoiledVFX();
+	return true;
+}
+
+void ACSDeliveryCrateActor::RemovePackedSource(ACSProductPickupActor* Product)
+{
+	if (!IsValid(Product)) return;
+	if (ACSShelfActor* Shelf = Cast<ACSShelfActor>(Product->GetAttachParentActor()))
+	{
+		Shelf->RemovePlacedItem_Implementation(Product);
+	}
+	else if (ACSFreshnessSafeZoneActor* Storage = Cast<ACSFreshnessSafeZoneActor>(Product->GetAttachParentActor()))
+	{
+		Storage->RemoveStoredLooseProduct(Product);
+	}
+	Product->Destroy();
+}
+
+bool ACSDeliveryCrateActor::TryAddPackedProduct(ACSProductPickupActor* Product, AActor* Carrier, int32 TaskId)
+{
+	if (!bPackingCrate || RemainingQuantity >= PackingCapacity || !CanPackProduct(Product, Carrier, TaskId) ||
+		Product->GetProductRow().DataTable != ProductRow.DataTable || Product->GetProductRow().RowName != ProductRow.RowName) return false;
+	PackedProductStates.Add(Product->GetProductRuntimeState());
+	RemainingQuantity = PackedProductStates.Num();
+	UpdateFreshnessDecayState();
+	RemovePackedSource(Product);
+	OnQuantityChanged.Broadcast(RemainingQuantity);
 	UpdateSpoiledVFX();
 	return true;
 }
@@ -314,6 +385,12 @@ bool ACSDeliveryCrateActor::ConsumeOne()
 	}
 
 	--RemainingQuantity;
+	if (bPackingCrate)
+	{
+		PackedProductStates.RemoveAt(0);
+		if (!PackedProductStates.IsEmpty()) ProductRuntimeState = PackedProductStates[0];
+		UpdateSpoiledVFX();
+	}
 	OnQuantityChanged.Broadcast(RemainingQuantity);
 
 	if (RemainingQuantity == 0)
@@ -497,6 +574,18 @@ void ACSDeliveryCrateActor::UpdateFreshnessDecayState()
 		ProductData->ShelfType == ECSProductShelfType::FreezerShelf;
 	const bool bIsFreshnessSafe = !bIsHeldByPlayerForFreshness &&
 		MatchingFreshnessSafeZoneCount > 0;
+	// 낱개별 상태에도 같은 보관 환경을 적용하며, 기존 배송 상자의 수량 제한은 변경하지 않습니다.
+	if (bPackingCrate)
+	{
+		for (FCSProductRuntimeState& State : PackedProductStates)
+		{
+			if (!bRequiresFreshnessManagement || bIsFreshnessSafe)
+				State.StopFreshnessDecay(World->GetTimeSeconds(), FreshnessSettings->DecayIntervalSeconds, FreshnessSettings->DecayAmountPerInterval);
+			else State.StartFreshnessDecay(World->GetTimeSeconds());
+		}
+		if (!PackedProductStates.IsEmpty()) ProductRuntimeState = PackedProductStates[0];
+		return;
+	}
 	if (!bRequiresFreshnessManagement || bIsFreshnessSafe)
 	{
 		ProductRuntimeState.StopFreshnessDecay(
@@ -574,7 +663,17 @@ void ACSDeliveryCrateActor::UpdateSpoiledVFX()
 		GetCurrentFreshness() <= 0;
 	const bool bIsExpired = IsValid(SpoiledVFXStoreGameState) &&
 		ProductRuntimeState.IsExpired(SpoiledVFXStoreGameState->CurrentBusinessDay);
-	const bool bShouldShowSpoiledVFX = bIsExpired || bHasNoFreshness;
+	bool bShouldShowSpoiledVFX = bIsExpired || bHasNoFreshness;
+	if (bPackingCrate && IsValid(SpoiledVFXStoreGameState))
+	{
+		const UCSFreshnessSettingsDataAsset* Settings = SpoiledVFXStoreGameState->GetFreshnessSettings();
+		for (const FCSProductRuntimeState& State : PackedProductStates)
+		{
+			bShouldShowSpoiledVFX |= State.IsExpired(SpoiledVFXStoreGameState->CurrentBusinessDay) ||
+				(bRequiresFreshnessManagement && Settings && State.GetCurrentFreshness(GetWorld()->GetTimeSeconds(),
+					Settings->DecayIntervalSeconds, Settings->DecayAmountPerInterval) <= 0);
+		}
+	}
 	if (bShouldShowSpoiledVFX)
 	{
 		if (!SpoiledVFXComponent->IsActive() || SpoiledVFXComponent->IsComplete())

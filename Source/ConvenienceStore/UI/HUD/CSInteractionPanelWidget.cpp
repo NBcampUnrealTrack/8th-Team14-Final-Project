@@ -4,6 +4,52 @@
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
 #include "Engine/Texture2D.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+
+void UCSInteractionPanelWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	if (!WidgetTree || !InteractionPromptRow || !InteractionPromptText) return;
+	UPanelWidget* Parent = InteractionPromptRow->GetParent();
+	if (!Parent) return;
+
+	// Slate가 생성되기 전에 기존 슬롯을 유지하며 안내 영역을 세로 목록으로 확장합니다.
+	UVerticalBox* PromptList = WidgetTree->ConstructWidget<UVerticalBox>();
+	if (!Parent->ReplaceChildAt(Parent->GetChildIndex(InteractionPromptRow), PromptList)) return;
+	InteractionPromptRow->Slot = nullptr;
+	PromptList->AddChildToVerticalBox(InteractionPromptRow);
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		UOverlay* Row = WidgetTree->ConstructWidget<UOverlay>();
+		UImage* Background = WidgetTree->ConstructWidget<UImage>();
+		UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
+		if (InteractionPromptBackground) Background->SetBrush(InteractionPromptBackground->GetBrush());
+		Text->SetFont(InteractionPromptText->GetFont());
+		Text->SetShadowOffset(InteractionPromptText->GetShadowOffset());
+		Text->SetShadowColorAndOpacity(InteractionPromptText->GetShadowColorAndOpacity());
+		UOverlaySlot* BackgroundSlot = Row->AddChildToOverlay(Background);
+		BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+		BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+		UOverlaySlot* TextSlot = Row->AddChildToOverlay(Text);
+		TextSlot->SetPadding(FMargin(8.0f, 3.0f));
+		TextSlot->SetVerticalAlignment(VAlign_Center);
+		if (const UOverlaySlot* TemplateSlot = Cast<UOverlaySlot>(InteractionPromptText->Slot))
+		{
+			TextSlot->SetPadding(TemplateSlot->GetPadding());
+			TextSlot->SetHorizontalAlignment(TemplateSlot->GetHorizontalAlignment());
+			TextSlot->SetVerticalAlignment(TemplateSlot->GetVerticalAlignment());
+		}
+		PromptList->AddChildToVerticalBox(Row)->SetPadding(FMargin(0.0f, 3.0f, 0.0f, 0.0f));
+		AdditionalPromptRows.Add(Row);
+		AdditionalPromptBackgrounds.Add(Background);
+		AdditionalPromptTexts.Add(Text);
+		Row->SetVisibility(ESlateVisibility::Collapsed);
+	}
+}
 
 void UCSInteractionPanelWidget::NativeConstruct()
 {
@@ -15,12 +61,28 @@ void UCSInteractionPanelWidget::SetInteractionPrompt(
 	const FText& Message,
 	const FLinearColor& RequestedColor)
 {
+	for (UWidget* Row : AdditionalPromptRows) Row->SetVisibility(ESlateVisibility::Collapsed);
 	SetRow(
 		InteractionPromptRow,
 		InteractionPromptBackground,
 		InteractionPromptText,
 		Message,
 		ResolveRequestedStyle(RequestedColor));
+}
+
+void UCSInteractionPanelWidget::SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts)
+{
+	// 문구의 내용 대신 게임플레이에서 전달한 판정으로 각 행의 위험 스타일을 선택합니다.
+	SetInteractionPrompt(Prompts.IsEmpty() ? FText::GetEmpty() : Prompts[0].Message,
+		!Prompts.IsEmpty() && Prompts[0].bDanger ? FLinearColor::Red : FLinearColor::White);
+	for (int32 Index = 0; Index < AdditionalPromptRows.Num(); ++Index)
+	{
+		const int32 PromptIndex = Index + 1;
+		const bool bHasPrompt = Prompts.IsValidIndex(PromptIndex);
+		SetRow(AdditionalPromptRows[Index], AdditionalPromptBackgrounds[Index], AdditionalPromptTexts[Index],
+			bHasPrompt ? Prompts[PromptIndex].Message : FText::GetEmpty(),
+			bHasPrompt && Prompts[PromptIndex].bDanger ? EInteractionVisualStyle::Danger : EInteractionVisualStyle::Normal);
+	}
 }
 
 void UCSInteractionPanelWidget::SetProductPrice(const FText& Message)
@@ -69,6 +131,7 @@ void UCSInteractionPanelWidget::SetStorageWarning(const FText& Message)
 
 void UCSInteractionPanelWidget::ClearInteractionContext()
 {
+	for (UWidget* Row : AdditionalPromptRows) Row->SetVisibility(ESlateVisibility::Collapsed);
 	UWidget* const Rows[] = {
 		InteractionPromptRow.Get(),
 		ProductPriceRow.Get(),

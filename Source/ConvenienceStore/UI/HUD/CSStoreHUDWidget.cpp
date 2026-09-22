@@ -146,6 +146,14 @@ void UCSStoreHUDWidget::SetInteractionPrompt(
 	}
 }
 
+void UCSStoreHUDWidget::SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts)
+{
+	if (IsValid(InteractionPanel))
+	{
+		InteractionPanel->SetInteractionPrompts(Prompts);
+	}
+}
+
 void UCSStoreHUDWidget::ShowPlacementUnavailablePrompt()
 {
 	if (IsValid(InteractionPanel))

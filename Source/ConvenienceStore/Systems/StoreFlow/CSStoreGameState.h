@@ -109,6 +109,10 @@ public:
 	int32 GetMagicCircleLevel() const { return MagicCircleLevel; }
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
 	int32 GetMagicCircleUpgradeCost() const;
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetMagicCircleRequiredStoreLevel() const;
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	int32 GetEmployeeRequiredStoreLevel(ECSEmployeeHireSlot Slot) const;
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
 	bool CanUpgradeMagicCircle(FText& OutReason) const;
 	UFUNCTION(BlueprintCallable, Category = "Store|MagicCircle")

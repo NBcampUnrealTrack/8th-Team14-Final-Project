@@ -5,6 +5,7 @@
 #include "GameFramework/Character.h"
 #include "Data/CSEmployeeHiringTypes.h"
 #include "Features/Interaction/CSInteractable.h"
+#include "Features/Tools/CSHitReactable.h"
 #include "CSStoreEmployeeCharacter.generated.h"
 
 class UCSStoreEmployeeRoleDataAsset;
@@ -15,6 +16,7 @@ class ACSFreshnessSafeZoneActor;
 class ACSCheckoutCounterActor;
 class UCSEmployeeHiringWidget;
 class UTextRenderComponent;
+class UBoxComponent;
 
 // 진열 업무를 재고 위치부터 진열 완료까지 세분화한 내부 작업 단계입니다.
 enum class ECSStoreEmployeeRestockPhase : uint8
@@ -32,12 +34,17 @@ enum class ECSStoreEmployeeRestockPhase : uint8
 
 // 매장 업무 하나를 수령해 이동하고 완료하는 공통 직원 캐릭터입니다.
 UCLASS()
-class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter, public ICSInteractable
+class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter, public ICSInteractable, public ICSHitReactable
 {
 	GENERATED_BODY()
+	friend class FCSEmployeePackingRecoveryTest;
 
 public:
 	ACSStoreEmployeeCharacter();
+	virtual void ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength) override;
+	UFUNCTION(BlueprintPure, Category = "Employee|Magic") float GetMagicBoostRemainingSeconds() const;
+	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Magic") void OnMagicBoostChanged(bool bActive);
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -53,6 +60,9 @@ public:
 
 	// 현재 역할이 처리할 수 있는 업무인지 서브시스템이 확인할 수 있도록 제공합니다.
 	bool CanHandleTask(ECSStoreEmployeeTaskType TaskType) const;
+	// 플레이어가 가져간 재고를 직원의 반환·정리 경로에서 다시 건드리지 않도록 소유 참조를 넘깁니다.
+	void RelinquishInventoryToPlayer(AActor* Inventory);
+	AActor* GetCarriedInventoryForPlayer() const;
 
 	// 직원 관리 UI에서 담당 중인 업무를 읽을 수 있도록 제공합니다.
 	UFUNCTION(BlueprintPure, Category = "Employee")
@@ -78,6 +88,17 @@ public:
 	void SetIgnoreEmployeeMovement(ACSStoreEmployeeCharacter* OtherEmployee, bool bIgnore);
 
 protected:
+	// 운반 중인 재고는 이동 충돌 없이 플레이어의 E 조준만 받을 수 있게 합니다.
+	UPROPERTY(VisibleAnywhere, Category = "Employee|Carry") TObjectPtr<UBoxComponent> InventoryInteractionBox;
+	// 재피격 시 배율을 중첩하지 않고 남은 시간만 갱신합니다.
+	UPROPERTY(EditAnywhere, Category = "Employee|Magic", meta = (ClampMin = "0.1")) float MagicBoostDuration = 10.0f;
+	UPROPERTY(EditAnywhere, Category = "Employee|Magic", meta = (ClampMin = "1.0")) float MagicMoveMultiplier = 1.5f;
+	UPROPERTY(EditAnywhere, Category = "Employee|Magic", meta = (ClampMin = "1.0")) float MagicWorkMultiplier = 1.5f;
+	float MoveSpeedBeforeBoost = 0.0f;
+	float WorkSpeedMultiplier = 1.0f;
+	UPROPERTY(VisibleAnywhere, Category = "Employee|Magic") TObjectPtr<UTextRenderComponent> MagicBoostNameplate;
+	FTimerHandle MagicBoostTimer;
+	void EndMagicBoost();
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring")
 	TSubclassOf<UCSEmployeeHiringWidget> HiringWidgetClass;
 	// 기존 업무 전용 배치 직원은 그대로 동작합니다. 고용소가 생성하는 지원자는 true입니다.
@@ -201,6 +222,11 @@ private:
 	bool BeginHeldProductReturn();
 	bool FindSafeCrateReturnLocation(FVector& OutReturnLocation) const;
 	bool PickUpSourceCrate();
+	bool TryPackNearbyProducts(ACSProductPickupActor* SourceProduct);
+	UPROPERTY(EditDefaultsOnly, Category = "Employee|Packing") TSubclassOf<ACSDeliveryCrateActor> PackingCrateClass;
+	// 이동 없이 손이 닿는 주변 재고만 모아서 먼 상품을 원격으로 회수하지 않게 합니다.
+	UPROPERTY(EditAnywhere, Category = "Employee|Packing", meta = (ClampMin = "1.0")) float PackingSearchRadius = 400.0f;
+
 	bool TakeProductFromHeldCrate();
 	bool PlaceHeldProductOnShelf();
 	void ReleaseHeldCrate();

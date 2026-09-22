@@ -4,6 +4,7 @@
 #include "Components/SlateWrapperTypes.h"
 #include "GameFramework/PlayerController.h"
 #include "Data/CSStorePhaseTypes.h"
+#include "UI/HUD/CSInteractionPrompt.h"
 #include "CSStorePlayerController.generated.h"
 
 class UCSJournalWidget;
@@ -77,6 +78,7 @@ public:
 
 	// 조준한 대상의 상호작용 안내를 HUD에 전달합니다.
 	void SetInteractionPrompt(const FText& Message, const FLinearColor& TextColor);
+	void SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts);
 
 	// 조준한 상품의 판매가를 HUD에 전달합니다.
 	void SetProductPrice(const FText& Message);
