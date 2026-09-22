@@ -1,6 +1,7 @@
 #include "Features/Tools/CSMagicWandActor.h"
 
 #include "Features/Tools/CSMagicProjectileActor.h"
+#include "Features/Tools/CSMagicWandCrosshairWidget.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
@@ -8,6 +9,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 
 namespace
 {
@@ -51,13 +53,55 @@ void ACSMagicWandActor::OnEquipped(ACSPlayerCharacter* NewOwner)
 		}
 		SetActorScale3D(CachedWorldScale.GetValue() *
 			FMath::Max(0.01f, NewOwner->GetMagicWandHeldScaleMultiplier()));
+
+		ShowCrosshairWidget(NewOwner);
 	}
 }
 
 void ACSMagicWandActor::OnUnequipped()
 {
+	HideCrosshairWidget();
 	RestoreWorldScale();
 	Super::OnUnequipped();
+}
+
+void ACSMagicWandActor::ShowCrosshairWidget(ACSPlayerCharacter* NewOwner)
+{
+	if (CrosshairWidgetClass == nullptr || IsValid(ActiveCrosshairWidget))
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = Cast<APlayerController>(NewOwner->GetController());
+	if (!IsValid(PlayerController))
+	{
+		return;
+	}
+
+	ActiveCrosshairWidget = CreateWidget<UCSMagicWandCrosshairWidget>(PlayerController, CrosshairWidgetClass);
+	if (IsValid(ActiveCrosshairWidget))
+	{
+		ActiveCrosshairWidget->AddToViewport();
+		// 마법봉 전용 조준점과 겹치지 않도록 HUD 기본 조준점을 잠깐 숨깁니다.
+		if (ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(PlayerController))
+		{
+			StoreController->SetDefaultCrosshairVisible(false);
+		}
+	}
+}
+
+void ACSMagicWandActor::HideCrosshairWidget()
+{
+	if (IsValid(ActiveCrosshairWidget))
+	{
+		if (ACSStorePlayerController* StoreController =
+			Cast<ACSStorePlayerController>(ActiveCrosshairWidget->GetOwningPlayer()))
+		{
+			StoreController->SetDefaultCrosshairVisible(true);
+		}
+		ActiveCrosshairWidget->RemoveFromParent();
+	}
+	ActiveCrosshairWidget = nullptr;
 }
 
 void ACSMagicWandActor::PrepareForPickupPhysics()
@@ -200,5 +244,11 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 	Projectile->InitializeProjectile(TravelDirection);
 	LastPrimaryUseTime = CurrentTime;
 	PlayMagicWandGameplaySFX(this, ECSAudioEvent::MagicAttack);
+
+	if (IsValid(ActiveCrosshairWidget))
+	{
+		ActiveCrosshairWidget->PlayFireReaction();
+	}
+
 	return true;
 }

@@ -100,6 +100,9 @@ public:
 	// 배치 대상이 바뀌거나 상품을 내려놓았을 때 HUD의 조준 안내를 지웁니다.
 	void ClearInteractionContext();
 
+	// 마법봉처럼 도구 전용 조준점을 띄우는 동안 기본 조준점을 숨기거나 되돌립니다.
+	void SetDefaultCrosshairVisible(bool bVisible);
+
 	// 캐릭터의 건축 모드 상태를 상시 HUD에 전달합니다.
 	void SetBuildModeHUDState(bool bIsBuildMode, bool bPlayTransition);
 
