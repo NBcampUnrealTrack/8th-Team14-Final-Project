@@ -4,6 +4,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSStorePhaseTypes.h"
+#include "UI/HUD/CSInteractionPrompt.h"
 #include "CSStoreHUDWidget.generated.h"
 
 class ACSStoreGameState;
@@ -25,6 +26,7 @@ class CONVENIENCESTORE_API UCSStoreHUDWidget : public UUserWidget
 public:
 	// 조준점 아래의 상호작용 안내를 지정한 색상으로 표시합니다.
 	void SetInteractionPrompt(const FText& Message, const FLinearColor& TextColor);
+	void SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts);
 
 	// 상품 가격과 보관 경고를 숨긴 뒤, 빈 슬롯 안내만 빨간색으로 표시합니다.
 	void ShowPlacementUnavailablePrompt();

@@ -17,6 +17,8 @@ struct FCSEmployeeHiringViewData
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FText RoleName;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FText Duties;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 RequiredStoreLevel = 1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 CurrentStoreLevel = 1;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 HireCost = 2500;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 DailyWage = 50;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 TotalDailyWage = 70;

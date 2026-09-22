@@ -707,6 +707,14 @@ void ACSStorePlayerController::SetStorageWarning(const FText& Message)
 	}
 }
 
+void ACSStorePlayerController::SetInteractionPrompts(const TArray<FCSInteractionPrompt>& Prompts)
+{
+	if (IsValid(StoreHUDWidget))
+	{
+		StoreHUDWidget->SetInteractionPrompts(Prompts);
+	}
+}
+
 void ACSStorePlayerController::ClearInteractionContext()
 {
 	if (IsValid(StoreHUDWidget))
