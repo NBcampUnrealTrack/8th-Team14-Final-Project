@@ -20,8 +20,7 @@
 #include "TimerManager.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
-#include "Components/WidgetComponent.h"
-#include "Features/Customers/CSCustomerHeadIconWidget.h"
+#include "Components/StaticMeshComponent.h"
 
 namespace
 {
@@ -74,14 +73,15 @@ ACSCustomerCharacter::ACSCustomerCharacter()
 	DropOriginRight->SetRelativeRotation(FRotator(0.0f, 90.0f, 0.0f));
 	DropOriginRight->SetHiddenInGame(true);
 
-	// 구매 거절/가격 반응 시 머리 위에 뜨는 아이콘
-	HeadIconWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("HeadIconWidgetComponent"));
-	HeadIconWidgetComponent->SetupAttachment(GetCapsuleComponent());
-	HeadIconWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 40.0f));
-	HeadIconWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
-	HeadIconWidgetComponent->SetDrawSize(FVector2D(64.0f, 64.0f));
-	// HeadIconWidgetClass가 지정되기 전까지는 빈 위젯을 띄우지 않도록 꺼둠
-	HeadIconWidgetComponent->SetVisibility(false);
+	// 구매 거절/가격 반응 시 머리 위에 뜨는 아이콘 - exclamation_point 스태틱 메시로 통일
+	HeadIconMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HeadIconMeshComponent"));
+	HeadIconMeshComponent->SetupAttachment(GetCapsuleComponent());
+	HeadIconMeshComponent->SetRelativeLocation(FVector(0.0f, 0.0f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight() + 40.0f));
+	// 표시 전용 장식 메시라 충돌/그림자는 끔
+	HeadIconMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HeadIconMeshComponent->SetCastShadow(false);
+	// Static Mesh가 지정되기 전까지는 빈 메시를 띄우지 않도록 꺼둠
+	HeadIconMeshComponent->SetVisibility(false);
 }
 
 void ACSCustomerCharacter::Tick(float DeltaSeconds)
@@ -111,29 +111,21 @@ void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void ACSCustomerCharacter::ShowHeadIcon(UTexture2D* Icon, float Duration)
+void ACSCustomerCharacter::ShowHeadIcon(bool bShowIcon, float Duration)
 {
-	if (!IsValid(HeadIconWidgetComponent))
+	if (!IsValid(HeadIconMeshComponent))
 	{
 		return;
 	}
 
-	// Icon 미설정(Tiers.Icon이 None) - 표시할 게 없으니 기존 표시만 정리
-	if (Icon == nullptr)
+	// 이 Tier엔 표시할 게 없음(Tiers.Icon이 None) - 기존 표시만 정리
+	if (!bShowIcon)
 	{
 		HideHeadIcon();
 		return;
 	}
 
-	UCSCustomerHeadIconWidget* Widget = Cast<UCSCustomerHeadIconWidget>(HeadIconWidgetComponent->GetUserWidgetObject());
-	if (Widget == nullptr)
-	{
-		// 컴포넌트의 Widget Class가 아직 지정 안 됨(디자이너가 WBP 제작 전) - 무시
-		return;
-	}
-
-	Widget->SetIcon(Icon);
-	HeadIconWidgetComponent->SetVisibility(true);
+	HeadIconMeshComponent->SetVisibility(true);
 
 	if (UWorld* World = GetWorld())
 	{
@@ -154,9 +146,9 @@ void ACSCustomerCharacter::ShowHeadIcon(UTexture2D* Icon, float Duration)
 
 void ACSCustomerCharacter::HideHeadIcon()
 {
-	if (IsValid(HeadIconWidgetComponent))
+	if (IsValid(HeadIconMeshComponent))
 	{
-		HeadIconWidgetComponent->SetVisibility(false);
+		HeadIconMeshComponent->SetVisibility(false);
 	}
 }
 

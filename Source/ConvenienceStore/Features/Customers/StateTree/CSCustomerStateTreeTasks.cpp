@@ -593,7 +593,7 @@ static void CS_HandlePurchaseRejection(
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
 	State.MarkReactedTo(RejectionInfo.ProductId);
 
-	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(RejectionInfo).Icon, DisplayDuration);
+	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(RejectionInfo).Icon != nullptr, DisplayDuration);
 
 	Subsystem.NotifyPurchaseRejected(&Customer, RejectionInfo);
 
@@ -619,7 +619,7 @@ static void CS_HandlePriceReactionThenBuy(
 	State.LastRejectionTime = World != nullptr ? World->GetTimeSeconds() : 0.0f;
 	State.MarkReactedTo(ReactionInfo.ProductId);
 
-	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(ReactionInfo).Icon, DisplayDuration);
+	Customer.ShowHeadIcon(Decision.GetRejectionDisplayTier(ReactionInfo).Icon != nullptr, DisplayDuration);
 
 	// 가격 반응은 구매 성공 여부와 무관하게 평판에 영향을 준다 - 구매가 성사돼도 이 방송은 그대로 나가야 함
 	if (UCSCustomerRuntimeSubsystem* Subsystem = World != nullptr ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
@@ -1404,7 +1404,7 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 
 				State->LastRejectionInfo = PlannedMissingInfo;
 				State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
-				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon,
+				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(PlannedMissingInfo).Icon != nullptr,
 					Decision->GetInstantDisplayDuration(PlannedMissingInfo.Reason));
 				Subsystem->NotifyPurchaseRejected(Data.Actor, PlannedMissingInfo);
 
@@ -1443,7 +1443,7 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 
 				State->LastRejectionInfo = MissingInfo;
 				State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();
-				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(MissingInfo).Icon,
+				Data.Actor->ShowHeadIcon(Decision->GetRejectionDisplayTier(MissingInfo).Icon != nullptr,
 					Decision->GetInstantDisplayDuration(MissingInfo.Reason));
 			}
 		}
