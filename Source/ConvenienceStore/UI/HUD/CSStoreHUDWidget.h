@@ -54,7 +54,14 @@ public:
 		const TArray<FText>& ToolNames,
 		const TArray<UTexture2D*>& ToolIcons);
 
+	// 마법봉처럼 도구 전용 조준점을 띄우는 동안 기본 조준점과 겹치지 않도록 숨깁니다.
+	void SetDefaultCrosshairVisible(bool bVisible);
+
 protected:
+	// 도구를 안 든 기본 상태에서 표시하는 조준점입니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> CrosshairDot;
+
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 

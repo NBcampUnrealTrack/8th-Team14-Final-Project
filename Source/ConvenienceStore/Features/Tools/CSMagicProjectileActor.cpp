@@ -12,7 +12,7 @@ ACSMagicProjectileActor::ACSMagicProjectileActor()
 {
 	CollisionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionSphere"));
 	SetRootComponent(CollisionSphere);
-	CollisionSphere->InitSphereRadius(12.0f);
+	CollisionSphere->InitSphereRadius(20.0f);
 	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Block);
 	CollisionSphere->SetGenerateOverlapEvents(false);
