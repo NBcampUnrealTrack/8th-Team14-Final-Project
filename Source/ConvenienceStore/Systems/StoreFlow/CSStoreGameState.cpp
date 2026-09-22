@@ -18,6 +18,28 @@ int32 ACSStoreGameState::GetMagicCircleUpgradeCost() const
 		: GetDefault<UCSStoreEconomyDataAsset>()->MagicCircleUpgradeCosts[Index];
 }
 
+int32 ACSStoreGameState::GetMagicCircleRequiredStoreLevel() const
+{
+	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset.Get() : GetDefault<UCSStoreEconomyDataAsset>();
+	const int32 Index = MagicCircleLevel - 1;
+	return FMath::Clamp(Settings->MagicCircleRequiredStoreLevels.IsValidIndex(Index)
+		? Settings->MagicCircleRequiredStoreLevels[Index] : 10, 1, 10);
+}
+
+int32 ACSStoreGameState::GetEmployeeRequiredStoreLevel(ECSEmployeeHireSlot Slot) const
+{
+	const UCSStoreEconomyDataAsset* Settings = IsValid(StoreEconomyDataAsset)
+		? StoreEconomyDataAsset.Get() : GetDefault<UCSStoreEconomyDataAsset>();
+	switch (Slot)
+	{
+	case ECSEmployeeHireSlot::FirstRestock: return FMath::Clamp(Settings->FirstRestockRequiredStoreLevel, 1, 10);
+	case ECSEmployeeHireSlot::Checkout: return FMath::Clamp(Settings->CheckoutRequiredStoreLevel, 1, 10);
+	case ECSEmployeeHireSlot::SecondRestock: return FMath::Clamp(Settings->SecondRestockRequiredStoreLevel, 1, 10);
+	default: return 10;
+	}
+}
+
 bool ACSStoreGameState::CanUpgradeMagicCircle(FText& OutReason) const
 {
 	OutReason = FText::GetEmpty();
@@ -27,6 +49,9 @@ bool ACSStoreGameState::CanUpgradeMagicCircle(FText& OutReason) const
 		OutReason = NSLOCTEXT("MagicCircle", "Maximum", "최대 단계 달성");
 	else if (bIsDailySummaryPending || CurrentPhase == ECStorePhase::Settlement || CurrentPhase == ECStorePhase::Finished)
 		OutReason = NSLOCTEXT("MagicCircle", "Settlement", "정산 중에는 강화할 수 없습니다.");
+	else if (!IsStoreLevelRequirementMet(GetMagicCircleRequiredStoreLevel()))
+		OutReason = FText::Format(NSLOCTEXT("MagicCircle", "StoreLevelRequired", "가게 레벨 {0}이 필요합니다. (현재 {1})"),
+			FText::AsNumber(GetMagicCircleRequiredStoreLevel()), FText::AsNumber(GetStoreLevel()));
 	else if (!CanAfford(GetMagicCircleUpgradeCost()))
 		OutReason = NSLOCTEXT("MagicCircle", "InsufficientFunds", "골드가 부족합니다.");
 	return OutReason.IsEmpty();

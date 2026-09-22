@@ -1,6 +1,8 @@
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 
 #include "AIController.h"
+#include "TimerManager.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Data/CSStoreEmployeeRoleDataAsset.h"
 #include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
@@ -13,6 +15,7 @@
 #include "Systems/Employees/CSStoreEmployeeSubsystem.h"
 #include "Components/SceneComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
@@ -43,6 +46,8 @@ bool TryGetDeliveryCrateApproachPoint(
 
 ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 {
+	static ConstructorHelpers::FClassFinder<ACSDeliveryCrateActor> PackingClass(TEXT("/Game/ConvenienceStore/Blueprints/Delivery/BP_DeliveryCrateBase"));
+	PackingCrateClass = PackingClass.Class;
 	PrimaryActorTick.bCanEverTick = true;
 	AIControllerClass = ACSStoreEmployeeAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -52,6 +57,13 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 	HiringNameplate->SetHorizontalAlignment(EHTA_Center);
 	HiringNameplate->SetWorldSize(20.0f);
 	HiringNameplate->SetHiddenInGame(true);
+	MagicBoostNameplate = CreateDefaultSubobject<UTextRenderComponent>(TEXT("MagicBoostNameplate"));
+	MagicBoostNameplate->SetupAttachment(GetRootComponent());
+	MagicBoostNameplate->SetRelativeLocation(FVector(0.0f, 0.0f, 150.0f));
+	MagicBoostNameplate->SetHorizontalAlignment(EHTA_Center);
+	MagicBoostNameplate->SetWorldSize(22.0f);
+	MagicBoostNameplate->SetTextRenderColor(FColor::Cyan);
+	MagicBoostNameplate->SetHiddenInGame(true);
 
 	// 역할 에셋을 연결하지 않아도 신규 직원 블루프린트가 즉시 동작하도록 기본 업무를 모두 허용합니다.
 	FallbackSupportedTaskTypes = {
@@ -69,6 +81,14 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 	CrateCarryAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("CrateCarryAnchor"));
 	CrateCarryAnchor->SetupAttachment(GetRootComponent());
 	CrateCarryAnchor->SetRelativeLocation(FVector(55.0f, 0.0f, 25.0f));
+	InventoryInteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InventoryInteractionBox"));
+	InventoryInteractionBox->SetupAttachment(GetRootComponent());
+	InventoryInteractionBox->SetBoxExtent(FVector(30.0f, 35.0f, 25.0f));
+	InventoryInteractionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InventoryInteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InventoryInteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	InventoryInteractionBox->SetGenerateOverlapEvents(false);
+	InventoryInteractionBox->SetCanEverAffectNavigation(false);
 
 	// 하나의 상자는 한 앵커에만 부착하고, 양손 IK 목표점을 상자 양옆에 배치해 양손 운반 자세를 만듭니다.
 	CrateLeftHandIKTarget = CreateDefaultSubobject<USceneComponent>(TEXT("CrateLeftHandIKTarget"));
@@ -86,9 +106,38 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 }
 
+void ACSStoreEmployeeCharacter::ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength)
+{
+	if (!HasAuthority() || !CanWork() || !CanHandleTask(ECSStoreEmployeeTaskType::RestockShelf)) return;
+	if (!GetWorldTimerManager().IsTimerActive(MagicBoostTimer))
+	{
+		MoveSpeedBeforeBoost = GetCharacterMovement()->MaxWalkSpeed;
+	}
+	GetCharacterMovement()->MaxWalkSpeed = MoveSpeedBeforeBoost * FMath::Max(1.0f, MagicMoveMultiplier);
+	WorkSpeedMultiplier = FMath::Max(1.0f, MagicWorkMultiplier);
+	GetWorldTimerManager().SetTimer(MagicBoostTimer, this, &ThisClass::EndMagicBoost, FMath::Max(0.1f, MagicBoostDuration), false);
+	MagicBoostNameplate->SetHiddenInGame(false);
+	OnMagicBoostChanged(true);
+}
+
+float ACSStoreEmployeeCharacter::GetMagicBoostRemainingSeconds() const
+{
+	return FMath::Max(0.0f, GetWorldTimerManager().GetTimerRemaining(MagicBoostTimer));
+}
+
+void ACSStoreEmployeeCharacter::EndMagicBoost()
+{
+	GetCharacterMovement()->MaxWalkSpeed = MoveSpeedBeforeBoost;
+	WorkSpeedMultiplier = 1.0f;
+	MagicBoostNameplate->SetHiddenInGame(true);
+	OnMagicBoostChanged(false);
+}
+
 void ACSStoreEmployeeCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	// 블루프린트의 Pawn 통과 설정과 별개로 마법 투사체를 감지합니다.
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	RefreshEmploymentPresentation();
 
 	if (UWorld* World = GetWorld())
@@ -118,6 +167,7 @@ void ACSStoreEmployeeCharacter::BeginPlay()
 
 void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(MagicBoostTimer);
 	if (IsValid(ActiveHiringWidget)) ActiveHiringWidget->Close();
 	CancelIdleReturn();
 	RestoreWorkRotationSettings();
@@ -137,6 +187,14 @@ void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason
 void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	AActor* CarriedInventory = GetCarriedInventoryForPlayer();
+	InventoryInteractionBox->SetCollisionEnabled(CarriedInventory ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	if (CarriedInventory) InventoryInteractionBox->SetWorldLocation(CarriedInventory->GetActorLocation());
+	if (GetMagicBoostRemainingSeconds() > 0.0f)
+	{
+		// 기본 글꼴에서도 읽을 수 있도록 숫자와 영문으로 남은 시간을 표시합니다.
+		MagicBoostNameplate->SetText(FText::FromString(FString::Printf(TEXT("BOOST %ds"), FMath::CeilToInt(GetMagicBoostRemainingSeconds()))));
+	}
 	// 지원자와 다음 날 출근 예정자는 고용소 자리를 지킵니다.
 	if (!CanWork()) return;
 
@@ -157,6 +215,35 @@ void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 bool ACSStoreEmployeeCharacter::CanHandleTask(ECSStoreEmployeeTaskType TaskType) const
 {
 	return GetSupportedTaskTypes().Contains(TaskType);
+}
+
+void ACSStoreEmployeeCharacter::RelinquishInventoryToPlayer(AActor* Inventory)
+{
+	if (HeldProduct == Inventory)
+	{
+		// 상자에서 꺼낸 임시 상품을 가져가는 경우 원본 상자 수량도 함께 차감합니다.
+		if (bHeldProductWasSpawnedFromCrate && IsValid(HeldCrate)) HeldCrate->ConsumeOne();
+		HeldProduct = nullptr;
+		bHeldProductWasSpawnedFromCrate = false;
+		bHasHeldProductReturnTransform = false;
+	}
+	if (HeldCrate == Inventory)
+	{
+		if (bHeldProductWasSpawnedFromCrate) ClearHeldProduct();
+		HeldCrate = nullptr;
+		bHasHeldCrateReturnLocation = false;
+	}
+	if (bHasActiveTask && (ActiveTask.SourceActor == Inventory || !IsValid(HeldCrate)))
+	{
+		// 넘겨준 액터를 분리한 뒤 중단해야 플레이어 손에서 재고가 반환되거나 삭제되지 않습니다.
+		ClearActiveTask(false);
+	}
+}
+
+AActor* ACSStoreEmployeeCharacter::GetCarriedInventoryForPlayer() const
+{
+	if (IsValid(HeldCrate)) return HeldCrate;
+	return IsValid(HeldProduct) ? HeldProduct.Get() : nullptr;
 }
 
 bool ACSStoreEmployeeCharacter::IsCarryingCrate() const
@@ -485,7 +572,8 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 		if (!bWaitingForEmployeeCheckout)
 		{
 			const float WorkDuration = IsValid(RoleData) ? RoleData->WorkDurationSeconds : 1.5f;
-			WorkElapsedSeconds += DeltaSeconds;
+			// 이동 판정과 대기 시간은 유지하고 실제 작업 진행량만 배속합니다.
+			WorkElapsedSeconds += DeltaSeconds * WorkSpeedMultiplier;
 			if (WorkElapsedSeconds < WorkDuration)
 			{
 				return;
@@ -549,7 +637,8 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 	}
 
 	const float WorkDuration = IsValid(RoleData) ? RoleData->WorkDurationSeconds : 1.5f;
-	WorkElapsedSeconds += DeltaSeconds;
+	// 이동 판정과 대기 시간은 유지하고 실제 작업 진행량만 배속합니다.
+	WorkElapsedSeconds += DeltaSeconds * WorkSpeedMultiplier;
 	if (WorkElapsedSeconds >= WorkDuration)
 	{
 		const bool bSucceeded = ExecuteActiveTask();
@@ -571,7 +660,8 @@ void ACSStoreEmployeeCharacter::UpdateActiveTask(float DeltaSeconds)
 
 void ACSStoreEmployeeCharacter::UpdateRestockTask(float DeltaSeconds)
 {
-	WorkElapsedSeconds += DeltaSeconds;
+	// 이동 판정과 대기 시간은 유지하고 실제 작업 진행량만 배속합니다.
+	WorkElapsedSeconds += DeltaSeconds * WorkSpeedMultiplier;
 
 	switch (RestockPhase)
 	{
@@ -708,7 +798,8 @@ void ACSStoreEmployeeCharacter::UpdateRestockTask(float DeltaSeconds)
 
 void ACSStoreEmployeeCharacter::UpdateStorageTask(float DeltaSeconds)
 {
-	WorkElapsedSeconds += DeltaSeconds;
+	// 이동 판정과 대기 시간은 유지하고 실제 작업 진행량만 배속합니다.
+	WorkElapsedSeconds += DeltaSeconds * WorkSpeedMultiplier;
 
 	switch (RestockPhase)
 	{
@@ -1369,6 +1460,96 @@ bool ACSStoreEmployeeCharacter::FindSafeCrateReturnLocation(FVector& OutReturnLo
 	return false;
 }
 
+bool ACSStoreEmployeeCharacter::TryPackNearbyProducts(ACSProductPickupActor* SourceProduct)
+{
+	ACSShelfActor* Shelf = Cast<ACSShelfActor>(ActiveTask.TargetActor);
+	ACSFreshnessSafeZoneActor* TargetStorage = Cast<ACSFreshnessSafeZoneActor>(ActiveTask.TargetActor);
+	const bool bReorganizing = ActiveTask.Type == ECSStoreEmployeeTaskType::ReorganizeMisplacedProduct;
+	const bool bProtecting = ActiveTask.Type == ECSStoreEmployeeTaskType::ProtectPerishableStock;
+	const bool bPackingTask = ActiveTask.Type == ECSStoreEmployeeTaskType::RestockShelf ||
+		ActiveTask.Type == ECSStoreEmployeeTaskType::StoreLooseProduct || bReorganizing || bProtecting;
+	if (!bPackingTask || (!IsValid(Shelf) && !IsValid(TargetStorage)) || !PackingCrateClass ||
+		!IsValid(CrateCarryAnchor) || !ACSDeliveryCrateActor::CanPackProduct(SourceProduct, this, ActiveTask.TaskId)) return false;
+	AActor* SourceParent = SourceProduct->GetAttachParentActor();
+	ACSShelfActor* SourceShelf = Cast<ACSShelfActor>(SourceParent);
+	if (IsValid(SourceParent) && !Cast<ACSFreshnessSafeZoneActor>(SourceParent) &&
+		!(SourceShelf && (bReorganizing || bProtecting))) return false;
+	const int32 Capacity = Shelf ? FMath::Min(ACSDeliveryCrateActor::PackingCapacity,
+		Shelf->GetEmployeeRestockableSlotCount(ActiveTask.ProductRow, ActiveTask.bAllowCrossTierDuplicateFallback)) : ACSDeliveryCrateActor::PackingCapacity;
+	if (Capacity < 2) return false;
+	const float AllowedPickupDistance = SourceShelf && bReorganizing ? MisplacedShelfProductPickupMaxDistance : LooseProductPickupMaxDistance;
+	TArray<ACSProductPickupActor*> Products = { SourceProduct };
+	TArray<ACSProductPickupActor*> Candidates;
+	for (TActorIterator<ACSProductPickupActor> It(GetWorld()); It; ++It)
+	{
+		ACSProductPickupActor* Product = *It;
+		if (Product == SourceProduct || !ACSDeliveryCrateActor::CanPackProduct(Product) || Product->IsReservedByEmployee() ||
+			Product->GetAttachParentActor() != SourceParent || Product->GetProductRow().DataTable != ActiveTask.ProductRow.DataTable ||
+			Product->GetProductRow().RowName != ActiveTask.ProductRow.RowName ||
+			(SourceShelf && bReorganizing && !SourceShelf->ShouldEmployeeReorganizeProduct(Product)) ||
+			// 같은 진열대 재정리는 이미 선반·상품·오배치 상태를 모두 확인했으므로, 선반 끝 상품도 함께 회수합니다.
+			(!bReorganizing && FVector::DistSquared(Product->GetActorLocation(), SourceProduct->GetActorLocation()) > FMath::Square(PackingSearchRadius)) ||
+			FVector::DistSquared2D(GetActorLocation(), Product->GetActorLocation()) > FMath::Square(AllowedPickupDistance)) continue;
+		// 바닥 상품은 벽 너머 재고를 회수하지 않게 시야를 확인하되, 같은 진열대 재정리는 상품끼리 가려도 함께 묶습니다.
+		if (bReorganizing)
+		{
+			Candidates.Add(Product);
+			continue;
+		}
+		FHitResult Hit;
+		FCollisionQueryParams Query;
+		Query.AddIgnoredActor(this);
+		Query.AddIgnoredActor(SourceProduct);
+		// 원래 진열대·창고의 선반 판이 상품 시야를 가려 포장을 막지 않도록 제외합니다.
+		if (SourceParent) Query.AddIgnoredActor(SourceParent);
+		const bool bBlocked = GetWorld()->LineTraceSingleByChannel(Hit, GetPawnViewLocation(), Product->GetComponentsBoundingBox().GetCenter(), ECC_Visibility, Query);
+		if (!bBlocked || Hit.GetActor() == Product) Candidates.Add(Product);
+	}
+	Candidates.Sort([SourceProduct](const ACSProductPickupActor& A, const ACSProductPickupActor& B)
+	{
+		return FVector::DistSquared(A.GetActorLocation(), SourceProduct->GetActorLocation()) <
+			FVector::DistSquared(B.GetActorLocation(), SourceProduct->GetActorLocation());
+	});
+	for (ACSProductPickupActor* Product : Candidates)
+	{
+		if (Products.Num() >= Capacity) break;
+		Products.Add(Product);
+	}
+	if (Products.Num() < 2) return false;
+	// 작은 상품을 모으더라도 상자는 기본 크기로 생성합니다.
+	const FTransform Transform(FRotator::ZeroRotator, SourceProduct->GetActorLocation());
+	ACSDeliveryCrateActor* Crate = GetWorld()->SpawnActorDeferred<ACSDeliveryCrateActor>(PackingCrateClass, Transform,
+		nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(Crate)) return false;
+	if (!Crate->InitializePackedProducts(Products)) { Crate->Destroy(); return false; }
+	Crate->FinishSpawning(Transform);
+	if (IsValid(Crate) && TargetStorage && !TargetStorage->CanStoreCrate(Crate, true))
+	{
+		Crate->Destroy();
+		return false;
+	}
+	UCSStoreEmployeeSubsystem* Employees = GetWorld()->GetSubsystem<UCSStoreEmployeeSubsystem>();
+	if (!IsValid(Crate) || !Employees || !Employees->ReplaceAssignedTaskSource(ActiveTask.TaskId, this, Crate, Products.Num()))
+	{
+		if (IsValid(Crate)) Crate->Destroy();
+		return false;
+	}
+	ActiveTask.SourceActor = Crate;
+	ActiveTask.RequestedQuantity = RemainingRestockQuantity = Products.Num();
+	// 낱개 집기에서 검증한 거리를 사용하며, 새 상자에 배송 상자의 거리 제한을 다시 적용하지 않습니다.
+	HeldCrateReturnLocation = Transform.GetLocation();
+	bHasHeldCrateReturnLocation = true;
+	Crate->PrepareForPickupPhysics();
+	Crate->SetHeldByPlayerForFreshness(true);
+	Crate->SetActorEnableCollision(false);
+	Crate->AttachToComponent(CrateCarryAnchor, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	HeldCrate = Crate;
+	// 예약 이전과 상자 초기화가 모두 성공한 뒤 원본 재고를 제거합니다.
+	for (ACSProductPickupActor* Product : Products) ACSDeliveryCrateActor::RemovePackedSource(Product);
+	UE_LOG(LogTemp, Log, TEXT("[StoreEmployee] %s 직원이 %d번 업무에서 상품 %d개를 상자로 묶었습니다."), *GetName(), ActiveTask.TaskId, Products.Num());
+	return true;
+}
+
 bool ACSStoreEmployeeCharacter::PickUpSourceCrate()
 {
 	ACSDeliveryCrateActor* SourceCrate = Cast<ACSDeliveryCrateActor>(ActiveTask.SourceActor);
@@ -1492,6 +1673,9 @@ bool ACSStoreEmployeeCharacter::PickUpSourceCrate()
 			}
 		}
 	}
+
+	if (TryPackNearbyProducts(SourceProduct)) return true;
+	if (!IsValid(SourceProduct)) return false;
 
 	if (ACSFreshnessSafeZoneActor* StoragePoint =
 		Cast<ACSFreshnessSafeZoneActor>(SourceProduct->GetAttachParentActor()))

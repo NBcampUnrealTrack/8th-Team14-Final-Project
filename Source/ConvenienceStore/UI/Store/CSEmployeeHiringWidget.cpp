@@ -40,6 +40,7 @@ void UCSEmployeeHiringWidget::NativeConstruct()
 	if (IsValid(CancelButton)) CancelButton->OnClicked.AddUniqueDynamic(this, &ThisClass::Close);
 	if (IsValid(StoreState))
 	{
+		StoreState->OnStoreLevelChanged.AddUniqueDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnFundsChanged.AddUniqueDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnStorePhaseChanged.AddUniqueDynamic(this, &ThisClass::HandlePhaseChanged);
 		StoreState->OnBusinessDayStarted.AddUniqueDynamic(this, &ThisClass::HandleBusinessDayChanged);
@@ -57,6 +58,7 @@ void UCSEmployeeHiringWidget::NativeDestruct()
 	if (IsValid(CancelButton)) CancelButton->OnClicked.RemoveDynamic(this, &ThisClass::Close);
 	if (IsValid(StoreState))
 	{
+		StoreState->OnStoreLevelChanged.RemoveDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnFundsChanged.RemoveDynamic(this, &ThisClass::HandleFundsChanged);
 		StoreState->OnStorePhaseChanged.RemoveDynamic(this, &ThisClass::HandlePhaseChanged);
 		StoreState->OnBusinessDayStarted.RemoveDynamic(this, &ThisClass::HandleBusinessDayChanged);
@@ -99,6 +101,8 @@ void UCSEmployeeHiringWidget::RefreshView()
 			ViewData.Duties = HireSlot == ECSEmployeeHireSlot::Checkout
 				? NSLOCTEXT("EmployeeHiring", "CheckoutDuties", "손님 계산 및 상품 스캔")
 				: NSLOCTEXT("EmployeeHiring", "RestockDuties", "상품 진열 · 상자 및 낱개 상품 보관\n오배치 상품 정리 · 냉장/냉동 재고 보호");
+			ViewData.RequiredStoreLevel = State->GetEmployeeRequiredStoreLevel(HireSlot);
+			ViewData.CurrentStoreLevel = State->GetStoreLevel();
 			ViewData.HireCost = State->GetEmployeeHireCost(HireSlot);
 			ViewData.DailyWage = State->GetEmployeeDailyWage(HireSlot);
 			ViewData.TotalDailyWage = Hiring->GetTotalDailyWage() + (Hiring->IsSlotHired(HireSlot) ? 0 : ViewData.DailyWage);
@@ -113,7 +117,7 @@ void UCSEmployeeHiringWidget::RefreshView()
 	if (IsValid(RoleNameText)) RoleNameText->SetText(ViewData.RoleName);
 	if (IsValid(DutiesText)) DutiesText->SetText(ViewData.Duties);
 	const auto Gold = [](int32 Amount) { return FText::Format(NSLOCTEXT("EmployeeHiring", "Gold", "{0}G"), FText::AsNumber(Amount)); };
-	if (IsValid(HireCostText)) HireCostText->SetText(Gold(ViewData.HireCost));
+	if (IsValid(HireCostText)) HireCostText->SetText(FText::Format(NSLOCTEXT("StoreRequirements", "CostAndLevel", "{0} · 가게 레벨 {1} 필요 (현재 {2})"), Gold(ViewData.HireCost), FText::AsNumber(ViewData.RequiredStoreLevel), FText::AsNumber(ViewData.CurrentStoreLevel)));
 	if (IsValid(DailyWageText)) DailyWageText->SetText(Gold(ViewData.DailyWage));
 	if (IsValid(TotalDailyWageText)) TotalDailyWageText->SetText(Gold(ViewData.TotalDailyWage));
 	if (IsValid(CurrentFundsText)) CurrentFundsText->SetText(Gold(ViewData.CurrentFunds));

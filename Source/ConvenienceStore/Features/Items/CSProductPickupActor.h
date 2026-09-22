@@ -88,6 +88,7 @@ public:
 	bool CanBeReservedByEmployee(const ACSStoreEmployeeCharacter* Employee, int32 TaskId) const;
 	void ReleaseEmployeeReservation(const ACSStoreEmployeeCharacter* Employee, int32 TaskId);
 	bool IsReservedByEmployee() const;
+	void ClearEmployeeReservationForPlayer() { ReservedByEmployee = nullptr; ReservationTaskId = INDEX_NONE; ReservationStartTimeSeconds = 0.0f; }
 
 	UFUNCTION(BlueprintPure, Category = "Product|ShelfLife")
 	bool IsExpired() const;
