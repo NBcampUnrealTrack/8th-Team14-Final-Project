@@ -15,9 +15,7 @@ class ACSCustomerShoppingBagActor;
 class UCSPurchaseDecisionComponent;
 class UPrimitiveComponent;
 class UCSInnerThoughtWidget;
-class UCSCustomerHeadIconWidget;
-class UWidgetComponent;
-class UTexture2D;
+class UStaticMeshComponent;
 class UCSCustomerVisualDataAsset;
 class UAnimSequence;
 struct FCSSelectProduct;
@@ -77,9 +75,10 @@ public:
 	void CancelActionAnimation();
 	void ReleaseActionTransitionHold();
 
-	// Tier.Icon을 손님 머리 위에 Duration초 동안 띄움 - DrawDebugString 자리를 대체하는 실제 표시 경로
-	// Icon이 nullptr이면(디자이너가 아직 안 채운 Tier) 기존 표시만 정리하고 아무것도 띄우지 않음
-	void ShowHeadIcon(UTexture2D* Icon, float Duration);
+	// exclamation_point 메시를 손님 머리 위에 Duration초 동안 띄움 - DrawDebugString 자리를 대체하는
+	// 실제 표시 경로. bShowIcon은 Tier.Icon != nullptr을 그대로 넘겨받는 표시 여부 스위치일 뿐,
+	// 값 자체(어떤 텍스처인지)는 안 씀 - 아이콘이 exclamation_point 메시 하나로 통일됐기 때문
+	void ShowHeadIcon(bool bShowIcon, float Duration);
 	// 표시 중인 머리 위 아이콘을 즉시 숨김
 	void HideHeadIcon();
 
@@ -145,9 +144,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|InnerThought")
 	TSubclassOf<UCSInnerThoughtWidget> InnerThoughtWidgetClass;
 
-	// 구매 거절/가격 반응 시 머리 위에 뜨는 아이콘 위젯 컴포넌트 (기존 DrawDebugString 자리 대체)
+	// 구매 거절/가격 반응 시 머리 위에 뜨는 아이콘 메시 컴포넌트 (기존 DrawDebugString 자리 대체)
+	// exclamation_point 스태틱 메시로 통일
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|HeadIcon")
-	TObjectPtr<UWidgetComponent> HeadIconWidgetComponent;
+	TObjectPtr<UStaticMeshComponent> HeadIconMeshComponent;
 
 	// Thinking/Pick 방향 보정 중 Mesh를 월드 Z축으로 이동할 거리입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Animation")

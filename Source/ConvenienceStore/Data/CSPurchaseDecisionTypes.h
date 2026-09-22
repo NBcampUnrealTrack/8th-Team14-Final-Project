@@ -100,8 +100,10 @@ struct FCSPurchaseRejectionTier
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	FText InnerThoughtTemplate;
 
-	// 거절 즉시 손님 머리 위에 DisplayDuration(GetInstantDisplayDuration)초 동안 뜨는 아이콘
-	// (ACSCustomerCharacter::ShowHeadIcon가 소비). 비워두면 아무것도 표시되지 않음
+	// 거절 즉시 손님 머리 위에 DisplayDuration(GetInstantDisplayDuration)초 동안 아이콘을 띄울지 여부
+	// (ACSCustomerCharacter::ShowHeadIcon가 소비). 텍스처 자체는 더 안 쓰고 None 여부만 본다 -
+	// 머리 위 표시가 exclamation_point 스태틱 메시 하나로 통일되면서 어떤 아이콘을 쓸지 고를 필요가
+	// 없어졌음. 비워두면(None) 아무것도 표시되지 않음
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
 	TObjectPtr<UTexture2D> Icon = nullptr;
 };
