@@ -58,6 +58,7 @@ void UCSStoreReputationSubsystem::HandleCheckoutCompleted(ACSCustomerCharacter* 
 {
 	// 정상 결제는 추첨 없이 그대로 카운트
 	++DailyNormalCheckouts;
+	OnReputationStatsChanged.Broadcast();
 }
 
 void UCSStoreReputationSubsystem::HandleCheckoutAbandoned(ACSCustomerCharacter* Customer, float WaitedSeconds)
@@ -65,6 +66,7 @@ void UCSStoreReputationSubsystem::HandleCheckoutAbandoned(ACSCustomerCharacter* 
 	if (RollShouldCount())
 	{
 		++DailyCheckoutAbandoned;
+		OnReputationStatsChanged.Broadcast();
 	}
 }
 
@@ -87,6 +89,7 @@ void UCSStoreReputationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* 
 	{
 		// 정상 결제는 HandleCheckoutCompleted에서 이미 집계됨. 입장 집계에만 반영
 		++DailyEnteredCustomers;
+		OnReputationStatsChanged.Broadcast();
 		return;
 	}
 
@@ -94,6 +97,7 @@ void UCSStoreReputationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* 
 	{
 		// 계산 포기는 HandleCheckoutAbandoned에서 이미 추첨·집계됨. 입장 집계에만 반영(중복 방지)
 		++DailyEnteredCustomers;
+		OnReputationStatsChanged.Broadcast();
 		return;
 	}
 
@@ -110,6 +114,7 @@ void UCSStoreReputationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* 
 	{
 		++DailyEmptyHandedDepartures;
 	}
+	OnReputationStatsChanged.Broadcast();
 }
 
 void UCSStoreReputationSubsystem::HandlePurchaseRejected(ACSCustomerCharacter* Customer, FCSPurchaseRejectionInfo Info)
@@ -148,6 +153,7 @@ void UCSStoreReputationSubsystem::HandlePurchaseRejected(ACSCustomerCharacter* C
 
 	DailyPriceUpsetSum += UpsetWeight;
 	State->bPriceUpsetCounted = true;
+	OnReputationStatsChanged.Broadcast();
 }
 
 void UCSStoreReputationSubsystem::HandleTrashWitnessed(ACSCustomerCharacter* Customer)
@@ -155,6 +161,7 @@ void UCSStoreReputationSubsystem::HandleTrashWitnessed(ACSCustomerCharacter* Cus
 	// 이 델리게이트는 하루 1회 캡(bTrashWitnessedToday)과 30% 목격 확률을
 	// CSCustomerRuntimeSubsystem이 이미 통과시킨 뒤에만 들어오므로 그대로 누적한다
 	++DailyTrashWitnessed;
+	OnReputationStatsChanged.Broadcast();
 }
 
 void UCSStoreReputationSubsystem::HandleDailySummaryRequested()
@@ -177,17 +184,8 @@ void UCSStoreReputationSubsystem::SettleDailyReputation() const
 		return;
 	}
 
-	const float Satisfaction =
-		(static_cast<float>(DailyNormalCheckouts)
-			- CheckoutAbandonedWeight * DailyCheckoutAbandoned
-			- EmptyHandedWeight * DailyEmptyHandedDepartures
-			- PriceUpsetWeight * DailyPriceUpsetSum
-			- TrashWitnessWeight * DailyTrashWitnessed)
-		/ static_cast<float>(DailyEnteredCustomers);
-
-	const float RawDelta = (Satisfaction - SatisfactionBaseline) * ReputationDeltaScale;
-	const float ClampedDelta = FMath::Clamp(RawDelta, -MaxDailyReputationDelta, MaxDailyReputationDelta);
-	const int32 RoundedDelta = FMath::RoundToInt(ClampedDelta);
+	const float Satisfaction = ComputeSatisfaction();
+	const int32 RoundedDelta = ComputeReputationDelta();
 
 	UWorld* World = GetWorld();
 	ACSStoreGameState* GameState = World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
@@ -197,12 +195,36 @@ void UCSStoreReputationSubsystem::SettleDailyReputation() const
 		return;
 	}
 
-	GameState->AddReputation(RoundedDelta);
+	GameState->AddReputation(RoundedDelta,
+		FString::Printf(TEXT("일일 정산(만족도 %.3f)"), Satisfaction));
 
 	UE_LOG(LogTemp, Warning,
 		TEXT("[평판 정산] 입장=%d 정상결제=%d 계산포기=%d 빈손퇴장=%d 가격불쾌=%.3f 쓰레기목격=%d 만족도=%.3f 델타=%d"),
 		DailyEnteredCustomers, DailyNormalCheckouts, DailyCheckoutAbandoned, DailyEmptyHandedDepartures,
 		DailyPriceUpsetSum, DailyTrashWitnessed, Satisfaction, RoundedDelta);
+}
+
+float UCSStoreReputationSubsystem::ComputeSatisfaction() const
+{
+	return (static_cast<float>(DailyNormalCheckouts)
+			- CheckoutAbandonedWeight * DailyCheckoutAbandoned
+			- EmptyHandedWeight * DailyEmptyHandedDepartures
+			- PriceUpsetWeight * DailyPriceUpsetSum
+			- TrashWitnessWeight * DailyTrashWitnessed)
+		/ static_cast<float>(DailyEnteredCustomers);
+}
+
+int32 UCSStoreReputationSubsystem::ComputeReputationDelta() const
+{
+	const float RawDelta = (ComputeSatisfaction() - SatisfactionBaseline) * ReputationDeltaScale;
+	const float ClampedDelta = FMath::Clamp(RawDelta, -MaxDailyReputationDelta, MaxDailyReputationDelta);
+	return FMath::RoundToInt(ClampedDelta);
+}
+
+int32 UCSStoreReputationSubsystem::GetProjectedReputationDelta() const
+{
+	// 마감 전에는 SettleDailyReputation과 같은 이유(0 나누기 방지)로 아직 계산할 수 없음
+	return DailyEnteredCustomers == 0 ? 0 : ComputeReputationDelta();
 }
 
 void UCSStoreReputationSubsystem::ResetDailyCounters()

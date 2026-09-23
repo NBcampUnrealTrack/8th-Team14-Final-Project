@@ -364,7 +364,9 @@ private:
 	TArray<TObjectPtr<UCSTutorialMarkerComponent>> ActiveMarkerComponents;
 
 	// 정산창(C)처럼 튜토리얼과 무관한 위젯이 뜰 때 화면을 숨겼다가 그대로 되살리기 위해
-	// 마지막으로 방송한 행과 그 시점의 목표 진행도를 기억해둠. BroadcastCurrentStep이 const라 mutable
+	// BroadcastCurrentStep(진행 중인 스텝)이 마지막으로 방송한 행과 그 시점의 목표 진행도를 기억해둠.
+	// 팁(ShowOneShotTip)은 일부러 갱신하지 않음 - BP 자체 타이머로 알아서 사라지는 1회성 알림이라
+	// 여기서 되살리면 이미 사라진 지 오래인 팁이 다시 뜨는 문제가 생김. BroadcastCurrentStep이 const라 mutable
 	mutable const FCSTutorialStepRow* LastBroadcastRow = nullptr;
 	mutable int32 LastBroadcastObjectiveCurrent = 0;
 

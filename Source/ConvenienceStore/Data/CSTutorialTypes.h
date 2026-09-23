@@ -48,7 +48,8 @@ enum class ECSTutorialStepId : uint8
 	EnterBuildMode,       // 4: 건축 모드 진입
 	PlaceFacility,        // 5: 시설 배치
 
-	// 3부(마감 후) 신설. 마감 종 확인 UI(WBP_ClosingBellConfirm)를 열면 완료 처리됨
+	// 3부(마감 후) 신설. 침대와 상호작용해 잠자기 확인 UI(WBP_ClosingBellConfirm)를 열면 완료 처리됨
+	// 이름은 ApproachClosingBell이지만 실제 액터는 침대(클래스명 ACSStoreClosingBellActor는 유지)
 	ApproachClosingBell,
 
 	// 2부(영업 중) 원포인트 팁 4종. StepRows(1부/3부 관문형 진행)에는 안 들어가고

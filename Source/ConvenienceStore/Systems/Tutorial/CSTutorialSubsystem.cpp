@@ -596,9 +596,9 @@ void UCSTutorialSubsystem::ShowOneShotTip(ECSTutorialStepId TipId)
 	OnTutorialObjectiveProgress.Broadcast(0, TipRow.ObjectiveGoal);
 	ShowMarkersForTag(TipRow.HighlightMarkerTag, TipRow.MarkerLabelText);
 
-	// 정산창(C) 등으로 화면이 잠깐 가려졌다가 그대로 되살아날 때 쓸 최신 상태를 기억해둠
-	LastBroadcastRow = &TipRow;
-	LastBroadcastObjectiveCurrent = 0;
+	// LastBroadcastRow(정산창 닫을 때 되살릴 화면)는 여기서 갱신하지 않음. 팁은 BP 쪽 자체 타이머로
+	// 알아서 사라지는 1회성 알림이라, 이미 사라진 지 오래인 팁이 정산창을 닫을 때마다 되살아나는
+	// 문제가 있었음(예: 속마음 팁이 계속 재등장). 진행 중인 스텝(BroadcastCurrentStep)만 되살림 대상으로 둠
 }
 
 void UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished()
@@ -712,13 +712,6 @@ void UCSTutorialSubsystem::HandleDailySummaryWidgetLockChanged(UUserWidget* Requ
 		BlankRow.PromptText = FText::GetEmpty();
 		OnTutorialStepChanged.Broadcast(BlankRow);
 		OnTutorialObjectiveProgress.Broadcast(0, 0);
-
-		// 정산창을 여는 것 자체가 TipSettlement 팁이 안내하던 행동이라 이 팁은 여기서 완료된 것으로 봄
-		// 그대로 두면 닫을 때마다 "C로 정산창을 열어보세요" 안내가 되살아나 무한 반복됨
-		if (LastBroadcastRow != nullptr && LastBroadcastRow->StepId == ECSTutorialStepId::TipSettlement)
-		{
-			LastBroadcastRow = nullptr;
-		}
 		return;
 	}
 
@@ -1487,7 +1480,7 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 		return;
 	}
 
-	// 위젯이 열리는 순간 대화창을 즉시 치움 - 장부/마감 종처럼 열려 있는 UI 위에
+	// 위젯이 열리는 순간 대화창을 즉시 치움 - 장부/침대(잠자기 확인)처럼 열려 있는 UI 위에
 	// 안내 문구가 계속 겹쳐 보이지 않게 함
 	if (bLocked)
 	{
