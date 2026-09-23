@@ -388,7 +388,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> ToggleCartPushAction;
 
-	// 숫자키로 퀵바 슬롯을 직접 선택하는 입력입니다. 처음에는 1, 2만 연결합니다.
+	// 숫자키로 퀵바 슬롯을 직접 선택하는 입력입니다. IA/IMC는 에디터에서 연결합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
 	TObjectPtr<UInputAction> SelectQuickbarSlot1Action;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
@@ -397,6 +397,10 @@ protected:
 	TObjectPtr<UInputAction> SelectQuickbarSlot3Action;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
 	TObjectPtr<UInputAction> SelectQuickbarSlot4Action;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot5Action;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
+	TObjectPtr<UInputAction> SelectQuickbarSlot6Action;
 
 	// 마우스 휠로 다음·이전 퀵바 슬롯을 순환 선택합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Quickbar")
@@ -469,12 +473,16 @@ private:
 	void SelectQuickbarSlot2();
 	void SelectQuickbarSlot3();
 	void SelectQuickbarSlot4();
+	void SelectQuickbarSlot5();
+	void SelectQuickbarSlot6();
 	void SelectNextQuickbarSlot();
 	void SelectPreviousQuickbarSlot();
 	bool TrySelectQuickbarSlot(int32 SlotIndex);
 	void EquipSelectedQuickbarTool();
 	USceneComponent* GetHeldItemAttachTarget(const AActor* ItemActor) const;
 	void StoreEquippedQuickbarTool();
+	void StoreHeldQuickbarItem();
+	void RemoveHeldItemFromQuickbar();
 	void UpdateQuickbarHUD();
 
 	UPROPERTY(Transient)
@@ -486,6 +494,8 @@ private:
 	void HandleQuickbarChanged();
 	UFUNCTION()
 	void HandleQuickbarSelectionChanged(int32 SelectedSlotIndex);
+	UFUNCTION()
+	void HandleStoreLevelChanged(int32 NewLevel);
 	void ToggleBuildMode();
 	void StartRotateBuildLeft();
 	void StopRotateBuildLeft();

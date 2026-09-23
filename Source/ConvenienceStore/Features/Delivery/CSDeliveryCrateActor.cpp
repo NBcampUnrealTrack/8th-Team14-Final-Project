@@ -151,6 +151,7 @@ bool ACSDeliveryCrateActor::CanBeReservedByEmployee(
 	int32 TaskId) const
 {
 	return IsValid(Employee) &&
+		Cast<ACSPlayerCharacter>(GetAttachParentActor()) == nullptr &&
 		(!IsValid(ReservedByEmployee) ||
 			(ReservedByEmployee == Employee && ReservationTaskId == TaskId));
 }

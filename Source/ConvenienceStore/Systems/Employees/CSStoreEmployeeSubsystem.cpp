@@ -29,6 +29,11 @@ bool IsActorHeldByPlayer(const UWorld* World, const AActor* Actor)
 	{
 		return false;
 	}
+	// 퀵바 보관 물건도 플레이어의 StorageAnchor에 부착됩니다.
+	if (Cast<ACSPlayerCharacter>(Actor->GetAttachParentActor()) != nullptr)
+	{
+		return true;
+	}
 
 	for (TActorIterator<ACSPlayerCharacter> PlayerIt(World); PlayerIt; ++PlayerIt)
 	{
@@ -1123,7 +1128,7 @@ void UCSStoreEmployeeSubsystem::RefreshRestockTasks()
 		{
 			ACSDeliveryCrateActor* Crate = *CrateIt;
 			if (!IsValid(Crate) || Crate->GetRemainingQuantity() <= 0 ||
-				HasActiveTaskForSource(Crate))
+				HasActiveTaskForSource(Crate) || IsActorHeldByPlayer(World, Crate))
 			{
 				// 한 상자를 여러 진열 업무가 동시에 예약하면 재고가 중복 사용될 수 있으므로 제외합니다.
 				continue;
@@ -1150,7 +1155,8 @@ void UCSStoreEmployeeSubsystem::RefreshRestockTasks()
 			{
 				ACSDeliveryCrateActor* Crate = *CrateIt;
 				if (!IsValid(Crate) || Crate->GetRemainingQuantity() <= 0 ||
-					HasActiveTaskForSource(Crate) || !CanCrateRestockShelf(Crate, Shelf, true))
+					HasActiveTaskForSource(Crate) || IsActorHeldByPlayer(World, Crate) ||
+					!CanCrateRestockShelf(Crate, Shelf, true))
 				{
 					continue;
 				}
@@ -1265,6 +1271,7 @@ void UCSStoreEmployeeSubsystem::RefreshStorageTasks()
 		ACSDeliveryCrateActor* Crate = *CrateIt;
 		if (!IsValid(Crate) || Crate->GetRemainingQuantity() <= 0 ||
 			HasActiveTaskForSource(Crate) ||
+			IsActorHeldByPlayer(World, Crate) ||
 			Crate->IsAwaitingStockroomIntake() ||
 			Cast<ACSFreshnessSafeZoneActor>(Crate->GetAttachParentActor()) != nullptr)
 		{
