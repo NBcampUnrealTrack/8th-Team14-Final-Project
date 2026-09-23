@@ -45,4 +45,9 @@ public:
 	// Thinking/Pick 액션 중에만 적용할 월드 Z축 Mesh 높이 보정입니다. 음수는 아래, 양수는 위입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Visual|Animation")
 	float ActionMeshWorldZOffset = -30.0f;
+
+	// 새 Skeleton의 단위 보정으로 달라지는 봉투 부착 크기만 보정합니다. 1이면 기존 외형을 유지합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Visual|Attachments",
+		meta = (ClampMin = "0.001"))
+	float ShoppingBagScaleMultiplier = 1.0f;
 };

@@ -73,6 +73,11 @@ public:
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
 
+	// 수면 중에도 정산 데이터 이벤트는 유지하고, 중간 정산 UI만 생략합니다.
+	bool BeginSleepTransition(AActor* Requester);
+	void EndSleepTransition(AActor* Requester);
+	bool IsSleepTransitionActive() const { return IsValid(SleepTransitionOwner); }
+
 	// 진열할 빈 슬롯이 없을 때 HUD에 빨간 배치 불가 안내를 표시합니다.
 	void ShowPlacementUnavailablePrompt();
 
@@ -225,6 +230,8 @@ protected:
 	// 현재 게임 조작을 막아야 하는 발주·계산 UI 목록입니다.
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UUserWidget>> GameplayUIInputLockWidgets;
+	UPROPERTY(Transient)
+	TObjectPtr<AActor> SleepTransitionOwner;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	ECStorePhase LastObservedStorePhase = ECStorePhase::Preparation;

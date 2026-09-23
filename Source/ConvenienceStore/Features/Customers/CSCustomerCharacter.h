@@ -194,6 +194,7 @@ private:
 	// ShowHeadIcon()이 예약한 자동 숨김 타이머
 	FTimerHandle HeadIconHideTimerHandle;
 	bool bFallbackAnimationsInitialized = false;
+	float ShoppingBagScaleMultiplier = 1.0f;
 	bool bFallbackWalking = false;
 	bool bActionAnimationPlaying = false;
 	bool bHoldActionTransformOnFinish = false;
