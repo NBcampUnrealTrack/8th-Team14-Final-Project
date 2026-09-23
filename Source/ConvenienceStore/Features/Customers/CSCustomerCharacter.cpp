@@ -165,6 +165,7 @@ void ACSCustomerCharacter::InitializeFallbackAnimations(
 	FallbackThinkingAnimation = Visual->FallbackThinkingAnimation;
 	FallbackPickAnimation = Visual->FallbackPickAnimation;
 	ActionMeshWorldZOffset = Visual->ActionMeshWorldZOffset;
+	ShoppingBagScaleMultiplier = FMath::Max(0.001f, Visual->ShoppingBagScaleMultiplier);
 	bFallbackAnimationsInitialized = true;
 	if (USkeletalMeshComponent* MeshComponent = GetMesh())
 	{
@@ -551,6 +552,8 @@ void ACSCustomerCharacter::ShowShoppingBag()
 			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		// 결제 후 생성하는 쇼핑백도 손님 스케일을 상속하지 않도록 같은 규칙을 적용합니다.
 		ShoppingBagActor->GetRootComponent()->SetAbsolute(false, false, true);
+		// 신규 모델만 Visual에서 단위 차이를 보정합니다. 기존 종족은 기본값 1로 동작이 같습니다.
+		ShoppingBagActor->SetActorScale3D(ShoppingBagActor->GetActorScale3D() * ShoppingBagScaleMultiplier);
 	}
 }
 

@@ -377,7 +377,34 @@ void ACSStorePlayerController::HandleClosingWarningFinished()
 
 void ACSStorePlayerController::HandleDailySummaryRequested()
 {
-	ShowDailySummary(false);
+	if (!IsSleepTransitionActive()) ShowDailySummary(false);
+}
+
+bool ACSStorePlayerController::BeginSleepTransition(AActor* Requester)
+{
+	if (!IsValid(Requester) || IsSleepTransitionActive()) return false;
+	SleepTransitionOwner = Requester;
+	CloseJournal();
+	if (IsValid(ActiveDailySummaryWidget) && bDailySummaryReadOnly)
+	{
+		HandleDailySummaryConfirmed();
+	}
+	SetStoreHUDHidden(Requester, true);
+	SetStoreTopBarHidden(Requester, true);
+	FlushPressedKeys();
+	UpdateClosingInputMode();
+	return true;
+}
+
+void ACSStorePlayerController::EndSleepTransition(AActor* Requester)
+{
+	if (SleepTransitionOwner != Requester) return;
+	SleepTransitionOwner = nullptr;
+	SetStoreHUDHidden(Requester, false);
+	SetStoreTopBarHidden(Requester, false);
+	UpdateClosingInputMode();
+	TryShowQueuedDeliveryToast();
+	TryShowPendingClosingAnnouncement();
 }
 
 void ACSStorePlayerController::ToggleDailySummary()
@@ -472,7 +499,7 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 	const bool bHasGameplayUIInputLock = HasGameplayUIInputLock();
 	const bool bShouldUseUIInput = bIsClosingUIOpen || bHasGameplayUIInputLock;
 
-	bShowMouseCursor = bShouldUseUIInput;
+	bShowMouseCursor = bShouldUseUIInput && !IsSleepTransitionActive();
 
 	// 단계와 업무 이벤트가 같은 입력 잠금을 여러 번 요청할 수 있으므로 먼저 초기화합니다.
 	ResetIgnoreMoveInput();
@@ -484,7 +511,12 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 		SetIgnoreLookInput(true);
 	}
 
-	if (bIsClosingUIOpen)
+	if (IsSleepTransitionActive())
+	{
+		// 날짜/단계 변경 이벤트가 와도 Fade가 끝날 때까지 모든 게임 입력을 차단합니다.
+		SetInputMode(FInputModeUIOnly());
+	}
+	else if (bIsClosingUIOpen)
 	{
 		FInputModeGameAndUI InputMode;
 		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -622,7 +654,7 @@ bool ACSStorePlayerController::IsGameplayUIInputLocked() const
 
 bool ACSStorePlayerController::HasGameplayUIInputLock() const
 {
-	return GameplayUIInputLockWidgets.ContainsByPredicate(
+	return IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
 		[](const TObjectPtr<UUserWidget>& Widget)
 		{
 			return IsValid(Widget);
@@ -631,7 +663,7 @@ bool ACSStorePlayerController::HasGameplayUIInputLock() const
 
 bool ACSStorePlayerController::IsCriticalDeliveryToastUIOpen() const
 {
-	return GameplayUIInputLockWidgets.ContainsByPredicate(
+	return IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
 		[](const TObjectPtr<UUserWidget>& Widget)
 		{
 			return IsValid(Widget) && Widget->IsA(UCSDailySummaryWidget::StaticClass());

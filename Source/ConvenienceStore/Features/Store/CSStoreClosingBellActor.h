@@ -6,7 +6,9 @@
 class UStaticMeshComponent;
 class ACSStoreGameState;
 class UCSStoreClosingBellConfirmWidget;
-// 통계 확인 후 마감 활동을 끝내고 다음 날을 시작하는 레벨 배치용 종입니다.
+class ACSStorePlayerController;
+class ACSPlayerWakePoint;
+// 검은 화면 동안 기존 정산/다음 날 처리를 실행하는 레벨 배치용 종입니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStoreClosingBellActor : public AActor, public ICSInteractable
 {
@@ -14,6 +16,7 @@ class CONVENIENCESTORE_API ACSStoreClosingBellActor : public AActor, public ICSI
 public:
 	ACSStoreClosingBellActor();
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 protected:
@@ -21,7 +24,19 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Closing") TSubclassOf<UCSStoreClosingBellConfirmWidget> ConfirmWidgetClass;
 	UPROPERTY(Transient) TObjectPtr<UCSStoreClosingBellConfirmWidget> ActiveConfirmWidget;
 	UPROPERTY(Transient) TObjectPtr<ACSStoreGameState> StoreGameState;
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Store|Sleep", meta = (ExposeOnSpawn = "true"))
+	TObjectPtr<ACSPlayerWakePoint> WakePoint;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Sleep", meta = (ClampMin = "0.1"))
+	float SleepFadeDuration = 0.75f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Sleep", meta = (ClampMin = "0.01"))
+	float SleepBlackHoldDuration = 0.15f;
+	TWeakObjectPtr<ACSStorePlayerController> SleepingController;
+	FTimerHandle SleepTimer;
+	int32 DayBeforeSleep = INDEX_NONE;
 	UFUNCTION() void HandleConfirmed();
 	UFUNCTION() void HandleCancelled();
 	void CloseConfirmWidget();
+	void AdvanceDayWhileBlack();
+	void WakeAndFadeIn();
+	void FinishSleep();
 };
