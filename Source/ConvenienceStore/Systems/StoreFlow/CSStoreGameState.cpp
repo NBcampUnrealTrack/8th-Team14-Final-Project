@@ -686,7 +686,7 @@ bool ACSStoreGameState::AddStoreExperience(int32 Amount)
 	return true;
 }
 
-bool ACSStoreGameState::AddReputation(int32 Delta)
+bool ACSStoreGameState::AddReputation(int32 Delta, const FString& Reason)
 {
 	if (!IsValid(StoreProgressionDataAsset))
 	{
@@ -699,6 +699,7 @@ bool ACSStoreGameState::AddReputation(int32 Delta)
 	const int32 MaximumReputationScore = FMath::Max(
 		MinimumReputationScore,
 		StoreProgressionDataAsset->MaximumReputationScore);
+	const int32 PreviousReputationScore = CurrentReputationScore;
 	const int64 AddedReputation =
 		static_cast<int64>(CurrentReputationScore) + Delta;
 	const int32 NewReputationScore = static_cast<int32>(FMath::Clamp<int64>(
@@ -712,6 +713,12 @@ bool ACSStoreGameState::AddReputation(int32 Delta)
 
 	CurrentReputationScore = NewReputationScore;
 	OnReputationChanged.Broadcast(CurrentReputationScore);
+
+	// 어디서/왜 평판이 바뀌었는지 한곳에서 남김 - 호출부마다 따로 로그를 안 찍어도 되게
+	UE_LOG(LogTemp, Warning, TEXT("[평판 변동] %s%s%d → %d (%+d)"),
+		Reason.IsEmpty() ? TEXT("") : *Reason,
+		Reason.IsEmpty() ? TEXT("") : TEXT(" - "),
+		PreviousReputationScore, CurrentReputationScore, Delta);
 
 	const ECSReputationGrade NewReputationGrade =
 		StoreProgressionDataAsset->GetReputationGradeForScore(CurrentReputationScore);
