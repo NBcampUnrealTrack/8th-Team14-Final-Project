@@ -5,22 +5,23 @@
 #include "CSQuickbarInventoryComponent.generated.h"
 
 class ACSUsableToolActor;
+class AActor;
 
-// 퀵바 슬롯 하나에 보관되는 도구입니다.
+// 퀵바 슬롯 하나에 보관되는 도구·상자·쓰레기입니다.
 USTRUCT(BlueprintType)
 struct FCSQuickbarSlot
 {
 	GENERATED_BODY()
 
-	// 현재 슬롯에 보관 중인 도구 액터입니다.
+	// 현재 슬롯에 보관 중인 액터입니다.
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Quickbar")
-	TObjectPtr<ACSUsableToolActor> ToolActor = nullptr;
+	TObjectPtr<AActor> ItemActor = nullptr;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnQuickbarChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnQuickbarSelectionChanged, int32, SelectedSlotIndex);
 
-// 플레이어가 보관하는 장착형 도구 전용 퀵바입니다.
+// 플레이어가 도구·상자·쓰레기를 보관하는 퀵바입니다.
 UCLASS(ClassGroup = (Player), meta = (BlueprintSpawnableComponent))
 class CONVENIENCESTORE_API UCSQuickbarInventoryComponent : public UActorComponent
 {
@@ -31,6 +32,11 @@ public:
 
 	// 슬롯 수를 기준으로 비어 있는 퀵바 배열을 준비합니다.
 	void InitializeQuickbar();
+	void SetSlotCount(int32 NewSlotCount);
+	int32 TryAddItem(AActor* ItemActor);
+	bool RemoveItem(AActor* ItemActor);
+	AActor* GetItemAt(int32 SlotIndex) const;
+	bool ContainsItem(const AActor* ItemActor) const;
 	// 첫 빈 칸에 도구를 보관하고, 성공한 슬롯 번호를 반환합니다.
 	int32 TryAddTool(ACSUsableToolActor* ToolActor);
 	// 도구를 퀵바에서 제거합니다.
@@ -55,7 +61,7 @@ public:
 	FCSOnQuickbarSelectionChanged OnQuickbarSelectionChanged;
 
 protected:
-	// 현재는 2칸으로 시작하며, 이후 이 값만 늘리면 퀵바가 확장됩니다.
+	// 레벨 1의 기본 슬롯 수입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Quickbar", meta = (ClampMin = "1", UIMin = "1"))
 	int32 InventorySlotCount = 2;
 

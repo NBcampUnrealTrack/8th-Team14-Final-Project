@@ -47,6 +47,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
@@ -269,6 +270,11 @@ void ACSPlayerCharacter::BeginPlay()
 			this, &ACSPlayerCharacter::HandleQuickbarSelectionChanged);
 		QuickbarInventory->InitializeQuickbar();
 	}
+	if (ACSStoreGameState* StoreState = GetWorld()->GetGameState<ACSStoreGameState>())
+	{
+		StoreState->OnStoreLevelChanged.AddUniqueDynamic(this, &ACSPlayerCharacter::HandleStoreLevelChanged);
+		HandleStoreLevelChanged(StoreState->GetStoreLevel());
+	}
 
     // 로컬 플레이어에게만 Input Mapping Context를 적용합니다.
     if (APlayerController* PlayerController =
@@ -290,6 +296,10 @@ void ACSPlayerCharacter::BeginPlay()
 
 void ACSPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (ACSStoreGameState* StoreState = GetWorld()->GetGameState<ACSStoreGameState>())
+	{
+		StoreState->OnStoreLevelChanged.RemoveDynamic(this, &ACSPlayerCharacter::HandleStoreLevelChanged);
+	}
 	if (AimedEndingDisplay.IsValid()) AimedEndingDisplay->HidePlacementPreview();
 	if (IsValid(PushedCart))
 	{
@@ -427,6 +437,8 @@ void ACSPlayerCharacter::SetupPlayerInputComponent(
 	BindQuickbarAction(SelectQuickbarSlot2Action, &ACSPlayerCharacter::SelectQuickbarSlot2);
 	BindQuickbarAction(SelectQuickbarSlot3Action, &ACSPlayerCharacter::SelectQuickbarSlot3);
 	BindQuickbarAction(SelectQuickbarSlot4Action, &ACSPlayerCharacter::SelectQuickbarSlot4);
+	BindQuickbarAction(SelectQuickbarSlot5Action, &ACSPlayerCharacter::SelectQuickbarSlot5);
+	BindQuickbarAction(SelectQuickbarSlot6Action, &ACSPlayerCharacter::SelectQuickbarSlot6);
 	BindQuickbarAction(CycleQuickbarNextAction, &ACSPlayerCharacter::SelectNextQuickbarSlot);
 	BindQuickbarAction(CycleQuickbarPreviousAction, &ACSPlayerCharacter::SelectPreviousQuickbarSlot);
 
@@ -919,6 +931,12 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	{
 		return false;
 	}
+	const bool bQuickbarCargo = !IsBuildMode() &&
+		(Cast<ACSDeliveryCrateActor>(PickupActor) != nullptr || Cast<ACSTrashActor>(PickupActor) != nullptr);
+	if (bQuickbarCargo && IsValid(HeldActor) && Cast<ACSUsableToolActor>(HeldActor) != nullptr)
+	{
+		StoreEquippedQuickbarTool();
+	}
 
 	if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(PickupActor);
 		!IsBuildMode() &&
@@ -1025,6 +1043,14 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 	}
 
 	HeldActor = PickupActor;
+	if (bQuickbarCargo && IsValid(QuickbarInventory))
+	{
+		const int32 AddedSlotIndex = QuickbarInventory->TryAddItem(PickupActor);
+		if (AddedSlotIndex != INDEX_NONE)
+		{
+			QuickbarInventory->SelectSlot(AddedSlotIndex);
+		}
+	}
 
 	if (ACSUsableToolActor* ToolActor = Cast<ACSUsableToolActor>(HeldActor))
 	{
@@ -1081,6 +1107,7 @@ bool ACSPlayerCharacter::TryStoreHeldItem(
 	}
 
 	// 창고가 액터를 부착하고 신선도 상태를 갱신한 뒤에만 플레이어 손과 진열 프리뷰 참조를 비웁니다.
+	RemoveHeldItemFromQuickbar();
 	HeldActor = nullptr;
 	DestroyPlacementPreview();
 	ClearShelfPlacementHighlights();
@@ -3133,6 +3160,7 @@ void ACSPlayerCharacter::DropHeldItem()
 		if (ACSTrashCanActor* TrashCan = Cast<ACSTrashCanActor>(TargetActor);
 			IsValid(TrashCan) && TrashCan->TryDisposeItem(HeldActor))
 		{
+		RemoveHeldItemFromQuickbar();
 			HeldActor = nullptr;
 			DestroyPlacementPreview();
 			ClearShelfPlacementHighlights();
@@ -3163,6 +3191,7 @@ void ACSPlayerCharacter::DropHeldItem()
 			{
 				if (!IsValid(DeliveryCrate) || DeliveryCrate->GetRemainingQuantity() <= 0)
 				{
+					RemoveHeldItemFromQuickbar();
 					HeldActor = nullptr;
 					DestroyPlacementPreview();
 					ClearShelfPlacementHighlights();
@@ -3189,6 +3218,7 @@ void ACSPlayerCharacter::DropHeldItem()
 						DeliveryCrate,
 						AimHitResult.ImpactPoint))
 				{
+					RemoveHeldItemFromQuickbar();
 					HeldActor = nullptr;
 					DestroyPlacementPreview();
 					ClearShelfPlacementHighlights();
@@ -3296,10 +3326,9 @@ void ACSPlayerCharacter::DropHeldItem()
 	}
 
 	HeldActor = nullptr;
-	if (IsValid(ToolToDrop) && IsValid(QuickbarInventory))
+	if (IsValid(QuickbarInventory))
 	{
-		// Q로 장착 도구를 떨어뜨리면 퀵바에서도 함께 제거합니다.
-		QuickbarInventory->RemoveTool(ToolToDrop);
+		QuickbarInventory->RemoveItem(ActorToDrop);
 	}
 	DestroyPlacementPreview();
 
@@ -3473,11 +3502,8 @@ void ACSPlayerCharacter::ThrowHeldItem()
 	{
 		ToolToThrow->OnUnequipped();
 		ToolToThrow->EnableWorldDropPhysics();
-		if (IsValid(QuickbarInventory))
-		{
-			QuickbarInventory->RemoveTool(ToolToThrow);
-		}
 	}
+	if (IsValid(QuickbarInventory)) QuickbarInventory->RemoveItem(ActorToThrow);
 
 	const FVector ThrowDirection =
 		(FirstPersonCamera->GetForwardVector() + FVector::UpVector * ThrowUpwardBias)
@@ -3824,6 +3850,7 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 
 	if (bWillDepleteCrate || !IsValid(DeliveryCrate))
 	{
+		RemoveHeldItemFromQuickbar();
 		HeldActor = nullptr;
 		DestroyPlacementPreview();
 	}
@@ -4675,12 +4702,22 @@ void ACSPlayerCharacter::SelectQuickbarSlot4()
 	TrySelectQuickbarSlot(3);
 }
 
+void ACSPlayerCharacter::SelectQuickbarSlot5()
+{
+	TrySelectQuickbarSlot(4);
+}
+
+void ACSPlayerCharacter::SelectQuickbarSlot6()
+{
+	TrySelectQuickbarSlot(5);
+}
+
 void ACSPlayerCharacter::SelectNextQuickbarSlot()
 {
 	if (IsValid(QuickbarInventory) &&
 		!IsBuildMode() &&
 		!IsValid(PushedCart) &&
-		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
+		(!IsValid(HeldActor) || QuickbarInventory->ContainsItem(HeldActor)))
 	{
 		QuickbarInventory->CycleSelection(1);
 	}
@@ -4691,7 +4728,7 @@ void ACSPlayerCharacter::SelectPreviousQuickbarSlot()
 	if (IsValid(QuickbarInventory) &&
 		!IsBuildMode() &&
 		!IsValid(PushedCart) &&
-		(!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor) != nullptr))
+		(!IsValid(HeldActor) || QuickbarInventory->ContainsItem(HeldActor)))
 	{
 		QuickbarInventory->CycleSelection(-1);
 	}
@@ -4704,7 +4741,7 @@ bool ACSPlayerCharacter::TrySelectQuickbarSlot(int32 SlotIndex)
 		return false;
 	}
 
-	if (IsValid(HeldActor) && Cast<ACSUsableToolActor>(HeldActor) == nullptr)
+	if (IsValid(HeldActor) && !QuickbarInventory->ContainsItem(HeldActor))
 	{
 		if (ACSStorePlayerController* StorePlayerController =
 			Cast<ACSStorePlayerController>(GetController()))
@@ -4780,35 +4817,81 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 		return;
 	}
 
-	ACSUsableToolActor* SelectedTool = QuickbarInventory->GetToolAt(
+	AActor* SelectedItem = QuickbarInventory->GetItemAt(
 		QuickbarInventory->GetSelectedSlotIndex());
-	if (HeldActor == SelectedTool)
+	if (IsValid(HeldActor) && !QuickbarInventory->ContainsItem(HeldActor))
+	{
+		return;
+	}
+	if (HeldActor == SelectedItem)
 	{
 		return;
 	}
 
 	if (IsValid(HeldActor))
 	{
-		StoreEquippedQuickbarTool();
+		StoreHeldQuickbarItem();
 	}
 
-	if (!IsValid(SelectedTool))
+	if (!IsValid(SelectedItem))
 	{
 		return;
 	}
 
-	SelectedTool->PrepareForPickupPhysics();
-	USceneComponent* AttachTarget = GetHeldItemAttachTarget(SelectedTool);
+	if (ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(SelectedItem)) Tool->PrepareForPickupPhysics();
+	else if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(SelectedItem))
+	{
+		Crate->PrepareForPickupPhysics();
+		Crate->SetHeldByPlayerForFreshness(true);
+	}
+	else if (ACSTrashActor* Trash = Cast<ACSTrashActor>(SelectedItem)) Trash->PrepareForPickupPhysics();
+	USceneComponent* AttachTarget = GetHeldItemAttachTarget(SelectedItem);
 	if (!IsValid(AttachTarget))
 	{
 		return;
 	}
-	SelectedTool->AttachToComponent(
+	SelectedItem->AttachToComponent(
 		AttachTarget,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-	SelectedTool->SetActorHiddenInGame(false);
-	SelectedTool->OnEquipped(this);
-	HeldActor = SelectedTool;
+	SelectedItem->SetActorHiddenInGame(false);
+	SelectedItem->SetActorEnableCollision(false);
+	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(SelectedItem))
+	{
+		Crate->SetActorRelativeLocation(Crate->GetHeldRelativeLocation());
+		CreatePlacementPreviewFromCrate(Crate);
+	}
+	else DestroyPlacementPreview();
+	if (ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(SelectedItem)) Tool->OnEquipped(this);
+	HeldActor = SelectedItem;
+	RefreshShelfPlacementHighlights();
+}
+
+void ACSPlayerCharacter::StoreHeldQuickbarItem()
+{
+	if (!IsValid(HeldActor) || !IsValid(QuickbarInventory) ||
+		!QuickbarInventory->ContainsItem(HeldActor) || !IsValid(QuickbarStorageAnchor)) return;
+	if (Cast<ACSUsableToolActor>(HeldActor) != nullptr)
+	{
+		StoreEquippedQuickbarTool();
+		return;
+	}
+	AActor* Item = HeldActor;
+	HeldActor = nullptr;
+	DestroyPlacementPreview();
+	ClearShelfPlacementHighlights();
+	Item->SetActorEnableCollision(false);
+	Item->AttachToComponent(QuickbarStorageAnchor,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	Item->SetActorHiddenInGame(true);
+	// 상자 액터의 신선도 타이머는 유지하고 냉장·냉동 보호만 받지 않습니다.
+	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Item))
+		Crate->SetHeldByPlayerForFreshness(true);
+}
+
+void ACSPlayerCharacter::RemoveHeldItemFromQuickbar()
+{
+	if (IsValid(QuickbarInventory) && HeldActor != nullptr)
+		QuickbarInventory->RemoveItem(HeldActor);
 }
 
 bool ACSPlayerCharacter::ConsumeQuickbarTool(ACSUsableToolActor* Tool)
@@ -4862,10 +4945,21 @@ void ACSPlayerCharacter::UpdateQuickbarHUD()
 	ToolIcons.Reserve(SlotCount);
 	for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
 	{
-		if (const ACSUsableToolActor* Tool = QuickbarInventory->GetToolAt(SlotIndex))
+		AActor* Item = QuickbarInventory->GetItemAt(SlotIndex);
+		if (const ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(Item))
 		{
 			ToolNames.Add(Tool->GetToolDisplayName());
 			ToolIcons.Add(Tool->GetToolIcon());
+		}
+		else if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Item))
+		{
+			ToolNames.Add(Crate->GetProductDisplayName());
+			ToolIcons.Add(Crate->GetProductIcon().LoadSynchronous());
+		}
+		else if (Cast<ACSTrashActor>(Item))
+		{
+			ToolNames.Add(NSLOCTEXT("Quickbar", "Trash", "쓰레기"));
+			ToolIcons.Add(nullptr);
 		}
 		else
 		{
@@ -4895,4 +4989,10 @@ void ACSPlayerCharacter::HandleQuickbarSelectionChanged(int32 SelectedSlotIndex)
 	(void)SelectedSlotIndex;
 	EquipSelectedQuickbarTool();
 	UpdateQuickbarHUD();
+}
+
+void ACSPlayerCharacter::HandleStoreLevelChanged(int32 NewLevel)
+{
+	if (IsValid(QuickbarInventory))
+		QuickbarInventory->SetSlotCount(FMath::Clamp(NewLevel + 1, 2, 6));
 }
