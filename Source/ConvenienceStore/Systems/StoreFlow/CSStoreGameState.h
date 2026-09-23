@@ -404,8 +404,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Progression")
 	bool AddStoreExperience(int32 Amount);
 
+	// Reason은 사람이 읽을 원인 설명(로그용). 비워두면 원인 없이 숫자만 로그에 남음
 	UFUNCTION(BlueprintCallable, Category = "Store|Progression")
-	bool AddReputation(int32 Delta);
+	bool AddReputation(int32 Delta, const FString& Reason = TEXT(""));
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	bool IsStoreLevelRequirementMet(int32 RequiredLevel) const;

@@ -3,6 +3,7 @@
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
+#include "Systems/CustomerFlow/CSStoreReputationSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSProductAnalysisWidget.h"
@@ -46,6 +47,14 @@ void UCSDailySummaryWidget::NativeConstruct()
 		StoreGameState->OnReputationChanged.AddUniqueDynamic(
 			this, &UCSDailySummaryWidget::HandleReputationChanged);
 	}
+
+	ReputationSubsystem = GetWorld() ? GetWorld()->GetSubsystem<UCSStoreReputationSubsystem>() : nullptr;
+	if (IsValid(ReputationSubsystem))
+	{
+		ReputationSubsystem->OnReputationStatsChanged.AddUniqueDynamic(
+			this, &UCSDailySummaryWidget::HandleReputationStatsChanged);
+	}
+
 	RefreshSummary();
 }
 
@@ -83,6 +92,13 @@ void UCSDailySummaryWidget::NativeDestruct()
 			this, &UCSDailySummaryWidget::HandleReputationChanged);
 	}
 	StoreGameState = nullptr;
+
+	if (IsValid(ReputationSubsystem))
+	{
+		ReputationSubsystem->OnReputationStatsChanged.RemoveDynamic(
+			this, &UCSDailySummaryWidget::HandleReputationStatsChanged);
+	}
+	ReputationSubsystem = nullptr;
 
 	Super::NativeDestruct();
 }
@@ -143,9 +159,17 @@ void UCSDailySummaryWidget::RefreshSummary()
 			NSLOCTEXT("StoreSummary", "SoldQuantity", "{0}건"),
 			FText::AsNumber(State->DailySoldQuantity)));
 	}
+	// 실시간 조회(C) 중엔 아직 SettleDailyReputation이 안 돌아서 GetReputationScore()/GetDailyReputationDelta()에
+	// 오늘 만족도분이 안 잡혀 있음. 지금까지 통계로 미리 계산한 만족도분(GetProjectedReputationDelta)을
+	// 더해서 보여줌 - 점수는 실제로 바꾸지 않고 표시만 미리 반영
+	const ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(GetOwningPlayer());
+	const bool bReadOnlyView = IsValid(Controller) && Controller->IsDailySummaryReadOnly();
+	const int32 ProjectedDeltaOnly = (bReadOnlyView && IsValid(ReputationSubsystem))
+		? ReputationSubsystem->GetProjectedReputationDelta()
+		: 0;
 	if (IsValid(ReputationScoreText))
 	{
-		ReputationScoreText->SetText(FText::AsNumber(State->GetReputationScore()));
+		ReputationScoreText->SetText(FText::AsNumber(State->GetReputationScore() + ProjectedDeltaOnly));
 	}
 
 	const bool bHasProductOrderExpense = State->DailyProductOrderExpenseGold > 0;
@@ -199,11 +223,16 @@ void UCSDailySummaryWidget::RefreshSummary()
 		NSLOCTEXT("StoreSummary", "ProfitNonNegative", "전일 대비 {0}G 증가"),
 		NSLOCTEXT("StoreSummary", "ProfitNegative", "전일 대비 {0}G 감소"));
 	ApplyDeltaPresentation(
-		State->GetDailyReputationDelta(),
+		State->GetDailyReputationDelta() + ProjectedDeltaOnly,
 		ReputationDeltaText,
 		ReputationDeltaIcon,
 		NSLOCTEXT("StoreSummary", "ReputationNonNegative", "{0}"),
 		NSLOCTEXT("StoreSummary", "ReputationNegative", "{0}"));
+}
+
+void UCSDailySummaryWidget::HandleReputationStatsChanged()
+{
+	RefreshSummary();
 }
 
 void UCSDailySummaryWidget::HandleDailySummaryDataChanged()
