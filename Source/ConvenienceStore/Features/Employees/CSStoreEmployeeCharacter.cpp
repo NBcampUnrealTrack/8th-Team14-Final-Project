@@ -1555,6 +1555,11 @@ bool ACSStoreEmployeeCharacter::PickUpSourceCrate()
 	ACSDeliveryCrateActor* SourceCrate = Cast<ACSDeliveryCrateActor>(ActiveTask.SourceActor);
 	if (IsValid(SourceCrate))
 	{
+		// 예약 이후 플레이어가 집거나 퀵바에 넣은 상자는 다시 가져가지 않습니다.
+		if (Cast<ACSPlayerCharacter>(SourceCrate->GetAttachParentActor()) != nullptr)
+		{
+			return false;
+		}
 		if (SourceCrate->GetRemainingQuantity() <= 0 || !IsValid(CrateCarryAnchor))
 		{
 			UE_LOG(LogTemp, Warning,

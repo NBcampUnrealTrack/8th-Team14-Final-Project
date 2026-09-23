@@ -653,7 +653,8 @@ bool UCSCustomerRuntimeSubsystem::IsTrashNearby(const FVector& Location, float R
 	for (const TWeakObjectPtr<ACSTrashActor>& Trash : DroppedTrashCache)
 	{
 		const ACSTrashActor* TrashActor = Trash.Get();
-		if (TrashActor != nullptr &&
+		if (TrashActor != nullptr && !TrashActor->IsHidden() &&
+			TrashActor->GetAttachParentActor() == nullptr &&
 			FVector::DistSquared(TrashActor->GetActorLocation(), Location) <= RadiusSquared)
 		{
 			return true;
@@ -1918,7 +1919,7 @@ int32 UCSCustomerRuntimeSubsystem::CountTrashInWorld() const
 
 	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
 	{
-		if (!IsValid(*It))
+		if (!IsValid(*It) || It->IsHidden() || It->GetAttachParentActor() != nullptr)
 		{
 			continue;
 		}
