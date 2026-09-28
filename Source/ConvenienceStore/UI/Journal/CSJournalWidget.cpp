@@ -11,6 +11,8 @@
 #include "Features/Journal/CSJournalWorldActors.h"
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Features/Player/CSPlayerCharacter.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 
@@ -52,6 +54,8 @@ void UCSJournalWidget::NativeConstruct()
 	SelectedBusinessDay = GetCurrentBusinessDay();
 	SelectedMonthIndex = (SelectedBusinessDay - 1) / JournalDaysPerMonth;
 	Journal->OnJournalChanged.AddUniqueDynamic(this, &UCSJournalWidget::RefreshJournal);
+	if (UCSArtifactSubsystem* Artifacts = GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>())
+		Artifacts->OnArtifactsChanged.AddUniqueDynamic(this, &UCSJournalWidget::RefreshJournal);
 	if (CloseButton)
 		CloseButton->OnClicked.AddUniqueDynamic(this, &UCSJournalWidget::RequestClose);
 	if (NextPageButton)
@@ -72,6 +76,9 @@ void UCSJournalWidget::NativeDestruct()
 		GetWorld()->GetTimerManager().ClearTimer(LiveUpdateTimer);
 	if (Journal)
 		Journal->OnJournalChanged.RemoveDynamic(this, &UCSJournalWidget::RefreshJournal);
+	if (GetGameInstance())
+		if (UCSArtifactSubsystem* Artifacts = GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>())
+			Artifacts->OnArtifactsChanged.RemoveDynamic(this, &UCSJournalWidget::RefreshJournal);
 	if (CloseButton)
 		CloseButton->OnClicked.RemoveDynamic(this, &UCSJournalWidget::RequestClose);
 	if (NextPageButton)
@@ -144,14 +151,37 @@ bool UCSJournalWidget::SelectDay(int32 BusinessDay)
 }
 bool UCSJournalWidget::SelectArtifact(FName ArtifactId)
 {
-	if (!Journal || !Journal->Catalog ||
-		!Journal->Catalog->Artifacts.ContainsByPredicate([&](const FCSJournalArtifact& A)
-														 { return A.ArtifactId == ArtifactId; }))
+	FCSJournalArtifact Artifact;
+	if (!Journal || !Journal->FindArtifact(ArtifactId, Artifact))
 		return false;
 	SelectedArtifactId = ArtifactId;
 	RefreshJournal();
 	SetKeyboardFocus();
 	return true;
+}
+
+int32 UCSJournalWidget::GetSelectedArtifactCount() const
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	return Artifacts ? Artifacts->GetCount(SelectedArtifactId) : 0;
+}
+
+int32 UCSJournalWidget::GetSelectedArtifactStacks() const
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	return Artifacts ? Artifacts->GetAppliedStacks(SelectedArtifactId) : 0;
+}
+
+int32 UCSJournalWidget::GetSelectedArtifactNextAvailableDay() const
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	return Artifacts ? Artifacts->GetNextAvailableDay(SelectedArtifactId) : 0;
+}
+
+bool UCSJournalWidget::UseSelectedArtifact()
+{
+	UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	return Artifacts && Artifacts->TryUse(SelectedArtifactId, Cast<ACSPlayerCharacter>(GetOwningPlayerPawn()));
 }
 
 // WBP의 자식 위젯을 다시 생성하지 않고 갱신 이벤트로 필요한 표시만 변경합니다.
@@ -278,8 +308,8 @@ TArray<FCSJournalRaceEntryView> UCSJournalWidget::GetRaceEntries(ECSJournalRace 
 TArray<FCSJournalArtifactView> UCSJournalWidget::GetArtifactEntries() const
 {
 	TArray<FCSJournalArtifactView> Entries;
-	if (Journal && Journal->Catalog)
-		for (const auto& Artifact : Journal->Catalog->Artifacts)
+	if (Journal)
+		for (const auto& Artifact : Journal->GetAllArtifacts())
 		{
 			FCSJournalArtifactView View;
 			View.ArtifactId = Artifact.ArtifactId;

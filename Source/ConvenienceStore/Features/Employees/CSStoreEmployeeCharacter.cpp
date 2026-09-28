@@ -13,6 +13,7 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "Systems/Employees/CSStoreEmployeeSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Components/SceneComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/BoxComponent.h"
@@ -133,9 +134,20 @@ void ACSStoreEmployeeCharacter::EndMagicBoost()
 	OnMagicBoostChanged(false);
 }
 
+void ACSStoreEmployeeCharacter::RefreshArtifactMoveSpeed()
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	const float Multiplier = Artifacts ? Artifacts->GetSpeedMultiplier(ECSArtifactEffectType::EmployeeSpeed) : 1.0f;
+	const float Ratio = Multiplier / FMath::Max(LastArtifactSpeedMultiplier, 0.01f);
+	GetCharacterMovement()->MaxWalkSpeed *= Ratio;
+	if (GetWorldTimerManager().IsTimerActive(MagicBoostTimer)) MoveSpeedBeforeBoost *= Ratio;
+	LastArtifactSpeedMultiplier = Multiplier;
+}
+
 void ACSStoreEmployeeCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	RefreshArtifactMoveSpeed();
 	// 블루프린트의 Pawn 통과 설정과 별개로 마법 투사체를 감지합니다.
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	RefreshEmploymentPresentation();

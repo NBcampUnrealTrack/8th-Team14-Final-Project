@@ -27,6 +27,7 @@ class CONVENIENCESTORE_API ACSCustomerCharacter : public ACharacter, public ICSH
 
 public:
 	ACSCustomerCharacter();
+	void RefreshArtifactMoveSpeed();
 
 	UCSCustomerStateComponent* GetCustomerState() const;
 
@@ -83,6 +84,7 @@ public:
 	void HideHeadIcon();
 
 protected:
+	float LastArtifactSpeedMultiplier = 1.0f;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

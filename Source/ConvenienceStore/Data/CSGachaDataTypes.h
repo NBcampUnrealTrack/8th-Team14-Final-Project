@@ -32,6 +32,10 @@ struct CONVENIENCESTORE_API FCSGachaPoolRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reward",
 		meta = (RowType = "/Script/ConvenienceStore.CSProductDataRow"))
 	FDataTableRowHandle ProductRow;
+	// 신규 데이터는 이 행을 사용하며, 기존 CSV는 RewardId로 같은 행을 찾습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reward",
+		meta = (RowType = "/Script/ConvenienceStore.CSJournalArtifactDataRow"))
+	FDataTableRowHandle ArtifactRow;
 
 	// ProductVisualRegistry / JournalCatalog / EndingData를 RewardType에 맞게 참조합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Reward")

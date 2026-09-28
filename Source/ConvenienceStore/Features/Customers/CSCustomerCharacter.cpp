@@ -20,6 +20,7 @@
 #include "TimerManager.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Components/StaticMeshComponent.h"
 
 namespace
@@ -438,6 +439,7 @@ void ACSCustomerCharacter::RestoreActionMeshRotation()
 void ACSCustomerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	RefreshArtifactMoveSpeed();
 
 	// 행인은 장바구니를 갖지 않는다. 입장이 확정되는 순간에만 생성
 	if (IsValid(CustomerState))
@@ -452,6 +454,14 @@ void ACSCustomerCharacter::BeginPlay()
 			EnsureBasketSpawned();
 		}
 	}
+}
+
+void ACSCustomerCharacter::RefreshArtifactMoveSpeed()
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	const float Multiplier = Artifacts ? Artifacts->GetSpeedMultiplier(ECSArtifactEffectType::CustomerSpeed) : 1.0f;
+	GetCharacterMovement()->MaxWalkSpeed *= Multiplier / FMath::Max(LastArtifactSpeedMultiplier, 0.01f);
+	LastArtifactSpeedMultiplier = Multiplier;
 }
 
 void ACSCustomerCharacter::HandleEnteredStore(UCSCustomerStateComponent* State)
