@@ -42,7 +42,8 @@ enum class ECSProductRarity : uint8
 {
 	Common,
 	Uncommon,
-	Rare
+	Rare,
+	Legendary
 };
 
 UENUM(BlueprintType)
@@ -230,6 +231,10 @@ struct CONVENIENCESTORE_API FCSProductDataRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|Order",
 		meta = (ClampMin = "1", UIMin = "1"))
 	int32 OrderPackQuantity = 1;
+
+	// 기존 상품은 발주 가능. 가챠 전용 상품만 false로 지정합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|Order")
+	bool bOrderable = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|ShelfLife",
 		meta = (ClampMin = "0", UIMin = "0"))
