@@ -13,6 +13,10 @@
 
 class ACSCustomerCharacter;
 
+// 하루 카운터(입장/정상결제/계산포기/빈손퇴장/가격불쾌/쓰레기목격) 중 하나가 바뀔 때마다 방송
+// 실시간 정산창(C)이 아직 마감 전인 오늘자 평판 변동을 미리 보여줄 때 구독해서 씀
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnReputationStatsChanged);
+
 UCLASS()
 class CONVENIENCESTORE_API UCSStoreReputationSubsystem : public UWorldSubsystem
 {
@@ -24,6 +28,13 @@ public:
 
 	// 월드가 끝날 때(레벨 전환, PIE 종료 등) 구독을 정리
 	virtual void Deinitialize() override;
+
+	UPROPERTY(BlueprintAssignable, Category = "Reputation")
+	FCSOnReputationStatsChanged OnReputationStatsChanged;
+
+	// 아직 마감(SettleDailyReputation) 전, 지금까지 쌓인 하루 카운터만으로 평판 델타를 미리 계산함
+	// AddReputation을 호출하지 않으므로 점수는 바뀌지 않음 - 실시간 정산창(C) 조회 전용
+	int32 GetProjectedReputationDelta() const;
 
 protected:
 	// 만족도 계산에서 계산 포기 1건이 정상 결제 몇 건과 같은 무게로 깎이는지
@@ -111,6 +122,13 @@ private:
 
 	// 누적 카운터로 만족도와 평판 델타를 계산해 AddReputation을 호출
 	void SettleDailyReputation() const;
+
+	// SettleDailyReputation과 GetProjectedReputationDelta가 공유하는 만족도 계산식
+	// (지금까지 쌓인 카운터 기준. DailyEnteredCustomers==0이면 호출하지 않아야 함)
+	float ComputeSatisfaction() const;
+
+	// ComputeSatisfaction 결과를 스케일·클램프해서 평판 델타(정수)로 환산
+	int32 ComputeReputationDelta() const;
 
 	// 하루 카운터 5개(입장/정상결제/계산포기/빈손퇴장/가격불쾌)를 0으로 되돌림
 	void ResetDailyCounters();

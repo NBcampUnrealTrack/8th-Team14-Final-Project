@@ -10,6 +10,7 @@ class UTextBlock;
 class UWidget;
 class ACSStoreGameState;
 class UCSProductAnalysisWidget;
+class UCSStoreReputationSubsystem;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnDailySummaryConfirmed);
 
@@ -94,6 +95,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 
+	// 정산 전(마감 전) 오늘자 평판 변동을 실시간 조회 모드에서 미리 보여주기 위해 참조
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreReputationSubsystem> ReputationSubsystem;
+
 	UFUNCTION() void HandleConfirmClicked();
 	UFUNCTION() void HandleProductAnalysisClicked();
 	UFUNCTION() void HandleTotalExpenseHovered();
@@ -102,6 +107,7 @@ protected:
 	UFUNCTION() void HandleSeparateLossUnhovered();
 	UFUNCTION() void HandleDailySummaryDataChanged();
 	UFUNCTION() void HandleReputationChanged(int32 NewReputationScore);
+	UFUNCTION() void HandleReputationStatsChanged();
 	void ApplyDeltaPresentation(
 		int32 Delta,
 		UTextBlock* DeltaText,

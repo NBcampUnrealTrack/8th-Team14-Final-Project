@@ -21,6 +21,7 @@ class UCSTutorialDialogueWidgetBase;
 class UCSTutorialObjectiveWidgetBase;
 class UCSOrderSubsystem;
 class UCSCustomerRuntimeSubsystem;
+class UCSDailySummaryWidget;
 struct FCSOrderResult;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
@@ -194,6 +195,10 @@ protected:
 	// 게시판이 열리면(상호작용하면) 팁을 바로 숨김
 	void HandleTipWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked);
 
+	// 실시간 정산창(C, UCSDailySummaryWidget)의 열림·닫힘을 감지해 튜토리얼 화면을 잠깐 숨겼다가 그대로 되살림
+	// 정산창은 스텝·팁 진행과 무관하게 아무 때나 열 수 있어 위 두 핸들러와 별도로 둠
+	void HandleDailySummaryWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked);
+
 	// StepRows[StepIndex]의 ExpectedWidgetClass와 Widget의 클래스가 일치하는지 확인
 	// (DoesTipExpectWidget과 같은 패턴이나 대상이 TipRows가 아니라 StepRows)
 	bool DoesStepExpectWidget(int32 StepIndex, const UUserWidget* Widget) const;
@@ -357,4 +362,14 @@ private:
 	// 현재 스텝에서 켜둔 마커 컴포넌트 목록
 	UPROPERTY()
 	TArray<TObjectPtr<UCSTutorialMarkerComponent>> ActiveMarkerComponents;
+
+	// 정산창(C)처럼 튜토리얼과 무관한 위젯이 뜰 때 화면을 숨겼다가 그대로 되살리기 위해
+	// BroadcastCurrentStep(진행 중인 스텝)이 마지막으로 방송한 행과 그 시점의 목표 진행도를 기억해둠.
+	// 팁(ShowOneShotTip)은 일부러 갱신하지 않음 - BP 자체 타이머로 알아서 사라지는 1회성 알림이라
+	// 여기서 되살리면 이미 사라진 지 오래인 팁이 다시 뜨는 문제가 생김. BroadcastCurrentStep이 const라 mutable
+	mutable const FCSTutorialStepRow* LastBroadcastRow = nullptr;
+	mutable int32 LastBroadcastObjectiveCurrent = 0;
+
+	// 정산창 때문에 화면을 숨긴 상태인지. 정산창이 닫힐 때만 되살리도록 막는 가드
+	bool bDisplaySuspendedForDailySummary = false;
 };

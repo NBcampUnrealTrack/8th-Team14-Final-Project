@@ -19,6 +19,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
@@ -335,6 +336,10 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 
 	// ObjectiveGoal이 0이어도 방송해야 함
 	OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
+
+	// 정산창(C) 등으로 화면이 잠깐 가려졌다가 그대로 되살아날 때 쓸 최신 상태를 기억해둠
+	LastBroadcastRow = &CurrentRow;
+	LastBroadcastObjectiveCurrent = 0;
 }
 
 void UCSTutorialSubsystem::StartAutoAdvanceTimerIfNeeded()
@@ -603,6 +608,10 @@ void UCSTutorialSubsystem::ShowOneShotTip(ECSTutorialStepId TipId)
 	OnTutorialStepChanged.Broadcast(TipRow);
 	OnTutorialObjectiveProgress.Broadcast(0, TipRow.ObjectiveGoal);
 	ShowMarkersForTag(TipRow.HighlightMarkerTag, TipRow.MarkerLabelText);
+
+	// LastBroadcastRow(정산창 닫을 때 되살릴 화면)는 여기서 갱신하지 않음. 팁은 BP 쪽 자체 타이머로
+	// 알아서 사라지는 1회성 알림이라, 이미 사라진 지 오래인 팁이 정산창을 닫을 때마다 되살아나는
+	// 문제가 있었음(예: 속마음 팁이 계속 재등장). 진행 중인 스텝(BroadcastCurrentStep)만 되살림 대상으로 둠
 }
 
 void UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished()
@@ -615,6 +624,7 @@ void UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished()
 
 	ShowOneShotTip(ECSTutorialStepId::TipDiary);
 	// TipNoticeBoard는 다이어리를 닫는 시점(HandleTipWidgetLockChanged)에 트리거됨
+	// TipSettlement는 게시판을 닫는 시점(HandleTipWidgetLockChanged)에 트리거됨
 	// TipInnerThought는 첫 속마음 표시 이벤트(HandleInnerThoughtShown)로 트리거됨
 }
 
@@ -648,6 +658,11 @@ void UCSTutorialSubsystem::ClearTutorialDisplay()
 	BlankRow.PromptText = FText::GetEmpty();
 	OnTutorialStepChanged.Broadcast(BlankRow);
 	OnTutorialObjectiveProgress.Broadcast(0, 0);
+
+	// 여기서 지워진 화면은 이미 끝났거나 다른 스텝으로 넘어가는 중이라, 정산창을 닫아도
+	// 되살릴 이전 화면이 없는 것으로 취급함 (되살릴 내용이 있으면 그 직후 BroadcastCurrentStep/
+	// ShowOneShotTip이 다시 채워줌)
+	LastBroadcastRow = nullptr;
 }
 
 void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked)
@@ -675,10 +690,56 @@ void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWid
 		return;
 	}
 
-	if (DoesTipExpectWidget(ECSTutorialStepId::TipNoticeBoard, RequestingWidget) && bLocked)
+	if (DoesTipExpectWidget(ECSTutorialStepId::TipNoticeBoard, RequestingWidget))
 	{
-		// 게시판과 상호작용(열림)하는 순간 바로 숨김
-		ClearTutorialDisplay();
+		if (bLocked)
+		{
+			// 게시판과 상호작용(열림)하는 순간 바로 숨김
+			ClearTutorialDisplay();
+		}
+		else
+		{
+			// 게시판을 닫는 순간 정산창 팁으로 넘어감 (이미 봤으면 ShowOneShotTip이 알아서 무시)
+			ShowOneShotTip(ECSTutorialStepId::TipSettlement);
+		}
+		return;
+	}
+}
+
+void UCSTutorialSubsystem::HandleDailySummaryWidgetLockChanged(UUserWidget* RequestingWidget, bool bLocked)
+{
+	// 실시간 정산창(C)은 스텝·팁 진행과 무관하게 아무 때나 열 수 있어 위 두 핸들러가 다루지 않음
+	if (Cast<UCSDailySummaryWidget>(RequestingWidget) == nullptr)
+	{
+		return;
+	}
+
+	if (bLocked)
+	{
+		// 정산창이 튜토리얼 안내 위에 겹치지 않도록 지금 화면을 잠깐 숨김
+		// (ClearTutorialDisplay는 되살릴 화면이 없는 것으로 취급해버리므로 여기서 직접 블랭크 방송)
+		bDisplaySuspendedForDailySummary = true;
+		HideAllActiveMarkers();
+		FCSTutorialStepRow BlankRow;
+		BlankRow.PromptType = ECSTutorialPromptType::Dialogue;
+		BlankRow.PromptText = FText::GetEmpty();
+		OnTutorialStepChanged.Broadcast(BlankRow);
+		OnTutorialObjectiveProgress.Broadcast(0, 0);
+		return;
+	}
+
+	if (!bDisplaySuspendedForDailySummary)
+	{
+		return;
+	}
+	bDisplaySuspendedForDailySummary = false;
+
+	// 정산창을 닫으면 스텝을 넘기지 않고 숨기기 전 화면을 그대로 되살림
+	if (LastBroadcastRow != nullptr)
+	{
+		OnTutorialStepChanged.Broadcast(*LastBroadcastRow);
+		OnTutorialObjectiveProgress.Broadcast(LastBroadcastObjectiveCurrent, LastBroadcastRow->ObjectiveGoal);
+		ShowMarkersForTag(LastBroadcastRow->HighlightMarkerTag, LastBroadcastRow->MarkerLabelText);
 	}
 }
 
@@ -711,6 +772,7 @@ void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int
 
 	const int32 Goal = StepRows[CurrentStepIndex]->ObjectiveGoal;
 	OnTutorialObjectiveProgress.Broadcast(NewCurrent, Goal);
+	LastBroadcastObjectiveCurrent = NewCurrent;
 
 	// 목표 수치에 도달하면 자동으로 다음 스텝으로 넘어감
 	if (Goal > 0 && NewCurrent >= Goal)
@@ -1408,6 +1470,9 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 	// 발주/시설탭 두 스텝은 같은 창을 계속 열어둔 채 이어지는 흐름이라 전담 함수가 완료 판정까지 다 함
 	HandleOrderWidgetLockChanged(RequestingWidget, bLocked);
 
+	// 정산창(C)은 스텝·팁 진행과 무관하게 아무 때나 열 수 있어 위 두 핸들러와 별도로 처리
+	HandleDailySummaryWidgetLockChanged(RequestingWidget, bLocked);
+
 	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
 		return;
@@ -1428,7 +1493,7 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 		return;
 	}
 
-	// 위젯이 열리는 순간 대화창을 즉시 치움 - 장부/마감 종처럼 열려 있는 UI 위에
+	// 위젯이 열리는 순간 대화창을 즉시 치움 - 장부/침대(잠자기 확인)처럼 열려 있는 UI 위에
 	// 안내 문구가 계속 겹쳐 보이지 않게 함
 	if (bLocked)
 	{

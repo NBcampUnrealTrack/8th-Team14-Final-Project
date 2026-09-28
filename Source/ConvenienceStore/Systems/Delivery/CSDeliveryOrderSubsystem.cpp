@@ -149,7 +149,9 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 		{
 			const FCSDeliveryOrderRuntime FailedOrder = Order;
 			const bool bDeadlineExpired = CurrentMinutes >= Order.DeliveryDeadlineMinutes;
-			StoreGameState->AddReputation(-2);
+			StoreGameState->AddReputation(-2, bDeadlineExpired
+				? TEXT("배달 주문 기한 초과")
+				: TEXT("영업 종료로 배달 주문 실패"));
 			RemoveOrderAt(Index, bDeadlineExpired ? ECSDeliveryOrderStatus::Expired : ECSDeliveryOrderStatus::Failed);
 			if (bDeadlineExpired)
 			{
@@ -312,7 +314,7 @@ bool UCSDeliveryOrderSubsystem::CancelOrder(const int32 OrderId, FText& OutMessa
 		OutMessage = NSLOCTEXT("Delivery", "NoAcceptedOrder", "취소할 진행 중 배달 주문이 없습니다.");
 		return false;
 	}
-	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState)) StoreGameState->AddReputation(-1);
+	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState)) StoreGameState->AddReputation(-1, TEXT("배달 주문 직접 취소"));
 	RemoveOrderAt(Index, ECSDeliveryOrderStatus::Canceled);
 	OutMessage = NSLOCTEXT("Delivery", "OrderCanceled", "배달 주문을 취소했습니다. 예약 재고가 해제되고 평판이 1 감소했습니다.");
 	return true;
@@ -406,7 +408,7 @@ bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
 	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState))
 	{
 		StoreGameState->AddFunds(Order.RewardGold);
-		StoreGameState->AddReputation(Order.ReputationReward);
+		StoreGameState->AddReputation(Order.ReputationReward, TEXT("배달 주문 완료 보상"));
 	}
 	OutRewardGold = Order.RewardGold;
 	OutReputationReward = Order.ReputationReward;
