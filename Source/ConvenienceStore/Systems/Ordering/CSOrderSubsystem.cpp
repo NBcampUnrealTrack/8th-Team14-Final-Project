@@ -118,7 +118,7 @@ bool UCSOrderSubsystem::IsProductUnlocked(const FDataTableRowHandle& Row) const
 	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSProductDataRow::StaticStruct()) return false;
 	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
 	const FCSProductDataRow* Data = Row.GetRow<FCSProductDataRow>(TEXT("Order unlock"));
-	return State && Data && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
+	return State && Data && Data->bOrderable && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
 		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition);
 }
 
@@ -382,6 +382,12 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrderWithDelivery(
 		if (ProductData == nullptr)
 		{
 			Result.FailureReason = ECOrderFailureReason::InvalidProductRow;
+			return Result;
+		}
+
+		if (!ProductData->bOrderable)
+		{
+			Result.FailureReason = ECOrderFailureReason::ProductNotOrderable;
 			return Result;
 		}
 
@@ -837,7 +843,7 @@ int32 UCSOrderSubsystem::CalculateProductOrderLineCost(
 	const FCSProductDataRow* ProductData =
 		ProductRow.GetRow<FCSProductDataRow>(
 			TEXT("UCSOrderSubsystem::CalculateProductOrderLineCost"));
-	if (ProductData == nullptr || ProductData->PurchasePrice < 0 ||
+	if (ProductData == nullptr || !ProductData->bOrderable || ProductData->PurchasePrice < 0 ||
 		ProductData->OrderPackQuantity < 1)
 	{
 		return 0;
