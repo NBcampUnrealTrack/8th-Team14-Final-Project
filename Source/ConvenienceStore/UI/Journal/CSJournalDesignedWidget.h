@@ -11,7 +11,8 @@ enum class ECSJournalButtonAction : uint8
 	Day,
 	PreviousMonth,
 	NextMonth,
-	Artifact
+	Artifact,
+	UseArtifact
 };
 
 // 디자이너에서 동작 종류와 값을 지정할 수 있는 수첩 버튼입니다.
@@ -53,6 +54,7 @@ private:
 	void RefreshDeliveries();
 	void RefreshArtifactCells();
 	UPROPERTY(Transient) TArray<TObjectPtr<UUserWidget>> ArtifactCells;
+	UPROPERTY(Transient) TObjectPtr<UCSJournalActionButton> ArtifactUseButton;
 	UPROPERTY(Transient) TObjectPtr<UCSJournalCatalog> DisplayedCatalog;
 	int32 DisplayedArtifactCount = INDEX_NONE;
 	uint32 MapLayoutHash = 0;

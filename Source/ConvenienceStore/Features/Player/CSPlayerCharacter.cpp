@@ -22,6 +22,7 @@
 #include "Features/Tools/CSMagicWandActor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/Employees/CSStoreEmployeeSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -261,6 +262,7 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 void ACSPlayerCharacter::BeginPlay()
 {
     Super::BeginPlay();
+	RefreshArtifactMoveSpeed();
 
 	if (IsValid(QuickbarInventory))
 	{
@@ -483,12 +485,22 @@ void ACSPlayerCharacter::StartSprint()
 		return;
 	}
 
-    GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+	bArtifactSprinting = true;
+	RefreshArtifactMoveSpeed();
 }
 
 void ACSPlayerCharacter::StopSprint()
 {
-    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	bArtifactSprinting = false;
+	RefreshArtifactMoveSpeed();
+}
+
+void ACSPlayerCharacter::RefreshArtifactMoveSpeed()
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	const float Multiplier = Artifacts ? Artifacts->GetSpeedMultiplier(ECSArtifactEffectType::PlayerSpeed) : 1.0f;
+	GetCharacterMovement()->MaxWalkSpeed = (bArtifactSprinting ? SprintSpeed : WalkSpeed) * Multiplier;
+	GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchSpeed * Multiplier;
 }
 
 void ACSPlayerCharacter::StartCrouch()

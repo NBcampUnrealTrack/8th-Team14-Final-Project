@@ -23,6 +23,7 @@ public:
 	ACSEndingItemActor();
 	virtual void PrepareForPickupPhysics() override;
 	virtual void EnableWorldDropPhysics() override;
+	void LaunchFromGacha(const FVector& Impulse);
 	virtual void OnEquipped(ACSPlayerCharacter* NewOwner) override;
 	void InitializeItem(const FCSEndingItemDefinition& Definition, ACSEndingManager* Manager);
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") FName EndingItemId;

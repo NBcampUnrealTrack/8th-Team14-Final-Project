@@ -73,6 +73,12 @@ void ACSEndingItemActor::EnableWorldDropPhysics()
 	Super::EnableWorldDropPhysics();
 }
 
+void ACSEndingItemActor::LaunchFromGacha(const FVector& Impulse)
+{
+	EnableWorldDropPhysics();
+	if (IsValid(ToolMesh) && ToolMesh->IsSimulatingPhysics()) ToolMesh->AddImpulse(Impulse);
+}
+
 void ACSEndingItemActor::OnEquipped(ACSPlayerCharacter* NewOwner)
 {
 	Super::OnEquipped(NewOwner);

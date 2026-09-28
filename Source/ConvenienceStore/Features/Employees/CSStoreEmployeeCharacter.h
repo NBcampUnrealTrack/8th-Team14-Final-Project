@@ -42,6 +42,7 @@ class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter, public
 public:
 	ACSStoreEmployeeCharacter();
 	virtual void ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength) override;
+	void RefreshArtifactMoveSpeed();
 	UFUNCTION(BlueprintPure, Category = "Employee|Magic") float GetMagicBoostRemainingSeconds() const;
 	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Magic") void OnMagicBoostChanged(bool bActive);
 
@@ -95,6 +96,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Employee|Magic", meta = (ClampMin = "1.0")) float MagicMoveMultiplier = 1.5f;
 	UPROPERTY(EditAnywhere, Category = "Employee|Magic", meta = (ClampMin = "1.0")) float MagicWorkMultiplier = 1.5f;
 	float MoveSpeedBeforeBoost = 0.0f;
+	float LastArtifactSpeedMultiplier = 1.0f;
 	float WorkSpeedMultiplier = 1.0f;
 	UPROPERTY(VisibleAnywhere, Category = "Employee|Magic") TObjectPtr<UTextRenderComponent> MagicBoostNameplate;
 	FTimerHandle MagicBoostTimer;

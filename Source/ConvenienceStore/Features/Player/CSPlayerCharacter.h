@@ -670,6 +670,7 @@ private:
 
 
 public:
+	void RefreshArtifactMoveSpeed();
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float WalkSpeed = 700.0f;
 
@@ -679,4 +680,7 @@ public:
 	// 웅크린 상태에서 적용할 이동 속도입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
 	float CrouchSpeed = 200.0f;
+
+private:
+	bool bArtifactSprinting = false;
 };
