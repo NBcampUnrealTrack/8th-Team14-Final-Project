@@ -15,13 +15,15 @@
 #include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
+#include "UI/Settings/CSSettingsWidget.h"
 
-// 게임 입력 상태에서는 Tab으로 수첩을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
+// 게임 입력 상태에서는 Tab/C/Esc로 각 화면을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
+	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ACSStorePlayerController::ToggleSettings);
 }
 // 다른 조작 화면이나 일시 정지 상태와 충돌하지 않도록 확인한 뒤 수첩을 엽니다.
 void ACSStorePlayerController::ToggleJournal()
@@ -52,10 +54,41 @@ void ACSStorePlayerController::CloseJournal()
 	ActiveJournalWidget = nullptr;
 }
 
+// 다른 UI가 열려 있으면 Esc가 그 UI를 먼저 닫음(UIOnly 입력 모드) — 여기 닫기 검사는 사실상 X 버튼 경로만 남음.
+void ACSStorePlayerController::ToggleSettings()
+{
+	if (IsValid(ActiveSettingsWidget)) { CloseSettings(); return; }
+	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
+	UClass* WidgetClass = SettingsWidgetClass.Get();
+	if (!WidgetClass || WidgetClass->HasAnyClassFlags(CLASS_Abstract))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Settings] SettingsWidgetClass에 CSSettingsWidget 기반 WBP를 지정해 주세요."));
+		return;
+	}
+	ActiveSettingsWidget = CreateWidget<UCSSettingsWidget>(this, WidgetClass);
+	if (!ActiveSettingsWidget) return;
+	// 튜토리얼 배너/대화창/목표(TutorialWidgetZOrder=1150)보다 위에 그려야 설정창이 열려 있는 동안
+	// 튜토리얼 UI에 안 가려짐.
+	ActiveSettingsWidget->AddToViewport(1500);
+	SetStoreHUDHidden(ActiveSettingsWidget, true);
+	SetGameplayUIInputLock(ActiveSettingsWidget, true);
+	ActiveSettingsWidget->SetKeyboardFocus();
+}
+
+void ACSStorePlayerController::CloseSettings()
+{
+	if (!IsValid(ActiveSettingsWidget)) return;
+	SetGameplayUIInputLock(ActiveSettingsWidget, false);
+	SetStoreHUDHidden(ActiveSettingsWidget, false);
+	ActiveSettingsWidget->RemoveFromParent();
+	ActiveSettingsWidget = nullptr;
+}
+
 void ACSStorePlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	if (IsLocalPlayerController()) CSConfigureJournalWorld(GetWorld());
+	if (IsLocalPlayerController()) UCSSettingsWidget::ApplyStartupGraphicsDefault();
 
 	if (IsLocalPlayerController() && StoreHUDWidgetClass != nullptr)
 	{
@@ -164,6 +197,7 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	CloseJournal();
+	CloseSettings();
 	CloseTemporaryTitleScreen();
 
 	if (StoreGameState != nullptr)
