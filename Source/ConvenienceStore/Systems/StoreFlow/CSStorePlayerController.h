@@ -8,6 +8,7 @@
 #include "CSStorePlayerController.generated.h"
 
 class UCSJournalWidget;
+class UCSSettingsWidget;
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UCSStoreTopBarWidget;
@@ -54,6 +55,11 @@ public:
 	void ToggleJournal();
 	UFUNCTION(BlueprintCallable, Category = "Journal")
 	void CloseJournal();
+
+	UFUNCTION(BlueprintCallable, Category = "UI|Settings")
+	void ToggleSettings();
+	UFUNCTION(BlueprintCallable, Category = "UI|Settings")
+	void CloseSettings();
 	// 임시 타이틀의 시작 버튼에서 호출합니다. 정식 타이틀 도입 시 이 구역 전체를 제거할 수 있습니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Temporary Title")
 	void StartGameFromTemporaryTitle();
@@ -140,6 +146,11 @@ protected:
 	TSubclassOf<UCSJournalWidget> JournalWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSJournalWidget> ActiveJournalWidget;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Settings")
+	TSubclassOf<UCSSettingsWidget> SettingsWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSSettingsWidget> ActiveSettingsWidget;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UFUNCTION()
