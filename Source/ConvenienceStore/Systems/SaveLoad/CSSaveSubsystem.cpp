@@ -1,0 +1,450 @@
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
+
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
+#include "Kismet/GameplayStatics.h"
+#include "Subsystems/WorldSubsystem.h"
+#include "TimerManager.h"
+#include "UObject/SoftObjectPath.h"
+
+#include "Systems/SaveLoad/CSSaveGame.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
+
+void UCSSaveSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+	PendingLoadData = nullptr;
+	BasePlayTimeSeconds = 0.0f;
+	bAutoSaveScheduled = false;
+}
+
+void UCSSaveSubsystem::Deinitialize()
+{
+	PendingLoadData = nullptr;
+	Super::Deinitialize();
+}
+
+void UCSSaveSubsystem::CollectParticipants(
+	UWorld& InWorld,
+	TArray<UObject*>& OutParticipants) const
+{
+	OutParticipants.Reset();
+
+	// 인터페이스를 구현한 객체만 참가자로 추가
+	auto AddIfParticipant = [&OutParticipants](UObject* Candidate)
+	{
+		if (IsValid(Candidate) && Cast<ICSSaveParticipant>(Candidate) != nullptr)
+		{
+			OutParticipants.Add(Candidate);
+		}
+	};
+
+	AddIfParticipant(InWorld.GetGameState());
+
+	// UE 5.8에서 GetSubsystemArray가 제거되어 ForEachSubsystem으로 월드 서브시스템을 순회
+	InWorld.ForEachSubsystem<UWorldSubsystem>(
+		[&AddIfParticipant](UWorldSubsystem* WorldSubsystem)
+		{
+			AddIfParticipant(WorldSubsystem);
+		});
+
+	// 레벨 전환 후에도 유지되는 수첩 등 게임 인스턴스 서브시스템을 수집
+	if (UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		OwningGameInstance->ForEachSubsystem<UGameInstanceSubsystem>(
+			[&AddIfParticipant](UGameInstanceSubsystem* GameInstanceSubsystem)
+			{
+				AddIfParticipant(GameInstanceSubsystem);
+			});
+	}
+
+	// 복원 우선순위가 낮은 참가자부터 처리하도록 정렬
+	OutParticipants.Sort(
+		[](const UObject& Left, const UObject& Right)
+		{
+			const ICSSaveParticipant* LeftParticipant = Cast<ICSSaveParticipant>(&Left);
+			const ICSSaveParticipant* RightParticipant = Cast<ICSSaveParticipant>(&Right);
+			// 인터페이스를 조회하지 못하면 서브시스템 단계(5)의 기본 우선순위를 사용
+			int32 LeftPriority = 5;
+			if (LeftParticipant != nullptr)
+			{
+				LeftPriority = LeftParticipant->GetSaveRestorePriority();
+			}
+
+			int32 RightPriority = 5;
+			if (RightParticipant != nullptr)
+			{
+				RightPriority = RightParticipant->GetSaveRestorePriority();
+			}
+
+			return LeftPriority < RightPriority;
+		});
+}
+
+void UCSSaveSubsystem::FillHeader(
+	UWorld& InWorld,
+	UCSSaveGame& InOutSave,
+	FName SlotName) const
+{
+	FCSSaveHeader& Header = InOutSave.Header;
+	Header.SaveVersion = CS_SAVE_VERSION_CURRENT;
+	Header.SlotName = SlotName;
+	Header.bIsAutoSave = SlotName == GetAutoSaveSlotName();
+	Header.SavedAtUtc = FDateTime::UtcNow();
+	Header.PlayTimeSeconds = GetTotalPlayTimeSeconds();
+
+	// 월드 오브젝트 경로를 기록해 TSoftObjectPtr<UWorld>로 그대로 열 수 있도록 설정
+	Header.LevelPath = FSoftObjectPath(&InWorld);
+
+	// GameState 레코드 캡처가 끝난 뒤이므로 요약값을 그대로 복사
+	Header.BusinessDay = InOutSave.StoreState.CurrentBusinessDay;
+	Header.Funds = InOutSave.StoreState.CurrentFunds;
+	Header.StoreLevel = InOutSave.StoreState.CurrentStoreLevel;
+}
+
+bool UCSSaveSubsystem::SaveToSlot(FName SlotName)
+{
+	if (SlotName.IsNone())
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CSSave] 월드를 찾을 수 없어 저장을 중단합니다."));
+		return false;
+	}
+
+	UCSSaveGame* SaveGame = NewObject<UCSSaveGame>(this, UCSSaveGame::StaticClass());
+	if (!IsValid(SaveGame))
+	{
+		return false;
+	}
+
+	SaveGame->SaveVersion = CS_SAVE_VERSION_CURRENT;
+
+	// 각 참가자가 자기 블록을 기록
+	TArray<UObject*> Participants;
+	CollectParticipants(*World, Participants);
+	for (UObject* Participant : Participants)
+	{
+		if (const ICSSaveParticipant* SaveParticipant = Cast<ICSSaveParticipant>(Participant))
+		{
+			SaveParticipant->CaptureSaveData(*SaveGame);
+		}
+	}
+
+	FillHeader(*World, *SaveGame, SlotName);
+
+	// 쓰기 전에 기존 슬롯을 백업해 쓰기 중 손상에 대비
+	BackupSlot(SlotName);
+
+	const bool bSaved = UGameplayStatics::SaveGameToSlot(SaveGame, ToSlotString(SlotName), 0);
+	if (!bSaved)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CSSave] 슬롯 저장에 실패했습니다: %s"), *SlotName.ToString());
+		return false;
+	}
+
+	UpdateMetaHeader(SaveGame->Header);
+	OnSaveCompleted.Broadcast(SlotName);
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSSave] 저장 완료: %s (%d일차, 자금 %d)"),
+		*SlotName.ToString(),
+		SaveGame->StoreState.CurrentBusinessDay,
+		SaveGame->StoreState.CurrentFunds);
+	return true;
+}
+
+bool UCSSaveSubsystem::SaveToAutoSlot()
+{
+	return SaveToSlot(GetAutoSaveSlotName());
+}
+
+bool UCSSaveSubsystem::CanManualSave(FText& OutReason) const
+{
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState = nullptr;
+	if (World != nullptr)
+	{
+		StoreGameState = World->GetGameState<ACSStoreGameState>();
+	}
+
+	if (!IsValid(StoreGameState))
+	{
+		OutReason = NSLOCTEXT("Save", "SaveUnavailable", "지금은 저장할 수 없습니다.");
+		return false;
+	}
+
+	// 영업 중 저장 후 불러오면 준비 단계로 돌아가 수락한 배달이 실패 처리되므로 차단
+	if (StoreGameState->CurrentPhase != ECStorePhase::Preparation)
+	{
+		OutReason = NSLOCTEXT("Save", "SaveOnlyInPreparation", "영업 준비 시간에만 저장할 수 있습니다.");
+		return false;
+	}
+
+	OutReason = FText::GetEmpty();
+	return true;
+}
+
+void UCSSaveSubsystem::RequestAutoSaveNextTick(AActor* ContextActor)
+{
+	if (bAutoSaveScheduled)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (ContextActor != nullptr)
+	{
+		World = ContextActor->GetWorld();
+	}
+
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 복원 대기 중에는 이전 월드 상태로 자동 세이브를 덮어쓰지 않도록 차단
+	if (HasPendingLoad())
+	{
+		return;
+	}
+
+	bAutoSaveScheduled = true;
+	World->GetTimerManager().SetTimerForNextTick(this, &UCSSaveSubsystem::HandleAutoSaveTimer);
+}
+
+void UCSSaveSubsystem::HandleAutoSaveTimer()
+{
+	bAutoSaveScheduled = false;
+	SaveToAutoSlot();
+}
+
+bool UCSSaveSubsystem::LoadFromSlot(FName SlotName)
+{
+	if (SlotName.IsNone())
+	{
+		return false;
+	}
+
+	UCSSaveGame* LoadedSave = LoadSaveGameWithFallback(SlotName);
+	if (!IsValid(LoadedSave))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CSSave] 슬롯을 읽을 수 없습니다: %s"), *SlotName.ToString());
+		OnLoadFailed.Broadcast(SlotName);
+		return false;
+	}
+
+	// 마이그레이션 없이 버전이 다른 세이브의 로드를 거부
+	if (!LoadedSave->IsVersionSupported())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 지원하지 않는 세이브 버전입니다. 슬롯 %s, 버전 %d (현재 %d)"),
+			*SlotName.ToString(),
+			LoadedSave->SaveVersion,
+			CS_SAVE_VERSION_CURRENT);
+		OnLoadFailed.Broadcast(SlotName);
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		OnLoadFailed.Broadcast(SlotName);
+		return false;
+	}
+
+	PendingLoadData = LoadedSave;
+	BasePlayTimeSeconds = LoadedSave->Header.PlayTimeSeconds;
+
+	// 예약된 자동 세이브가 레벨 전환 직전에 실행되지 않도록 해제
+	bAutoSaveScheduled = false;
+
+	// 헤더에 기록된 레벨을 열고 경로가 없으면 현재 레벨을 다시 열기
+	const FSoftObjectPath& LevelPath = LoadedSave->Header.LevelPath;
+	if (LevelPath.IsValid())
+	{
+		UGameplayStatics::OpenLevelBySoftObjectPtr(World, TSoftObjectPtr<UWorld>(LevelPath));
+	}
+	else
+	{
+		UGameplayStatics::OpenLevel(World, FName(*World->GetName()));
+	}
+
+	return true;
+}
+
+bool UCSSaveSubsystem::ApplyPendingLoad(UWorld& InWorld)
+{
+	if (!IsValid(PendingLoadData))
+	{
+		return false;
+	}
+
+	// 복원 도중 자동 세이브가 끼어들지 않도록 예약 해제
+	bAutoSaveScheduled = false;
+
+	UCSSaveGame* SaveToApply = PendingLoadData;
+
+	TArray<UObject*> Participants;
+	CollectParticipants(InWorld, Participants);
+	for (UObject* Participant : Participants)
+	{
+		if (ICSSaveParticipant* SaveParticipant = Cast<ICSSaveParticipant>(Participant))
+		{
+			SaveParticipant->RestoreSaveData(*SaveToApply);
+		}
+	}
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSSave] 복원 완료: %d일차, 자금 %d, 참가자 %d개"),
+		SaveToApply->StoreState.CurrentBusinessDay,
+		SaveToApply->StoreState.CurrentFunds,
+		Participants.Num());
+
+	// 모든 참가자 복원이 끝난 뒤 대기 상태를 해제
+	PendingLoadData = nullptr;
+	return true;
+}
+
+TArray<FCSSaveHeader> UCSSaveSubsystem::GetAllSlotHeaders() const
+{
+	TArray<FCSSaveHeader> Result;
+
+	// 전체 세이브 대신 경량 메타 슬롯만 조회
+	if (const UCSSaveMetaGame* Meta = LoadOrCreateMeta())
+	{
+		Result = Meta->Headers;
+	}
+
+	// 최근 저장한 슬롯이 앞에 오도록 정렬
+	Result.Sort(
+		[](const FCSSaveHeader& Left, const FCSSaveHeader& Right)
+		{
+			return Left.SavedAtUtc > Right.SavedAtUtc;
+		});
+	return Result;
+}
+
+bool UCSSaveSubsystem::GetSlotHeader(FName SlotName, FCSSaveHeader& OutHeader) const
+{
+	if (const UCSSaveMetaGame* Meta = LoadOrCreateMeta())
+	{
+		if (const FCSSaveHeader* Found = Meta->FindHeader(SlotName))
+		{
+			OutHeader = *Found;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UCSSaveSubsystem::DoesSlotExist(FName SlotName) const
+{
+	return UGameplayStatics::DoesSaveGameExist(ToSlotString(SlotName), 0);
+}
+
+bool UCSSaveSubsystem::DeleteSlot(FName SlotName)
+{
+	const bool bDeleted = UGameplayStatics::DeleteGameInSlot(ToSlotString(SlotName), 0);
+	UGameplayStatics::DeleteGameInSlot(MakeBackupSlotString(SlotName), 0);
+	RemoveMetaHeader(SlotName);
+	return bDeleted;
+}
+
+float UCSSaveSubsystem::GetTotalPlayTimeSeconds() const
+{
+	const UWorld* World = GetWorld();
+	float WorldSeconds = 0.0f;
+	if (World != nullptr)
+	{
+		WorldSeconds = World->GetTimeSeconds();
+	}
+
+	return BasePlayTimeSeconds + WorldSeconds;
+}
+
+void UCSSaveSubsystem::BackupSlot(FName SlotName) const
+{
+	const FString SlotString = ToSlotString(SlotName);
+	if (!UGameplayStatics::DoesSaveGameExist(SlotString, 0))
+	{
+		return;
+	}
+
+	// 재직렬화 없이 바이트 그대로 복사해 원본을 유지
+	TArray<uint8> RawData;
+	if (!UGameplayStatics::LoadDataFromSlot(RawData, SlotString, 0) || RawData.Num() <= 0)
+	{
+		return;
+	}
+
+	UGameplayStatics::SaveDataToSlot(RawData, MakeBackupSlotString(SlotName), 0);
+}
+
+UCSSaveGame* UCSSaveSubsystem::LoadSaveGameWithFallback(FName SlotName) const
+{
+	const FString SlotString = ToSlotString(SlotName);
+	if (UGameplayStatics::DoesSaveGameExist(SlotString, 0))
+	{
+		if (UCSSaveGame* Loaded = Cast<UCSSaveGame>(UGameplayStatics::LoadGameFromSlot(SlotString, 0)))
+		{
+			return Loaded;
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("[CSSave] 본 슬롯이 손상되어 백업으로 폴백합니다: %s"), *SlotString);
+	}
+
+	// 본 슬롯을 읽지 못하면 백업 슬롯을 조회
+	const FString BackupSlotString = MakeBackupSlotString(SlotName);
+	if (UGameplayStatics::DoesSaveGameExist(BackupSlotString, 0))
+	{
+		return Cast<UCSSaveGame>(UGameplayStatics::LoadGameFromSlot(BackupSlotString, 0));
+	}
+
+	return nullptr;
+}
+
+UCSSaveMetaGame* UCSSaveSubsystem::LoadOrCreateMeta() const
+{
+	const FString MetaSlotString = GetMetaSlotName().ToString();
+	if (UGameplayStatics::DoesSaveGameExist(MetaSlotString, 0))
+	{
+		if (UCSSaveMetaGame* Loaded = Cast<UCSSaveMetaGame>(UGameplayStatics::LoadGameFromSlot(MetaSlotString, 0)))
+		{
+			return Loaded;
+		}
+	}
+
+	return NewObject<UCSSaveMetaGame>(const_cast<UCSSaveSubsystem*>(this), UCSSaveMetaGame::StaticClass());
+}
+
+void UCSSaveSubsystem::UpdateMetaHeader(const FCSSaveHeader& InHeader) const
+{
+	UCSSaveMetaGame* Meta = LoadOrCreateMeta();
+	if (!IsValid(Meta))
+	{
+		return;
+	}
+
+	Meta->UpsertHeader(InHeader);
+	UGameplayStatics::SaveGameToSlot(Meta, GetMetaSlotName().ToString(), 0);
+}
+
+void UCSSaveSubsystem::RemoveMetaHeader(FName SlotName) const
+{
+	UCSSaveMetaGame* Meta = LoadOrCreateMeta();
+	if (!IsValid(Meta))
+	{
+		return;
+	}
+
+	Meta->RemoveHeader(SlotName);
+	UGameplayStatics::SaveGameToSlot(Meta, GetMetaSlotName().ToString(), 0);
+}

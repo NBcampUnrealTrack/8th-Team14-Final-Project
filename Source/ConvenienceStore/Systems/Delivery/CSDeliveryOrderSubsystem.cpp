@@ -9,8 +9,73 @@
 #include "HAL/IConsoleManager.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
+#include "Systems/SaveLoad/CSSaveRecordUtils.h"
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+
+void UCSDeliveryOrderSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSDeliveryOrderSaveRecord& Record = OutSave.DeliveryOrder;
+
+	Record.DeliveryOrders.Reset(DeliveryOrders.Num());
+	for (const FCSDeliveryOrderRuntime& Order : DeliveryOrders)
+	{
+		Record.DeliveryOrders.Add(CSSaveRecordUtils::ToRecord(Order));
+	}
+
+	Record.RecentDeliveryResults.Reset(RecentDeliveryResults.Num());
+	for (const FCSDeliveryOrderRuntime& Order : RecentDeliveryResults)
+	{
+		Record.RecentDeliveryResults.Add(CSSaveRecordUtils::ToRecord(Order));
+	}
+
+	Record.ReservedQuantities = ReservedQuantities;
+	Record.NextOrderId = NextOrderId;
+	Record.GeneratedOrderCountToday = GeneratedOrderCountToday;
+	Record.NextOrderGenerationMinutes = NextOrderGenerationMinutes;
+	Record.LastScheduledDailyOrderLimit = LastScheduledDailyOrderLimit;
+	Record.ActiveDispatchOrderId = ActiveDispatchOrderId;
+
+	// 로드 직후 RefreshBusinessDayState()가 같은 날을 새 영업일로 인식해 주문을 다시 생성하는 상황을 방지
+	Record.LastObservedBusinessDay = LastObservedBusinessDay;
+}
+
+void UCSDeliveryOrderSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSDeliveryOrderSaveRecord& Record = InSave.DeliveryOrder;
+
+	DeliveryOrders.Reset(Record.DeliveryOrders.Num());
+	for (const FCSDeliveryOrderRecord& OrderRecord : Record.DeliveryOrders)
+	{
+		DeliveryOrders.Add(CSSaveRecordUtils::ToRuntime(OrderRecord));
+	}
+
+	RecentDeliveryResults.Reset(Record.RecentDeliveryResults.Num());
+	for (const FCSDeliveryOrderRecord& OrderRecord : Record.RecentDeliveryResults)
+	{
+		RecentDeliveryResults.Add(CSSaveRecordUtils::ToRuntime(OrderRecord));
+	}
+
+	ReservedQuantities = Record.ReservedQuantities;
+	NextOrderId = FMath::Max(1, Record.NextOrderId);
+	LastObservedBusinessDay = Record.LastObservedBusinessDay;
+	GeneratedOrderCountToday = Record.GeneratedOrderCountToday;
+	NextOrderGenerationMinutes = Record.NextOrderGenerationMinutes;
+	LastScheduledDailyOrderLimit = Record.LastScheduledDailyOrderLimit;
+	ActiveDispatchOrderId = Record.ActiveDispatchOrderId;
+
+	// 단일 주문 호환 UI가 읽는 대표 주문을 다시 설정
+	const int32 PrimaryIndex = FindPrimaryOrderIndex();
+	CurrentOrder = FCSDeliveryOrderRuntime();
+	if (DeliveryOrders.IsValidIndex(PrimaryIndex))
+	{
+		CurrentOrder = DeliveryOrders[PrimaryIndex];
+	}
+
+	OnDeliveryOrdersChanged.Broadcast();
+}
 
 namespace
 {
@@ -50,6 +115,21 @@ bool IsOrderInProgress(const ECSDeliveryOrderStatus Status)
 void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// 다음 틱에 예약된 세이브 복원보다 먼저 실행되면 저장된 주문 대신 새 주문을 생성
+	// 복원이 끝날 때까지 주문 갱신을 건너뜀
+	if (const UWorld* World = GetWorld())
+	{
+		if (const UGameInstance* OwningGameInstance = World->GetGameInstance())
+		{
+			const UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>();
+			if (SaveSubsystem != nullptr && SaveSubsystem->HasPendingLoad())
+			{
+				return;
+			}
+		}
+	}
+
 	RefreshBusinessDayState();
 	ACSStoreGameState* StoreGameState = GetWorld() == nullptr ? nullptr : GetWorld()->GetGameState<ACSStoreGameState>();
 	if (!IsValid(StoreGameState)) return;

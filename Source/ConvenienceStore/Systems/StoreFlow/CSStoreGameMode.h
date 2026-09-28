@@ -176,6 +176,10 @@ protected:
 	TObjectPtr<UCSWeatherSettingsDataAsset> WeatherSettingsDataAsset;
 
 private:
+	// 보관 중인 세이브 데이터를 새 월드에 적용
+	// BeginPlay 다음 틱에 호출
+	void ApplyPendingSaveLoad();
+
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;
 	const FCSStorePhaseData* FindPhaseDataAtTime(float GameMinutes) const;
 	void UpdateGameClock();

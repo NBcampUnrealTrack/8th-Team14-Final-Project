@@ -110,6 +110,10 @@ public:
 	// 진열대 호환성을 위해 보관 환경을 기록하지만 유통기한에는 영향을 주지 않습니다.
 	void SetStorageShelfType(ECSProductShelfType InStorageShelfType);
 
+	// 세이브가 낱개 상품의 보관 환경을 되돌릴 수 있도록 현재 보관 환경을 반환
+	UFUNCTION(BlueprintPure, Category = "Product|ShelfLife")
+	ECSProductShelfType GetStorageShelfType() const { return StorageShelfType; }
+
 	void EnterFreshnessSafeZone(ECSProductShelfType SafeStorageType);
 	void ExitFreshnessSafeZone(ECSProductShelfType SafeStorageType);
 	void SetHeldByPlayerForFreshness(bool bIsHeldByPlayer);

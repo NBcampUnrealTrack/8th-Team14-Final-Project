@@ -5,6 +5,7 @@
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Engine/World.h"
 
 int32 ACSStoreGameState::GetMagicCircleUpgradeCost() const
@@ -1011,4 +1012,60 @@ void ACSStoreGameState::BeginNextBusinessDay()
 	OnDailySalesChanged.Broadcast();
 	// 월드에 남아 있는 상품이 하루 경과에 따른 변질 상태를 갱신할 수 있도록 알립니다.
 	OnBusinessDayStarted.Broadcast(CurrentBusinessDay);
+}
+
+// -----------------------------------------------------------------------------
+// 세이브 / 로드
+// -----------------------------------------------------------------------------
+
+void ACSStoreGameState::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSStoreStateRecord& Record = OutSave.StoreState;
+	Record.CurrentBusinessDay = CurrentBusinessDay;
+	Record.CurrentFunds = CurrentFunds;
+	Record.CurrentStoreExperience = CurrentStoreExperience;
+	Record.CurrentStoreLevel = CurrentStoreLevel;
+	Record.CurrentReputationScore = CurrentReputationScore;
+	Record.CurrentReputationGrade = CurrentReputationGrade;
+	Record.MagicCircleLevel = MagicCircleLevel;
+	Record.PreviousDailyNetProfitGold = PreviousDailyNetProfitGold;
+	Record.DailyStartingReputationScore = DailyStartingReputationScore;
+
+	// 로드 직후 임대료·인건비 이중 청구를 방지
+	Record.LastRentProcessedBusinessDay = LastRentProcessedBusinessDay;
+	Record.LastPayrollProcessedBusinessDay = LastPayrollProcessedBusinessDay;
+
+	// 하루 단위 집계와 단계 상태(bIsDailySummaryPending, CurrentPhase, bIsStoreOpen 등)는 기록하지 않음
+	// StartStoreFlow()가 로드 시 다시 확정하며 기록하면 정산 화면이 다시 표시됨
+}
+
+void ACSStoreGameState::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSStoreStateRecord& Record = InSave.StoreState;
+	CurrentBusinessDay = Record.CurrentBusinessDay;
+	CurrentFunds = Record.CurrentFunds;
+	CurrentStoreExperience = Record.CurrentStoreExperience;
+	CurrentStoreLevel = Record.CurrentStoreLevel;
+	CurrentReputationScore = Record.CurrentReputationScore;
+	CurrentReputationGrade = Record.CurrentReputationGrade;
+	MagicCircleLevel = Record.MagicCircleLevel;
+	PreviousDailyNetProfitGold = Record.PreviousDailyNetProfitGold;
+	DailyStartingReputationScore = Record.DailyStartingReputationScore;
+	LastRentProcessedBusinessDay = Record.LastRentProcessedBusinessDay;
+	LastPayrollProcessedBusinessDay = Record.LastPayrollProcessedBusinessDay;
+
+	// 영업일 단위 거래 순번은 새로 시작
+	NextTransactionId = 1;
+
+	// UI가 이전 값을 유지하지 않도록 변경을 알림
+	OnFundsChanged.Broadcast(CurrentFunds);
+	OnDailySalesChanged.Broadcast();
+	OnStoreExperienceChanged.Broadcast(CurrentStoreExperience);
+	OnStoreLevelChanged.Broadcast(CurrentStoreLevel);
+	OnReputationChanged.Broadcast(CurrentReputationScore);
+	OnReputationGradeChanged.Broadcast(CurrentReputationGrade);
+	OnMagicCircleUpgraded.Broadcast(MagicCircleLevel);
+
+	// 일차 표시는 재추첨을 일으키지 않는 표시 전용 이벤트로 갱신
+	OnBusinessDayRestored.Broadcast(CurrentBusinessDay);
 }

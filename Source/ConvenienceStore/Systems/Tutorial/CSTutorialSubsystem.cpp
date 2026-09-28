@@ -2,6 +2,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Engine/DataTable.h"
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -14,6 +15,7 @@
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/Ordering/CSOrderSubsystem.h"
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
@@ -83,6 +85,17 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		// 2일차부터는 튜토리얼을 띄우지 않음
 		return;
+	}
+
+	// 불러오기 중에는 복원 전 기본 영업일(1)로 위 검사를 통과하므로 별도로 확인
+	// 튜토리얼 진행 상태는 저장하지 않으므로 불러온 월드에서는 시작하지 않음
+	if (const UGameInstance* GameInstance = InWorld.GetGameInstance())
+	{
+		const UCSSaveSubsystem* SaveSubsystem = GameInstance->GetSubsystem<UCSSaveSubsystem>();
+		if (SaveSubsystem != nullptr && SaveSubsystem->HasPendingLoad())
+		{
+			return;
+		}
 	}
 
 	// OnWorldBeginPlay가 PlayerController::BeginPlay(SetPause(true) 호출 지점)보다 먼저 실행돼

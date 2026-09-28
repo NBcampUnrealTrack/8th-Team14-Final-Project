@@ -9,8 +9,10 @@
 #include "Engine/GameInstance.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "TimerManager.h"
 
 ACSStoreGameMode::ACSStoreGameMode()
 {
@@ -99,6 +101,32 @@ void ACSStoreGameMode::BeginPlay()
 	if (bStartFlowOnBeginPlay)
 	{
 		StartStoreFlow();
+	}
+
+	// 불러오기로 열린 월드는 준비 단계 확정 후 다음 틱에 세이브를 적용
+	// 월드 서브시스템의 OnWorldBeginPlay가 GameMode BeginPlay 이후에 실행되므로 데이터 캐시 생성 이후로 지연
+	if (UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		if (const UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>();
+			SaveSubsystem != nullptr && SaveSubsystem->HasPendingLoad())
+		{
+			GetWorldTimerManager().SetTimerForNextTick(this, &ACSStoreGameMode::ApplyPendingSaveLoad);
+		}
+	}
+}
+
+void ACSStoreGameMode::ApplyPendingSaveLoad()
+{
+	UWorld* World = GetWorld();
+	UGameInstance* OwningGameInstance = GetGameInstance();
+	if (World == nullptr || OwningGameInstance == nullptr)
+	{
+		return;
+	}
+
+	if (UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>())
+	{
+		SaveSubsystem->ApplyPendingLoad(*World);
 	}
 }
 
@@ -365,6 +393,16 @@ void ACSStoreGameMode::StartNextBusinessDay()
 	}
 
 	StartStoreFlow();
+
+	// 잠자기 확인 후 다음 날 준비 단계가 확정된 시점에 자동 세이브를 예약
+	// OnBusinessDayStarted 구독자(날씨·공지·발주)가 그날 결과를 확정한 뒤 저장하도록 다음 틱으로 지연
+	if (UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		if (UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>())
+		{
+			SaveSubsystem->RequestAutoSaveNextTick(this);
+		}
+	}
 }
 
 ECEndOfDayTask ACSStoreGameMode::GetNextEndOfDayTask(ECEndOfDayTask Task) const

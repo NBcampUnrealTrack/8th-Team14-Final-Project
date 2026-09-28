@@ -11,6 +11,7 @@ class USceneComponent;
 class ACSPlayerCharacter;
 class ACSEndingManager;
 struct FCSEndingItemDefinition;
+struct FCSEndingSaveRecord;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnEndingSubmissionChanged);
 
@@ -49,6 +50,16 @@ public:
 	// 처음 집은 배출 상품은 이후 내려놓더라도 다음 구매를 막지 않습니다.
 	void NotifyItemPickedUp(ACSEndingItemActor* Item);
 	void SubmitOrActivate(ACSPlayerCharacter* Player);
+
+	// ----- 세이브 / 로드 -----
+	// 자금 복원 후 활성화 조건이 다시 충족되어 엔딩이 재발동하는 상황을 방지
+
+	// 구매 순번·제출 목록·엔딩 시작 여부를 레코드에 기록
+	void CaptureSaveRecord(FCSEndingSaveRecord& OutRecord) const;
+
+	// 레코드로 진행 상태를 복원하고 전시대에 제출 현황 변경을 알림
+	void RestoreSaveRecord(const FCSEndingSaveRecord& InRecord);
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ending") TObjectPtr<UCSEndingData> EndingData;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") int32 NextPurchaseIndex = 0;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") TSet<FName> SubmittedItemIds;

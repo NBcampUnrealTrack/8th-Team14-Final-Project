@@ -5,8 +5,10 @@
 #include "Data/CSOrderTypes.h"
 #include "Data/CSCombinedOrderTypes.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSOrderSubsystem.generated.h"
 
+class UCSSaveGame;
 class ACSDeliveryPortalActor;
 class ACSFacilityDeliveryPortalActor;
 class ACSStoreGameState;
@@ -49,13 +51,18 @@ struct FCSPendingFacilityOrder
 };
 
 UCLASS()
-class CONVENIENCESTORE_API UCSOrderSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSOrderSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	UFUNCTION(BlueprintPure, Category="Store|Order|Combined")
 	FCSCombinedOrderResult EvaluateCombinedOrder(const TArray<FCSOrderLine>& Products,

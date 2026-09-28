@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/CSWeatherTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSWeatherSubsystem.generated.h"
 
 // 1이면 하루 시작 시 날씨를 화면에 자동 출력합니다.
@@ -15,6 +16,7 @@ class ACSWeatherIndoorArea;
 class ACSWeatherZoneActor;
 class UCSWeatherSettingsDataAsset;
 class UNiagaraSystem;
+class UCSSaveGame;
 
 // 날씨가 바뀌었을 때 다른 시스템(손님, 조명 등)에 알리기 위한 델리게이트
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnWeatherChanged,ECSWeatherType, NewWeather,ECSWeatherType, PreviousWeather);
@@ -24,13 +26,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnWeatherForecastUpdated);
 
 // 날씨의 결정·보관·전파·연출 교체를 소유하는 서브시스템
 UCLASS()
-class CONVENIENCESTORE_API UCSWeatherSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSWeatherSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	// -----------------------------------------------------------------------
 	// 조회(다른 시스템이나 UI에서 날씨 정보를 가져갈 때 사용하는 함수)
