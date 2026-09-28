@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Engine/DataTable.h"
 #include "Data/CSDeliveryOrderTypes.h"
 #include "CSJournalTypes.generated.h"
 
@@ -39,6 +40,36 @@ struct FCSJournalArtifact
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = true)) FText Description;
 	// 미획득 실루엣을 정확하게 표시하려면 배경이 투명한 아이콘을 지정해 주셔야 합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<UTexture2D> Icon;
+};
+
+UENUM(BlueprintType)
+enum class ECSArtifactEffectType : uint8
+{
+	None,
+	SummonCart,
+	FairyHouse,
+	EmployeeSpeed,
+	CustomerSpeed,
+	PlayerSpeed,
+	ChangeWeather,
+	Reputation,
+	Experience,
+	Gold
+};
+
+// 아티팩트 데이터 테이블에서는 행 이름을 ArtifactId로 사용합니다.
+USTRUCT(BlueprintType)
+struct FCSJournalArtifactDataRow : public FTableRowBase
+{
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FText DisplayName;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = true)) FText Description;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<UTexture2D> Icon;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<UStaticMesh> WorldMesh;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) ECSArtifactEffectType Effect = ECSArtifactEffectType::None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float EffectValue = 0.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 CooldownDays = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TSoftClassPtr<AActor> SpawnActorClass;
 };
 
 // 종족 정보와 아티팩트 목록을 에디터에서 지정할 수 있는 수첩 카탈로그입니다.

@@ -104,6 +104,7 @@ public:
 
 	// 플레이어가 월드 바닥에 내려놓은 상품 메시의 물리를 활성화합니다.
 	void EnableWorldDropPhysics();
+	void LaunchFromGacha(const FVector& Impulse);
 	// 창고에 보관된 낱개 상품을 물리 충돌 없이 조준해서 꺼낼 수 있도록 선택용 충돌만 전환합니다.
 	void SetStoredForPlayerInteraction(bool bStoredForPlayerInteraction);
 

@@ -7,7 +7,9 @@
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Data/CSProductTypes.h"
 
 void UCSJournalActionButton::Connect(UCSJournalWidget* InJournal)
@@ -36,10 +38,26 @@ void UCSJournalActionButton::ExecuteAction()
 	case ECSJournalButtonAction::Artifact:
 		OwnerJournal->SelectArtifact(ArtifactId);
 		break;
+	case ECSJournalButtonAction::UseArtifact:
+		OwnerJournal->UseSelectedArtifact();
+		break;
 	}
 }
 void UCSJournalDesignedWidget::NativeConstruct()
 {
+	if (WidgetTree && !ArtifactUseButton)
+	{
+		if (UScrollBox* DetailScroll = Cast<UScrollBox>(GetWidgetFromName(TEXT("ArtifactDetailText_Scroll"))))
+		{
+			// 기존 수첩 WBP의 상세 스크롤 안에 사용 버튼을 추가합니다.
+			ArtifactUseButton = WidgetTree->ConstructWidget<UCSJournalActionButton>(UCSJournalActionButton::StaticClass(), TEXT("ArtifactUseButton"));
+			ArtifactUseButton->Action = ECSJournalButtonAction::UseArtifact;
+			UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ArtifactUseLabel"));
+			Label->SetText(NSLOCTEXT("Journal", "UseArtifact", "아티팩트 사용"));
+			ArtifactUseButton->SetContent(Label);
+			DetailScroll->AddChild(ArtifactUseButton);
+		}
+	}
 	// 디자이너에 배치한 사용자 버튼들을 자동으로 연결합니다.
 	if (WidgetTree)
 		WidgetTree->ForEachWidget(
@@ -227,11 +245,31 @@ void UCSJournalDesignedWidget::RefreshArtifactCells()
 		}
 	}
 	FCSJournalArtifactView Selected;
-	SetLabel(TEXT("ArtifactDetailText"),
-			 GetSelectedArtifact(Selected)
-				 ? (Selected.bCollected ? Selected.Name.ToString() + TEXT("\n\n") + Selected.Description.ToString()
-										: FString(TEXT("아직 획득하지 못한 아티팩트입니다.")))
-				 : FString(TEXT("칸을 선택하면 아티팩트 정보를 확인할 수 있습니다.")));
+	FString Detail = TEXT("칸을 선택하면 아티팩트 정보를 확인할 수 있습니다.");
+	bool bCanUse = false;
+	if (GetSelectedArtifact(Selected))
+	{
+		Detail = Selected.bCollected
+			? Selected.Name.ToString() + TEXT("\n\n") + Selected.Description.ToString()
+			: FString(TEXT("아직 획득하지 못한 아티팩트입니다."));
+		if (Selected.bCollected)
+		{
+			Detail += FString::Printf(TEXT("\n\n보유: %d개"), GetSelectedArtifactCount());
+			if (GetSelectedArtifactStacks() > 0) Detail += FString::Printf(TEXT("\n적용 중첩: %d회"), GetSelectedArtifactStacks());
+			if (GetSelectedArtifactNextAvailableDay() > GetCurrentBusinessDay())
+				Detail += FString::Printf(TEXT("\n다음 사용 가능: %d일차"), GetSelectedArtifactNextAvailableDay());
+			if (const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr)
+			{
+				FCSJournalArtifactDataRow Definition;
+				bCanUse = GetSelectedArtifactCount() > 0 &&
+					GetSelectedArtifactNextAvailableDay() <= GetCurrentBusinessDay() &&
+					Artifacts->GetDefinition(SelectedArtifactId, Definition) &&
+					Definition.Effect != ECSArtifactEffectType::None && Definition.Effect != ECSArtifactEffectType::FairyHouse;
+			}
+		}
+	}
+	SetLabel(TEXT("ArtifactDetailText"), Detail);
+	if (ArtifactUseButton) ArtifactUseButton->SetIsEnabled(bCanUse);
 	if (auto* Empty = GetWidgetFromName(TEXT("ArtifactEmptyText")))
 		Empty->SetVisibility(Entries.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
