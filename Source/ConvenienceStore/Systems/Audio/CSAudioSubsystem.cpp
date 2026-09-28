@@ -17,6 +17,13 @@ void UCSAudioSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+UCSAudioSubsystem* UCSAudioSubsystem::Get(const UObject* WorldContextObject)
+{
+	const UWorld* World = IsValid(WorldContextObject) ? WorldContextObject->GetWorld() : nullptr;
+	UGameInstance* GameInstance = IsValid(World) ? World->GetGameInstance() : nullptr;
+	return IsValid(GameInstance) ? GameInstance->GetSubsystem<UCSAudioSubsystem>() : nullptr;
+}
+
 bool UCSAudioSubsystem::InitializeAudio(UCSAudioConfigDataAsset* InAudioConfig)
 {
 	if (!IsValid(InAudioConfig) ||

@@ -18,6 +18,10 @@ class CONVENIENCESTORE_API UCSAudioSubsystem : public UGameInstanceSubsystem
 public:
 	virtual void Deinitialize() override;
 
+	// WBP 등 서브시스템 참조가 필요한 곳에서 GameInstance를 거치지 않고 바로 가져다 쓰기 위한 접근자.
+	UFUNCTION(BlueprintPure, Category = "Audio", meta = (WorldContext = "WorldContextObject"))
+	static UCSAudioSubsystem* Get(const UObject* WorldContextObject);
+
 	bool InitializeAudio(UCSAudioConfigDataAsset* InAudioConfig);
 
 	UFUNCTION(BlueprintCallable, Category = "Audio|Volume")

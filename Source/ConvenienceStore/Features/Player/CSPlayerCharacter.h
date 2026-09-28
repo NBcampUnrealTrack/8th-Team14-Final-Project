@@ -62,6 +62,13 @@ public:
 
 	float GetMagicWandHeldScaleMultiplier() const { return MagicWandHeldScaleMultiplier; }
 
+	// 설정창 마우스 감도 슬라이더가 읽고 쓰기 위한 접근자.
+	UFUNCTION(BlueprintPure, Category = "Input")
+	float GetMouseSensitivity() const { return MouseSensitivity; }
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SetMouseSensitivity(float NewSensitivity) { MouseSensitivity = FMath::Clamp(NewSensitivity, 0.1f, 3.0f); }
+
 	// Post Process AnimBP에서만 소비하는 Mesh Component Space IK 목표입니다.
 	UFUNCTION(BlueprintPure, Category = "Animation|Magic Wand")
 	void GetMagicWandIKTargets(FTransform& HandTarget, FVector& ElbowTarget) const;
@@ -450,6 +457,8 @@ private:
 	void UpdatePlayerLocomotionAnimation(bool bForce = false);
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+	// 0.1~3.0 클램프. 기본값 1.0은 변경 전 룩 감도와 동일.
+	float MouseSensitivity = 1.0f;
 	void StartSprint();
 	void StopSprint();
 	void StartCrouch();
