@@ -78,10 +78,12 @@ ACSCraftStationActor::ACSCraftStationActor()
 
 	InfoWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("InfoWidgetComponent"));
 	InfoWidgetComponent->SetupAttachment(SceneRoot);
-	InfoWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 180.0f));
+	InfoWidgetComponent->SetRelativeLocation(FVector(0.0f, 0.0f, 150.0f));
 	InfoWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	InfoWidgetComponent->SetDrawAtDesiredSize(false);
 	InfoWidgetComponent->SetDrawSize(FVector2D(400.0f, 200.0f));
+	// 월드 위젯은 1픽셀이 1cm라 그대로 두면 4m짜리 판이 된다. 글자 해상도는 유지하고 크기만 줄인다
+	InfoWidgetComponent->SetRelativeScale3D(FVector(0.25f));
 	InfoWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	InfoWidgetComponent->SetTwoSided(true);
 }
@@ -598,6 +600,8 @@ void ACSCraftStationActor::EnterCloseup(APlayerController* PlayerController)
 	{
 		StoreController->SetCraftCloseupActive(true);
 		StoreController->SetStoreHUDHidden(this, true);
+		// 상단 바가 클로즈업 화면 위쪽 정보 창을 가린다
+		StoreController->SetStoreTopBarHidden(this, true);
 	}
 
 	if (CloseupWidgetClass)
@@ -609,8 +613,14 @@ void ACSCraftStationActor::EnterCloseup(APlayerController* PlayerController)
 			ActiveCloseupWidget->SetStep(CraftStep);
 		}
 	}
+	// 클로즈업 화면 안의 정보 창과 겹치지 않게 월드 정보 창은 숨긴다
+	if (IsValid(InfoWidgetComponent))
+	{
+		InfoWidgetComponent->SetVisibility(false);
+	}
 
 	bCloseupActive = true;
+	RefreshInfoWidget();
 }
 
 void ACSCraftStationActor::ExitCloseup(bool bImmediate)
@@ -649,6 +659,7 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 		{
 			StoreController->SetCraftCloseupActive(false);
 			StoreController->SetStoreHUDHidden(this, false);
+			StoreController->SetStoreTopBarHidden(this, false);
 		}
 	}
 
@@ -661,6 +672,10 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 		ActiveCloseupWidget->RemoveFromParent();
 	}
 	ActiveCloseupWidget = nullptr;
+	if (IsValid(InfoWidgetComponent))
+	{
+		InfoWidgetComponent->SetVisibility(true);
+	}
 	CloseupController = nullptr;
 	PreviousViewTarget = nullptr;
 
@@ -827,6 +842,9 @@ void ACSCraftStationActor::HandlePowder()
 	GetWorld()->GetTimerManager().ClearTimer(BubbleTimerHandle);
 	OnPowderResult(bPowderOnTime);
 	SetStep(ECSCraftStep::Powder);
+
+	// 가루가 마지막 단계라 넣는 즉시 완성한다. 결과물 스폰이 실패하면 가루 단계에 남고 E로 다시 시도한다
+	FinishCraft();
 }
 
 void ACSCraftStationActor::HandleFinish()
@@ -1037,10 +1055,24 @@ void ACSCraftStationActor::SetStep(ECSCraftStep NewStep)
 
 void ACSCraftStationActor::RefreshInfoWidget()
 {
-	UCSCraftStationInfoWidget* InfoWidget = IsValid(InfoWidgetComponent)
-		? Cast<UCSCraftStationInfoWidget>(InfoWidgetComponent->GetUserWidgetObject())
-		: nullptr;
-	if (!IsValid(InfoWidget))
+	// 클로즈업 카메라는 솥을 내려다봐서 솥 위 월드 정보 창이 화면에 안 들어온다.
+	// 클로즈업 위젯 안에 같은 정보 창(StationInfo)을 두고 둘 다 같은 값으로 채운다
+	TArray<UCSCraftStationInfoWidget*, TInlineAllocator<2>> InfoWidgets;
+	if (IsValid(InfoWidgetComponent))
+	{
+		if (UCSCraftStationInfoWidget* WorldInfo = Cast<UCSCraftStationInfoWidget>(InfoWidgetComponent->GetUserWidgetObject()))
+		{
+			InfoWidgets.Add(WorldInfo);
+		}
+	}
+	if (IsValid(ActiveCloseupWidget))
+	{
+		if (UCSCraftStationInfoWidget* CloseupInfo = Cast<UCSCraftStationInfoWidget>(ActiveCloseupWidget->GetWidgetFromName(TEXT("StationInfo"))))
+		{
+			InfoWidgets.Add(CloseupInfo);
+		}
+	}
+	if (InfoWidgets.IsEmpty())
 	{
 		return;
 	}
@@ -1080,7 +1112,10 @@ void ACSCraftStationActor::RefreshInfoWidget()
 				}
 			}
 		}
-		InfoWidget->SetIngredient(Index, Icon, Count);
+		for (UCSCraftStationInfoWidget* InfoWidget : InfoWidgets)
+		{
+			InfoWidget->SetIngredient(Index, Icon, Count);
+		}
 	}
 
 	FText ResultName;
@@ -1101,7 +1136,10 @@ void ACSCraftStationActor::RefreshInfoWidget()
 			}
 		}
 	}
-	InfoWidget->SetResultName(ResultName);
+	for (UCSCraftStationInfoWidget* InfoWidget : InfoWidgets)
+	{
+		InfoWidget->SetResultName(ResultName);
+	}
 
 	FText Status;
 	switch (CraftStep)
@@ -1124,5 +1162,8 @@ void ACSCraftStationActor::RefreshInfoWidget()
 		Status = GetMessage(TEXT("StatusIdle"));
 		break;
 	}
-	InfoWidget->SetStatus(Status);
+	for (UCSCraftStationInfoWidget* InfoWidget : InfoWidgets)
+	{
+		InfoWidget->SetStatus(Status);
+	}
 }
