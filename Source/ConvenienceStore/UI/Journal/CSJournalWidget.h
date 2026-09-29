@@ -29,6 +29,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Journal|Calendar") bool SelectDay(int32 BusinessDay);
 	UFUNCTION(BlueprintCallable, Category = "Journal|Artifacts") bool SelectArtifact(FName ArtifactId);
 	UFUNCTION(BlueprintCallable, Category = "Journal|Artifacts") bool UseSelectedArtifact();
+	UFUNCTION(BlueprintCallable, Category = "Journal|Artifacts") void CancelArtifactUse();
+	UPROPERTY(BlueprintReadOnly, Category = "Journal|Artifacts") FText ArtifactUseConfirmation;
 	UFUNCTION(BlueprintPure, Category = "Journal|Artifacts") int32 GetSelectedArtifactCount() const;
 	UFUNCTION(BlueprintPure, Category = "Journal|Artifacts") int32 GetSelectedArtifactStacks() const;
 	UFUNCTION(BlueprintPure, Category = "Journal|Artifacts") int32 GetSelectedArtifactNextAvailableDay() const;
@@ -99,4 +101,6 @@ private:
 	FBox MapBounds = FBox(ForceInit);
 	FTimerHandle LiveUpdateTimer;
 	bool bRefreshing = false;
+	FName PendingUseArtifactId;
+	int32 PendingUseAmount = -1;
 };

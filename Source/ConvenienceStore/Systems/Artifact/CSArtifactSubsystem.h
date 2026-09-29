@@ -19,7 +19,8 @@ public:
 	void RegisterTable(UDataTable* InTable);
 	bool GetDefinition(FName Id, FCSJournalArtifactDataRow& OutRow) const;
 	UFUNCTION(BlueprintCallable, Category="Artifact") bool Acquire(FName Id, int32 Quantity = 1);
-	UFUNCTION(BlueprintCallable, Category="Artifact") bool TryUse(FName Id, ACSPlayerCharacter* Player);
+	UFUNCTION(BlueprintCallable, Category="Artifact") bool TryUse(FName Id, ACSPlayerCharacter* Player, int32 ConfirmedAppliedAmount = -1);
+	bool GetStatUseAmounts(FName Id, ACSPlayerCharacter* Player, int32& Requested, int32& Applied) const;
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetCount(FName Id) const;
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetAppliedStacks(FName Id) const;
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetNextAvailableDay(FName Id) const;
@@ -28,7 +29,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Artifact") FCSArtifactChanged OnArtifactsChanged;
 
 private:
-	UPROPERTY(Transient) TObjectPtr<UDataTable> ArtifactTable;
+	// 배치 액터가 다른 테이블을 등록해도 기존 아티팩트의 사용 정보를 유지합니다.
+	UPROPERTY(Transient) TArray<TObjectPtr<UDataTable>> ArtifactTables;
 	UPROPERTY(Transient) TMap<FName, int32> Counts;
 	UPROPERTY(Transient) TMap<FName, int32> AppliedStacks;
 	UPROPERTY(Transient) TMap<FName, int32> NextAvailableDays;

@@ -10,7 +10,8 @@ enum class ECSGachaRewardType : uint8
 {
 	Product,
 	Artifact,
-	Ending
+	// 기존 에셋을 읽기 위해 값은 유지하며, 엔딩 아이템은 추첨에서 제외합니다.
+	Ending UMETA(Hidden)
 };
 
 // 보상 식별과 확률 데이터만 정의합니다. 추첨, 배출, 아이템 사용 로직은 포함하지 않습니다.

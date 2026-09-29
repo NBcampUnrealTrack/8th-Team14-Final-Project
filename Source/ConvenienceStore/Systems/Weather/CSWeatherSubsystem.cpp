@@ -616,6 +616,11 @@ void UCSWeatherSubsystem::RebalanceEvenIn(FCSWeatherWeightSet& Weights,ECSWeathe
 // 이벤트 개입 (예보 확정 변경)
 // ---------------------------------------------------------------------------
 
+int32 UCSWeatherSubsystem::GetFixedClearBusinessDays() const
+{
+	return IsValid(Settings) ? FMath::Max(0, Settings->FixedClearBusinessDays) : 0;
+}
+
 bool UCSWeatherSubsystem::SetForecastWeather(int32 DayOffset, ECSWeatherType NewWeather)
 {
 	// 과거 날짜와 공개 예보 범위 밖의 날짜는 변경을 거부

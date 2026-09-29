@@ -115,6 +115,11 @@ FText ACSEndingManager::GetPurchasePrompt() const
 		return NSLOCTEXT("Ending", "SoldOut", "모든 귀환 재료를 구매했습니다");
 	const FCSEndingItemDefinition& Item = Data->Items[NextPurchaseIndex];
 	const ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (!State || State->GetStoreLevel() < Item.RequiredStoreLevel)
+	{
+		return FText::Format(NSLOCTEXT("Ending", "LevelLocked", "{0} — 상점 {1}레벨부터 구매할 수 있습니다"),
+			Item.DisplayName, FText::AsNumber(Item.RequiredStoreLevel));
+	}
 	return FText::Format(NSLOCTEXT("Ending", "Purchase", "{0} 구매 — {1}G / 보유 {2}G"),
 		Item.DisplayName, FText::AsNumber(Item.PriceGold), FText::AsNumber(State ? State->GetCurrentFunds() : 0));
 }
@@ -127,6 +132,8 @@ void ACSEndingManager::Purchase(ACSPlayerCharacter* Player, const FTransform& Sp
 		!Data->Items.IsValidIndex(NextPurchaseIndex) || IsValid(PendingPickup)) return;
 	TGuardValue<bool> TransactionGuard(bTransactionInProgress, true);
 	const FCSEndingItemDefinition& Item = Data->Items[NextPurchaseIndex];
+	// 안내 문구와 별개로 실제 구매 시에도 레벨을 확인하여 생성과 결제를 막습니다.
+	if (State->GetStoreLevel() < Item.RequiredStoreLevel) return;
 	if (!State->CanAfford(Item.PriceGold)) return;
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButDontSpawnIfColliding;
