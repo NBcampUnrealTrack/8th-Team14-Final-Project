@@ -1,6 +1,8 @@
 ﻿#include "Features/Trash/CSTrashActor.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Data/CSSaveTypes.h"
 #include "Features/Player/CSPlayerCharacter.h"
 
 ACSTrashActor::ACSTrashActor()
@@ -115,4 +117,65 @@ void ACSTrashActor::PrepareForCustomerDrop()
 
 	// 캡슐 중심(스폰 좌표)에서 바닥까지 물리로 자연스럽게 떨어뜨린다
 	EnableWorldDropPhysics();
+}
+
+void ACSTrashActor::CaptureSaveRecord(FCSTrashRecord& OutRecord) const
+{
+	OutRecord = FCSTrashRecord();
+	OutRecord.ActorClass = FSoftClassPath(GetClass());
+	OutRecord.Transform = GetActorTransform();
+
+	if (!IsValid(TrashMesh))
+	{
+		return;
+	}
+
+	OutRecord.StaticMesh = FSoftObjectPath(TrashMesh->GetStaticMesh());
+	OutRecord.bIgnorePawnCollision = TrashMesh->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Ignore;
+
+	if (TrashMesh->IsSimulatingPhysics())
+	{
+		// 물리로 분리된 메시가 실제 위치이므로 메시 기준으로 기록
+		OutRecord.Transform = FTransform(
+			TrashMesh->GetComponentRotation(),
+			TrashMesh->GetComponentLocation(),
+			GetActorScale3D());
+		OutRecord.MeshRelativeTransform = FTransform(
+			FQuat::Identity,
+			FVector::ZeroVector,
+			TrashMesh->GetRelativeScale3D());
+		OutRecord.bWorldDropPhysics = true;
+		return;
+	}
+
+	OutRecord.MeshRelativeTransform = TrashMesh->GetRelativeTransform();
+}
+
+void ACSTrashActor::RestoreSaveRecord(const FCSTrashRecord& InRecord)
+{
+	if (!IsValid(TrashMesh))
+	{
+		return;
+	}
+
+	if (InRecord.StaticMesh.IsValid())
+	{
+		UStaticMesh* SavedMesh = Cast<UStaticMesh>(InRecord.StaticMesh.TryLoad());
+		if (SavedMesh != nullptr && SavedMesh != TrashMesh->GetStaticMesh())
+		{
+			TrashMesh->SetStaticMesh(SavedMesh);
+		}
+	}
+
+	TrashMesh->SetRelativeTransform(InRecord.MeshRelativeTransform);
+
+	if (InRecord.bIgnorePawnCollision)
+	{
+		TrashMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	}
+
+	if (InRecord.bWorldDropPhysics)
+	{
+		EnableWorldDropPhysics();
+	}
 }

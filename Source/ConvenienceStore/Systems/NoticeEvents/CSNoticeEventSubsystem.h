@@ -4,22 +4,29 @@
 #include "Data/CSNoticeEventTypes.h"
 #include "Math/RandomStream.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSNoticeEventSubsystem.generated.h"
 
 class ACSStoreGameState;
 class UDataTable;
+class UCSSaveGame;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnNoticeEventsChanged);
 
 /** 영업일마다 현재 뉴스와 기념일을 결정하고 데이터 기반 수요 보정값을 제공합니다. */
 UCLASS()
-class CONVENIENCESTORE_API UCSNoticeEventSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSNoticeEventSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	UPROPERTY(BlueprintAssignable, Category = "Notice Events")
 	FCSOnNoticeEventsChanged OnNoticeEventsChanged;
@@ -29,6 +36,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
+
+	/** 오늘 뉴스에 직접 연결된 활성 수요 효과를 게시판 Row용 배열로 반환합니다. */
+	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
+	void GetTodayNewsDemandChanges(TArray<FCSNoticeBoardDemandChange>& OutChanges) const;
 
 	// 오늘 뉴스의 RowName만 반환. 뉴스가 없는 날은 NAME_None
 	// 행 내용까지는 필요 없고 이름만 필요한 쪽을 위해 둠

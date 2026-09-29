@@ -11,6 +11,7 @@ class UTextBlock;
 class UProgressBar;
 class UImage;
 class USizeBox;
+class UWidget;
 
 UENUM(BlueprintType)
 enum class ECSStoreTopBarStatus : uint8
@@ -26,6 +27,10 @@ UCLASS(Abstract)
 class CONVENIENCESTORE_API UCSStoreTopBarWidget : public UUserWidget
 {
 	GENERATED_BODY()
+
+public:
+	// 건축 모드에서는 기존 영업 상태 배너를 새 건축 모드 배너로 교체합니다.
+	void SetBuildModeActive(bool bIsBuildMode, bool bPlayTransition);
 
 protected:
 	virtual void NativeConstruct() override;
@@ -44,10 +49,18 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StoreLevelNameText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UProgressBar> StoreExperienceProgressBar;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StoreExperienceText;
-	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USizeBox> StatusSizeBox;
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<USizeBox> StatusSizeBox;
+
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> Overlay_BuildModeStatus;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> StatusBackgroundImage;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> StatusIconImage;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StatusText;
+
+	// C++은 모드 상태만 전달하고, 두 배너의 교차 전환은 WBP가 전담합니다.
+	UFUNCTION(BlueprintImplementableEvent, Category = "Store|Top Bar|Build Mode")
+	void OnBuildModeVisualChanged(bool bIsBuildMode, bool bPlayTransition);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Top Bar|Clock")
 	FLinearColor ClosingClockColor = FLinearColor(0.85f, 0.12f, 0.08f, 1.0f);

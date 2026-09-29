@@ -29,6 +29,8 @@ void UCSStoreTopBarWidget::NativeConstruct()
 	StoreGameState->OnReputationChanged.AddUniqueDynamic(this, &ThisClass::HandleReputationChanged);
 	StoreGameState->OnReputationGradeChanged.AddUniqueDynamic(this, &ThisClass::HandleReputationGradeChanged);
 	StoreGameState->OnBusinessDayStarted.AddUniqueDynamic(this, &ThisClass::HandleBusinessDayStarted);
+	// 세이브 복원으로 바뀐 영업일도 같은 표시 갱신 경로로 처리
+	StoreGameState->OnBusinessDayRestored.AddUniqueDynamic(this, &ThisClass::HandleBusinessDayStarted);
 	StoreGameState->OnStoreExperienceChanged.AddUniqueDynamic(this, &ThisClass::HandleStoreExperienceChanged);
 	StoreGameState->OnStoreLevelChanged.AddUniqueDynamic(this, &ThisClass::HandleStoreLevelChanged);
 
@@ -56,10 +58,18 @@ void UCSStoreTopBarWidget::NativeDestruct()
 		StoreGameState->OnReputationChanged.RemoveDynamic(this, &ThisClass::HandleReputationChanged);
 		StoreGameState->OnReputationGradeChanged.RemoveDynamic(this, &ThisClass::HandleReputationGradeChanged);
 		StoreGameState->OnBusinessDayStarted.RemoveDynamic(this, &ThisClass::HandleBusinessDayStarted);
+		StoreGameState->OnBusinessDayRestored.RemoveDynamic(this, &ThisClass::HandleBusinessDayStarted);
 		StoreGameState->OnStoreExperienceChanged.RemoveDynamic(this, &ThisClass::HandleStoreExperienceChanged);
 		StoreGameState->OnStoreLevelChanged.RemoveDynamic(this, &ThisClass::HandleStoreLevelChanged);
 	}
 	Super::NativeDestruct();
+}
+
+void UCSStoreTopBarWidget::SetBuildModeActive(
+	const bool bIsBuildMode,
+	const bool bPlayTransition)
+{
+	OnBuildModeVisualChanged(bIsBuildMode, bPlayTransition);
 }
 
 void UCSStoreTopBarWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)

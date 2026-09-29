@@ -1,5 +1,6 @@
 #include "UI/HUD/CSStoreHUDWidget.h"
 
+#include "Animation/WidgetAnimation.h"
 #include "UI/HUD/CSQuickbarWidget.h"
 
 #include "Components/Button.h"
@@ -57,6 +58,9 @@ void UCSStoreHUDWidget::NativeConstruct()
 		this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 	StoreGameState->OnBusinessDayStarted.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
+	// 세이브 복원으로 바뀐 영업일도 같은 표시 갱신 경로로 처리
+	StoreGameState->OnBusinessDayRestored.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 	StoreGameState->OnStoreExperienceChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleStoreExperienceChanged);
 	StoreGameState->OnStoreLevelChanged.AddDynamic(
@@ -97,6 +101,7 @@ void UCSStoreHUDWidget::NativeConstruct()
 
 void UCSStoreHUDWidget::NativeDestruct()
 {
+	GetWorld()->GetTimerManager().ClearTimer(BuildModeBorderExitTimerHandle);
 	if (StoreGameState != nullptr)
 	{
 		StoreGameState->OnStorePhaseChanged.RemoveDynamic(
@@ -117,6 +122,8 @@ void UCSStoreHUDWidget::NativeDestruct()
 			this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
+		StoreGameState->OnBusinessDayRestored.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 		StoreGameState->OnStoreExperienceChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleStoreExperienceChanged);
 		StoreGameState->OnStoreLevelChanged.RemoveDynamic(
@@ -134,6 +141,27 @@ void UCSStoreHUDWidget::NativeDestruct()
 	}
 
 	Super::NativeDestruct();
+}
+
+void UCSStoreHUDWidget::NativeTick(
+	const FGeometry& MyGeometry,
+	const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (!bBuildModeGlowActive || !IsValid(Image_BuildModeGlow))
+	{
+		return;
+	}
+
+	BuildModeGlowElapsedSeconds += InDeltaTime;
+	const float SafePulseSeconds = FMath::Max(0.1f, BuildModeGlowPulseSeconds);
+	const float PulseAlpha = 0.5f - 0.5f * FMath::Cos(
+		2.0f * PI * BuildModeGlowElapsedSeconds / SafePulseSeconds);
+	Image_BuildModeGlow->SetRenderOpacity(FMath::Lerp(
+		BuildModeGlowMinOpacity,
+		BuildModeGlowMaxOpacity,
+		PulseAlpha));
 }
 
 void UCSStoreHUDWidget::SetInteractionPrompt(
@@ -213,6 +241,64 @@ void UCSStoreHUDWidget::SetBuildModeActive(
 	bool bIsBuildMode,
 	bool bPlayTransition)
 {
+	bBuildModeGlowActive = bIsBuildMode;
+	BuildModeGlowElapsedSeconds = 0.0f;
+	if (IsValid(Image_BuildModeGlow))
+	{
+		Image_BuildModeGlow->SetRenderOpacity(BuildModeGlowMinOpacity);
+	}
+
+	// 이전 건축 모드 안내는 새 테두리 연출로 교체합니다.
+	if (UWidget* LegacyIndicator = GetWidgetFromName(TEXT("BuildModeIndicatorPanel")))
+	{
+		LegacyIndicator->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
+	UWidget* BuildModeHUD = GetWidgetFromName(TEXT("CanvasPanel_BuildModeHUD"));
+	GetWorld()->GetTimerManager().ClearTimer(BuildModeBorderExitTimerHandle);
+	if (bIsBuildMode)
+	{
+		if (IsValid(BuildModeHUD))
+		{
+			BuildModeHUD->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		if (bPlayTransition && IsValid(Anim_BuildModeBorder))
+		{
+			StopAnimation(Anim_BuildModeBorder);
+			PlayAnimation(
+				Anim_BuildModeBorder,
+				0.0f,
+				1,
+				EUMGSequencePlayMode::Forward,
+				1.0f,
+				false);
+		}
+	}
+	else if (bPlayTransition && IsValid(Anim_BuildModeBorder) && IsValid(BuildModeHUD))
+	{
+		StopAnimation(Anim_BuildModeBorder);
+		PlayAnimation(
+			Anim_BuildModeBorder,
+			0.0f,
+			1,
+			EUMGSequencePlayMode::Reverse,
+			1.0f,
+			false);
+		const float Duration = FMath::Max(
+			0.01f,
+			Anim_BuildModeBorder->GetEndTime() - Anim_BuildModeBorder->GetStartTime());
+		GetWorld()->GetTimerManager().SetTimer(
+			BuildModeBorderExitTimerHandle,
+			this,
+			&ThisClass::FinishBuildModeBorderExit,
+			Duration,
+			false);
+	}
+	else
+	{
+		FinishBuildModeBorderExit();
+	}
+
 	const FText NoticeText = bIsBuildMode
 		? NSLOCTEXT("StoreHUD", "BuildModeOn", "건축 모드 ON")
 		: NSLOCTEXT("StoreHUD", "BusinessModeOn", "영업 모드 ON");
@@ -229,9 +315,13 @@ void UCSStoreHUDWidget::SetBuildModeActive(
 		BuildModeIconImage->SetBrushFromTexture(ModeIconTexture, false);
 	}
 
-	if (bPlayTransition)
+}
+
+void UCSStoreHUDWidget::FinishBuildModeBorderExit()
+{
+	if (UWidget* BuildModeHUD = GetWidgetFromName(TEXT("CanvasPanel_BuildModeHUD")))
 	{
-		OnBuildModeTransitionRequested();
+		BuildModeHUD->SetVisibility(ESlateVisibility::Collapsed);
 	}
 }
 

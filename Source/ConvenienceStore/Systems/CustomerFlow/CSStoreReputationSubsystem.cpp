@@ -3,6 +3,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 
 // 손님별 스트림과 별개로 이 서브시스템도 같은 시드에서 독립적으로 초기화해
 // "매장 공용, 손님 무관" 패턴을 따른다
@@ -52,6 +53,31 @@ void UCSStoreReputationSubsystem::Deinitialize()
 	}
 
 	Super::Deinitialize();
+}
+
+void UCSStoreReputationSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSReputationDailySaveRecord& Record = OutSave.ReputationDaily;
+	Record.DailyEnteredCustomers = DailyEnteredCustomers;
+	Record.DailyNormalCheckouts = DailyNormalCheckouts;
+	Record.DailyCheckoutAbandoned = DailyCheckoutAbandoned;
+	Record.DailyEmptyHandedDepartures = DailyEmptyHandedDepartures;
+	Record.DailyPriceUpsetSum = DailyPriceUpsetSum;
+	Record.DailyTrashWitnessed = DailyTrashWitnessed;
+}
+
+void UCSStoreReputationSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSReputationDailySaveRecord& Record = InSave.ReputationDaily;
+	DailyEnteredCustomers = Record.DailyEnteredCustomers;
+	DailyNormalCheckouts = Record.DailyNormalCheckouts;
+	DailyCheckoutAbandoned = Record.DailyCheckoutAbandoned;
+	DailyEmptyHandedDepartures = Record.DailyEmptyHandedDepartures;
+	DailyPriceUpsetSum = Record.DailyPriceUpsetSum;
+	DailyTrashWitnessed = Record.DailyTrashWitnessed;
+
+	// 실시간 정산창(C)이 복원된 카운터로 예상 평판 변화를 다시 계산하도록 알림
+	OnReputationStatsChanged.Broadcast();
 }
 
 void UCSStoreReputationSubsystem::HandleCheckoutCompleted(ACSCustomerCharacter* Customer)

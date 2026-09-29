@@ -9,8 +9,10 @@
 #include "Engine/GameInstance.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "TimerManager.h"
 
 ACSStoreGameMode::ACSStoreGameMode()
 {
@@ -100,6 +102,153 @@ void ACSStoreGameMode::BeginPlay()
 	{
 		StartStoreFlow();
 	}
+
+	// 불러오기로 열린 월드는 준비 단계 확정 후 다음 틱에 세이브를 적용
+	// 월드 서브시스템의 OnWorldBeginPlay가 GameMode BeginPlay 이후에 실행되므로 데이터 캐시 생성 이후로 지연
+	if (UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		if (const UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>();
+			SaveSubsystem != nullptr && SaveSubsystem->HasPendingLoad())
+		{
+			GetWorldTimerManager().SetTimerForNextTick(this, &ACSStoreGameMode::ApplyPendingSaveLoad);
+		}
+	}
+}
+
+void ACSStoreGameMode::ApplyPendingSaveLoad()
+{
+	UWorld* World = GetWorld();
+	UGameInstance* OwningGameInstance = GetGameInstance();
+	if (World == nullptr || OwningGameInstance == nullptr)
+	{
+		return;
+	}
+
+	UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>();
+	if (SaveSubsystem == nullptr || !SaveSubsystem->ApplyPendingLoad(*World))
+	{
+		return;
+	}
+
+	// 영업 종료 시점 세이브는 자유 시간으로 복귀
+	// 그 외 단계(2단계의 새 게임 초기 저장 등)는 StartStoreFlow()가 확정한 준비 단계 아침을 그대로 사용
+	if (IsValid(StoreGameState) && StoreGameState->RestoredSavePhase == ECStorePhase::ClosingFreeRoam)
+	{
+		RestoreClosingCheckpoint();
+	}
+}
+
+void ACSStoreGameMode::RestoreClosingCheckpoint()
+{
+	// 불러온 상태를 다시 저장하지 않도록 차단
+	bSkipClosingAutoSave = true;
+	bClosingAutoSaveDone = true;
+
+	// 마감 시각은 UpdateGameClock()에서 넣으므로 직접 설정
+	StoreGameState->SetCurrentGameMinutes(AutomaticClosingTimeMinutes);
+
+	// 마감 경고 재표시 방지
+	bClosingWarningFired = true;
+
+	// 기존 마감 처리 재사용
+	// 임대료·인건비는 복원된 처리일(Last*ProcessedBusinessDay)이 같아 건너뜀
+	// "영업 종료" 안내는 직전 단계가 Open일 때만 표시되므로 다시 뜨지 않음
+	BeginClosingCheckpoint();
+
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSSave] 영업 종료 시점 세이브를 불러와 %d일차 자유 시간으로 복귀했습니다."),
+		StoreGameState->CurrentBusinessDay);
+}
+
+void ACSStoreGameMode::BeginClosingSaveWait()
+{
+	ClearClosingSaveTimers();
+
+	if (bSkipClosingAutoSave || bClosingAutoSaveDone)
+	{
+		return;
+	}
+
+	// 강제 퇴장은 손님 StateTree 틱에서 순차 진행되고 배달 주문 마감 실패도 다음 틱에 처리되므로
+	// 같은 틱에 바로 확인하지 않고 짧은 간격으로 반복 확인
+	FTimerManager& TimerManager = GetWorldTimerManager();
+	TimerManager.SetTimer(
+		ClosingSaveCheckTimerHandle,
+		this,
+		&ACSStoreGameMode::TryClosingAutoSave,
+		ClosingSaveCheckIntervalSeconds,
+		true);
+
+	TimerManager.SetTimer(
+		ClosingSaveTimeoutTimerHandle,
+		this,
+		&ACSStoreGameMode::HandleClosingSaveTimeout,
+		ClosingSaveMaxWaitSeconds,
+		false);
+}
+
+void ACSStoreGameMode::TryClosingAutoSave()
+{
+	if (bSkipClosingAutoSave || bClosingAutoSaveDone)
+	{
+		ClearClosingSaveTimers();
+		return;
+	}
+
+	const UCSCustomerRuntimeSubsystem* CustomerRuntimeSubsystem =
+		GetWorld() ? GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	if (CustomerRuntimeSubsystem != nullptr && !CustomerRuntimeSubsystem->IsReadyForClosingSave())
+	{
+		return;
+	}
+
+	ExecuteClosingAutoSave();
+}
+
+void ACSStoreGameMode::HandleClosingSaveTimeout()
+{
+	if (bSkipClosingAutoSave || bClosingAutoSaveDone)
+	{
+		ClearClosingSaveTimers();
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("[CSSave] 영업 종료 후 %.1f초 안에 손님 상품 정리가 끝나지 않아 현재 상태로 자동 저장합니다."),
+		ClosingSaveMaxWaitSeconds);
+	ExecuteClosingAutoSave();
+}
+
+void ACSStoreGameMode::ExecuteClosingAutoSave()
+{
+	ClearClosingSaveTimers();
+
+	// 자유 시간을 벗어났거나(정산 시작 등) 불러오기로 레벨이 전환되는 중이면 저장하지 않음
+	if (!IsValid(StoreGameState) ||
+		StoreGameState->CurrentPhase != ECStorePhase::ClosingFreeRoam ||
+		StoreGameState->bIsDailySummaryPending)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CSSave] 자유 시간이 아니어서 영업 종료 자동 저장을 건너뜁니다."));
+		bClosingAutoSaveDone = true;
+		return;
+	}
+
+	UGameInstance* OwningGameInstance = GetGameInstance();
+	UCSSaveSubsystem* SaveSubsystem =
+		OwningGameInstance ? OwningGameInstance->GetSubsystem<UCSSaveSubsystem>() : nullptr;
+	if (SaveSubsystem == nullptr || SaveSubsystem->HasPendingLoad())
+	{
+		return;
+	}
+
+	bClosingAutoSaveDone = true;
+	SaveSubsystem->SaveToAutoSlot();
+}
+
+void ACSStoreGameMode::ClearClosingSaveTimers()
+{
+	GetWorldTimerManager().ClearTimer(ClosingSaveCheckTimerHandle);
+	GetWorldTimerManager().ClearTimer(ClosingSaveTimeoutTimerHandle);
 }
 
 void ACSStoreGameMode::StartStoreFlow()
@@ -116,6 +265,12 @@ void ACSStoreGameMode::StartStoreFlow()
 
 	FiredScheduleEventRows.Empty();
 	bClosingWarningFired = false;
+
+	// 새 영업일은 영업 종료 자동 저장을 다시 받음
+	ClearClosingSaveTimers();
+	bClosingAutoSaveDone = false;
+	bSkipClosingAutoSave = false;
+
 	StoreGameState->SetEndOfDayTask(ECEndOfDayTask::None);
 	StoreGameState->CompleteDailySummary();
 	StoreGameState->SetClosingTimeSettings(
@@ -200,6 +355,13 @@ bool ACSStoreGameMode::RequestClosingDailySummary()
 		GetWorld() ? GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
 	{
 		CustomerRuntimeSubsystem->DespawnAllCustomers();
+	}
+
+	// 자동 저장 대기 중에 잠자기를 확인한 경우
+	// 손님 정리로 상품 낙하·도난 손실이 확정된 지금, 평판 정산 전에 저장을 마침
+	if (!bSkipClosingAutoSave && !bClosingAutoSaveDone)
+	{
+		ExecuteClosingAutoSave();
 	}
 
 	StoreGameState->RequestDailySummary();
@@ -330,6 +492,10 @@ void ACSStoreGameMode::BeginClosingCheckpoint()
 	StoreGameState->SetStorePhase(MakePhaseData(
 		ECStorePhase::ClosingFreeRoam,
 		NSLOCTEXT("Store", "ClosingFreeRoam", "마감 활동")));
+
+	// 손님이 들고 있던 상품을 모두 떨어뜨린 뒤 자동 저장
+	// 불러오기로 복귀한 경우 bSkipClosingAutoSave로 건너뜀
+	BeginClosingSaveWait();
 }
 
 void ACSStoreGameMode::CompleteCurrentEndOfDayTask()
@@ -364,6 +530,7 @@ void ACSStoreGameMode::StartNextBusinessDay()
 		StoreGameState->BeginNextBusinessDay();
 	}
 
+	// 자동 저장은 영업 종료 직후(BeginClosingCheckpoint)에만 수행
 	StartStoreFlow();
 }
 

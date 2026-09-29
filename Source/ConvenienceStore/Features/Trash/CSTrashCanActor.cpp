@@ -3,6 +3,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/GameInstance.h"
+#include "Features/Facilities/CSSaveIdComponent.h"
 #include "Features/Trash/CSTrashable.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 
@@ -37,6 +38,8 @@ ACSTrashCanActor::ACSTrashCanActor()
 	TrashCanMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TrashCanMesh"));
 	TrashCanMesh->SetupAttachment(SceneRoot);
 	TrashCanMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	SaveIdComponent = CreateDefaultSubobject<UCSSaveIdComponent>(TEXT("SaveIdComponent"));
 }
 
 FName ACSTrashCanActor::GetFacilityId_Implementation() const

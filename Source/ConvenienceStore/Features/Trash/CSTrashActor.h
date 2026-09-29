@@ -9,6 +9,7 @@
 class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+struct FCSTrashRecord;
 
 // 튜토리얼 청소 단계에서 플레이어가 E로 줍는 쓰레기
 UCLASS()
@@ -46,6 +47,13 @@ public:
 	FText GetTrashDisplayName() const { return TrashDisplayName; }
 	void SetTrashDisplayName(const FText& InDisplayName) { TrashDisplayName = InDisplayName; }
 	void SetTrashMesh(UStaticMesh* InMesh);
+
+	// 현재 클래스·메시·위치·물리 상태를 세이브 레코드에 기록
+	void CaptureSaveRecord(FCSTrashRecord& OutRecord) const;
+
+	// 세이브 레코드의 메시·충돌·물리 상태를 적용
+	// 레코드 트랜스폼으로 스폰한 직후 호출
+	void RestoreSaveRecord(const FCSTrashRecord& InRecord);
 
 protected:
 	// 줍기·퀵바·버리기 안내에 쓰는 이름. 기본값은 "쓰레기"
