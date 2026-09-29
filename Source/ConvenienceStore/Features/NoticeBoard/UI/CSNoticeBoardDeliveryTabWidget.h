@@ -6,6 +6,10 @@
 #include "CSNoticeBoardDeliveryTabWidget.generated.h"
 
 class UCSDeliveryOrderSubsystem;
+class UButton;
+class UPanelWidget;
+class UTextBlock;
+class UWidget;
 
 /**
  * 게시판의 배달 주문 탭입니다.
@@ -101,4 +105,30 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCSDeliveryOrderSubsystem> DeliveryOrderSubsystem;
+
+	/** 새 게시판 디자인의 요청 상품 한 줄 WBP입니다. 비우면 기본 경로를 자동 사용합니다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Delivery|Style")
+	TSubclassOf<UUserWidget> RequestItemRowClass;
+
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Accept;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Decline;
+
+private:
+	void RefreshSingleOrderPresentation(
+		const FCSDeliveryOrderRuntime& Order,
+		bool bCanAccept,
+		const FText& AvailabilityMessage);
+	void PopulateRequestItemRows(const FCSDeliveryOrderRuntime& Order);
+	void SetupRequestItemRow(
+		UUserWidget* RowWidget,
+		const FCSDeliveryOrderLine& Line,
+		int32 AvailableQuantity) const;
+	UPanelWidget* ResolveRequestItemPanel() const;
+	TSubclassOf<UUserWidget> ResolveRequestItemRowClass() const;
+	FText FormatGameClock(float GameMinutes) const;
+	void SetNamedText(FName WidgetName, const FText& Text) const;
+	void SetNamedVisibility(FName WidgetName, ESlateVisibility InVisibility) const;
+
+	UFUNCTION() void HandleAcceptClicked();
+	UFUNCTION() void HandleDeclineClicked();
 };

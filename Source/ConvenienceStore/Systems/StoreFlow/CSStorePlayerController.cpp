@@ -127,6 +127,7 @@ void ACSStorePlayerController::BeginPlay()
 			// 발주창 등 Viewport UI보다 위에 두고, 타이틀과 엔딩에서는 별도로 숨깁니다.
 			StoreTopBarWidget->AddToViewport(2000);
 			StoreTopBarWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+			StoreTopBarWidget->SetBuildModeActive(false, false);
 		}
 	}
 
@@ -872,6 +873,10 @@ void ACSStorePlayerController::SetBuildModeHUDState(
 	if (IsValid(StoreHUDWidget))
 	{
 		StoreHUDWidget->SetBuildModeActive(bIsBuildMode, bPlayTransition);
+	}
+	if (IsValid(StoreTopBarWidget))
+	{
+		StoreTopBarWidget->SetBuildModeActive(bIsBuildMode, bPlayTransition);
 	}
 }
 

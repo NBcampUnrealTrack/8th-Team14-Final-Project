@@ -37,6 +37,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
 
+	/** 오늘 뉴스에 직접 연결된 활성 수요 효과를 게시판 Row용 배열로 반환합니다. */
+	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
+	void GetTodayNewsDemandChanges(TArray<FCSNoticeBoardDemandChange>& OutChanges) const;
+
 	// 오늘 뉴스의 RowName만 반환. 뉴스가 없는 날은 NAME_None
 	// 행 내용까지는 필요 없고 이름만 필요한 쪽을 위해 둠
 	UFUNCTION(BlueprintPure, Category = "Notice Events|News")
