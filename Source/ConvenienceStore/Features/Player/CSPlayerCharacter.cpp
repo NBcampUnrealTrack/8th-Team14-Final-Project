@@ -3484,6 +3484,7 @@ void ACSPlayerCharacter::DropHeldItem()
 	{
 		ToolToDrop->OnUnequipped();
 		ToolToDrop->EnableWorldDropPhysics();
+		ToolToDrop->OnReleasedToWorld(false);
 	}
 
 	// 최종 안전 위치로 이동한 뒤 실제 월드 Drop 대상의 메시 물리만 활성화합니다.
@@ -3668,6 +3669,7 @@ void ACSPlayerCharacter::ThrowHeldItem()
 
 	HeldActor = nullptr;
 	DestroyPlacementPreview();
+	if (IsValid(ToolToThrow)) ToolToThrow->OnReleasedToWorld(true);
 }
 
 bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)
