@@ -92,7 +92,7 @@ public:
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
 
-	// C와 Tab은 BindKey라 클로즈업 IMC에 막히지 않아서 이 값으로 거른다
+	// C, Tab, P는 BindKey라 클로즈업 IMC에 막히지 않아서 이 값으로 거른다
 	void SetCraftCloseupActive(bool bActive) { bCraftCloseupActive = bActive; }
 	bool IsCraftCloseupActive() const { return bCraftCloseupActive; }
 

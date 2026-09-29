@@ -220,6 +220,7 @@ void ACSStorePlayerController::StartGameFromTemporaryTitle()
 
 void ACSStorePlayerController::ToggleSaveLoadMenu()
 {
+	if (bCraftCloseupActive) return;
 	if (IsValid(ActiveSaveLoadMenuWidget))
 	{
 		CloseSaveLoadMenu();
