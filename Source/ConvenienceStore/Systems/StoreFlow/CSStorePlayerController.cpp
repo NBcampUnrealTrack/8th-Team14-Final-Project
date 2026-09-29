@@ -1,4 +1,4 @@
-#include "Systems/StoreFlow/CSStorePlayerController.h"
+﻿#include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Journal/CSJournalWidget.h"
 #include "Features/Journal/CSJournalWorldActors.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
@@ -13,7 +13,9 @@
 #include "UI/Store/CSStatusAnnouncementWidget.h"
 #include "UI/Store/CSClosingWarningWidget.h"
 #include "Features/UI/CSDeliveryToastWidget.h"
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
+#include "UI/Save/CSSaveLoadMenuWidget.h"
 #include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
 #include "UI/Settings/CSSettingsWidget.h"
 
@@ -24,6 +26,9 @@ void ACSStorePlayerController::SetupInputComponent()
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
 	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ACSStorePlayerController::ToggleSettings);
+	// P 키로 저장·불러오기 메뉴를 열고 조작을 막는 UI가 열려 있으면 무시
+	// F5는 개발 빌드의 엔진 뷰 모드 단축키와 겹쳐 사용하지 않음
+	InputComponent->BindKey(EKeys::P, IE_Pressed, this, &ACSStorePlayerController::ToggleSaveLoadMenu);
 }
 // 다른 조작 화면이나 일시 정지 상태와 충돌하지 않도록 확인한 뒤 수첩을 엽니다.
 void ACSStorePlayerController::ToggleJournal()
@@ -152,6 +157,16 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 		return;
 	}
 
+	// 불러오기로 다시 열린 월드는 타이틀 일시 정지로 복원 타이머가 멈추지 않도록 타이틀을 생략
+	if (const UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		const UCSSaveSubsystem* SaveSubsystem = OwningGameInstance->GetSubsystem<UCSSaveSubsystem>();
+		if (SaveSubsystem != nullptr && SaveSubsystem->HasPendingLoad())
+		{
+			return;
+		}
+	}
+
 	UClass* LoadedTitleWidgetClass = TemporaryTitleWidgetClass.Get();
 	if (LoadedTitleWidgetClass == nullptr)
 	{
@@ -175,6 +190,59 @@ void ACSStorePlayerController::StartGameFromTemporaryTitle()
 {
 	// 이 버튼은 최초 생성된 월드를 진행하므로 첫날 기록을 유지합니다. 별도의 새 게임 시작 시에는 ResetJournal을 호출해 주시면 됩니다.
 	CloseTemporaryTitleScreen();
+}
+
+void ACSStorePlayerController::ToggleSaveLoadMenu()
+{
+	if (IsValid(ActiveSaveLoadMenuWidget))
+	{
+		CloseSaveLoadMenu();
+		return;
+	}
+
+	if (!IsLocalPlayerController() || SaveLoadMenuWidgetClass == nullptr)
+	{
+		return;
+	}
+
+	// 계산·발주·수면 전환이나 임시 타이틀처럼 조작을 막는 상태에서는 메뉴를 겹쳐 열지 않음
+	if (IsGameplayUIInputLocked())
+	{
+		return;
+	}
+
+	ActiveSaveLoadMenuWidget = CreateWidget<UCSSaveLoadMenuWidget>(this, SaveLoadMenuWidgetClass);
+	if (!IsValid(ActiveSaveLoadMenuWidget))
+	{
+		return;
+	}
+
+	ActiveSaveLoadMenuWidget->OnMenuClosed.AddUniqueDynamic(this, &ACSStorePlayerController::HandleSaveLoadMenuClosed);
+
+	ActiveSaveLoadMenuWidget->AddToViewport(1002);
+	SetStoreHUDHidden(ActiveSaveLoadMenuWidget, true);
+	SetGameplayUIInputLock(ActiveSaveLoadMenuWidget, true);
+}
+
+void ACSStorePlayerController::CloseSaveLoadMenu()
+{
+	if (!IsValid(ActiveSaveLoadMenuWidget))
+	{
+		return;
+	}
+
+	UCSSaveLoadMenuWidget* MenuToClose = ActiveSaveLoadMenuWidget;
+	ActiveSaveLoadMenuWidget = nullptr;
+
+	MenuToClose->OnMenuClosed.RemoveDynamic(this, &ACSStorePlayerController::HandleSaveLoadMenuClosed);
+	SetGameplayUIInputLock(MenuToClose, false);
+	SetStoreHUDHidden(MenuToClose, false);
+	MenuToClose->RemoveFromParent();
+}
+
+void ACSStorePlayerController::HandleSaveLoadMenuClosed()
+{
+	CloseSaveLoadMenu();
 }
 
 void ACSStorePlayerController::CloseTemporaryTitleScreen()

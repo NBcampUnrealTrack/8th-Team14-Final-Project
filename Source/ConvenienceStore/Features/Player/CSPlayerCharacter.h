@@ -29,6 +29,8 @@ class UCSQuickbarInventoryComponent;
 class ACSEndingDisplayActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
+struct FCSQuickbarRecord;
+class UDataTable;
 
 UENUM(BlueprintType)
 enum class ECSPlayerMode : uint8
@@ -90,6 +92,19 @@ public:
 	bool TryTakeStoredCrate(
 		ACSFreshnessSafeZoneActor* StoragePoint,
 		const UPrimitiveComponent* TargetInteractionComponent);
+
+	// ----- 세이브 / 로드 -----
+
+	// 퀵바 슬롯 순서대로 도구 클래스와 상자 상태를 레코드에 기록
+	// 쓰레기는 저장 대상이 아니므로 빈 칸으로 기록
+	void CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) const;
+
+	// 기록된 도구와 상자를 다시 생성해 퀵바에 넣고 선택 슬롯을 복원
+	// 부착·장착 처리를 재사용하기 위해 기존 TryPickUp() 경로를 사용
+	void RestoreQuickbarRecord(const FCSQuickbarRecord& InRecord, const UDataTable* FallbackProductTable);
+
+	// 퀵바에 보관 중인 액터인지 확인
+	bool IsQuickbarItem(const AActor* ItemActor) const;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Mode")
 	bool IsBuildMode() const
@@ -491,6 +506,9 @@ private:
 	USceneComponent* GetHeldItemAttachTarget(const AActor* ItemActor) const;
 	void StoreEquippedQuickbarTool();
 	void StoreHeldQuickbarItem();
+	// 퀵바 복원용 도구를 조회하고 없으면 새로 생성
+	// 마법봉은 거치대에 있는 기존 액터를 재사용해 중복 생성을 방지
+	ACSUsableToolActor* FindOrSpawnQuickbarTool(UClass* ToolClass, bool& bOutSpawned);
 	void RemoveHeldItemFromQuickbar();
 	void UpdateQuickbarHUD();
 

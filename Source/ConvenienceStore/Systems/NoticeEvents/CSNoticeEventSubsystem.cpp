@@ -5,10 +5,31 @@
 #include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogCSNoticeEvents, Log, All);
+
+void UCSNoticeEventSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSNoticeEventSaveRecord& Record = OutSave.NoticeEvent;
+	Record.CurrentNewsRowName = CurrentNewsRowName;
+	Record.ActiveHolidayRowNames = ActiveHolidayRowNames;
+
+	// 로드 직후 ProcessBusinessDay()가 다시 실행되어 뉴스를 재추첨하는 상황을 방지
+	Record.LastProcessedBusinessDay = LastProcessedBusinessDay;
+}
+
+void UCSNoticeEventSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSNoticeEventSaveRecord& Record = InSave.NoticeEvent;
+	CurrentNewsRowName = Record.CurrentNewsRowName;
+	ActiveHolidayRowNames = Record.ActiveHolidayRowNames;
+	LastProcessedBusinessDay = Record.LastProcessedBusinessDay;
+
+	OnNoticeEventsChanged.Broadcast();
+}
 
 // 다른 시스템과 난수 소비 순서를 공유하지 않되 프로젝트의 디버그 고정 시드 규칙은 따릅니다.
 extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
