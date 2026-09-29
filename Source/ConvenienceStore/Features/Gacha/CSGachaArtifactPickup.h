@@ -25,6 +25,7 @@ public:
 	bool InitializeArtifact(FDataTableRowHandle InArtifactRow, int32 InQuantity = 1);
 	void Launch(FVector Impulse);
 	FName GetArtifactId() const { return ArtifactId; }
+	UStaticMeshComponent* GetPickupMesh() const { return DisplayMesh; }
 
 protected:
 	virtual void BeginPlay() override;
