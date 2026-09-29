@@ -24,7 +24,8 @@ enum class ECOrderFailureReason : uint8
 	CostOverflow,
 	InsufficientFunds,
 	DeliveryUnavailable,
-	CrateSpawnFailed
+	CrateSpawnFailed,
+	ProductNotOrderable
 };
 
 USTRUCT(BlueprintType)

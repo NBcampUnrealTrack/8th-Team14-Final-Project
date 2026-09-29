@@ -36,6 +36,9 @@ class CONVENIENCESTORE_API ACSCartActor : public AActor,
 public:
 	ACSCartActor();
 	virtual void OnConstruction(const FTransform& Transform) override;
+	// 바닥에 닿도록 배치할 때 액터 원점을 올려야 하는 높이를 반환합니다.
+	float GetSpawnGroundOffset() const;
+	FBoxSphereBounds GetSpawnMeshBounds() const;
 
 	virtual bool CanPlaceItem_Implementation(AActor* ItemActor) const override;
 	virtual bool GetPlacementPreview_Implementation(

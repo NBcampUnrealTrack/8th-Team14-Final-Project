@@ -47,10 +47,15 @@ class CONVENIENCESTORE_API UCSJournalSubsystem : public UGameInstanceSubsystem,
 	}
 	void ObserveDay(int32 Day);
 	void RecordDelivery(const FCSDeliveryOrderRuntime &Order, int32 Day, FName LevelId);
+	// 가챠에서 사용하는 아티팩트 테이블을 도감에도 등록합니다.
+	void RegisterArtifactTable(UDataTable* Table);
+	TArray<FCSJournalArtifact> GetAllArtifacts() const;
+	bool FindArtifact(FName ArtifactId, FCSJournalArtifact& OutArtifact) const;
 	UPROPERTY(BlueprintAssignable) FCSJournalChanged OnJournalChanged;
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Journal") TObjectPtr<UCSJournalCatalog> Catalog;
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Journal") TSet<FName> UnlockedEntries;
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Journal") TSet<FName> CollectedArtifacts;
+	UPROPERTY(Transient) TArray<TObjectPtr<UDataTable>> ArtifactTables;
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Journal") TArray<FCSJournalEvent> Events;
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Journal") TArray<FCSJournalDelivery> Deliveries;
 	// 현재까지 도달한 가장 늦은 영업일이며 열람할 수 있는 마지막 달을 결정합니다.

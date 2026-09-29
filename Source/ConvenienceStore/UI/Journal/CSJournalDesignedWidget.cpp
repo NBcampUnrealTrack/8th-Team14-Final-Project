@@ -7,7 +7,10 @@
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Systems/Weather/CSWeatherSubsystem.h"
 #include "Data/CSProductTypes.h"
 
 void UCSJournalActionButton::Connect(UCSJournalWidget* InJournal)
@@ -36,10 +39,35 @@ void UCSJournalActionButton::ExecuteAction()
 	case ECSJournalButtonAction::Artifact:
 		OwnerJournal->SelectArtifact(ArtifactId);
 		break;
+	case ECSJournalButtonAction::UseArtifact:
+		OwnerJournal->UseSelectedArtifact();
+		break;
+	case ECSJournalButtonAction::CancelArtifactUse:
+		OwnerJournal->CancelArtifactUse();
+		break;
 	}
 }
 void UCSJournalDesignedWidget::NativeConstruct()
 {
+	if (WidgetTree && !ArtifactUseButton)
+	{
+		if (UScrollBox* DetailScroll = Cast<UScrollBox>(GetWidgetFromName(TEXT("ArtifactDetailText_Scroll"))))
+		{
+			// 기존 수첩 WBP의 상세 스크롤 안에 사용 버튼을 추가합니다.
+			ArtifactUseButton = WidgetTree->ConstructWidget<UCSJournalActionButton>(UCSJournalActionButton::StaticClass(), TEXT("ArtifactUseButton"));
+			ArtifactUseButton->Action = ECSJournalButtonAction::UseArtifact;
+			UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ArtifactUseLabel"));
+			Label->SetText(NSLOCTEXT("Journal", "UseArtifact", "아티팩트 사용"));
+			ArtifactUseButton->SetContent(Label);
+			DetailScroll->AddChild(ArtifactUseButton);
+			ArtifactCancelUseButton = WidgetTree->ConstructWidget<UCSJournalActionButton>(UCSJournalActionButton::StaticClass(), TEXT("ArtifactCancelUseButton"));
+			ArtifactCancelUseButton->Action = ECSJournalButtonAction::CancelArtifactUse;
+			UTextBlock* CancelLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("ArtifactCancelUseLabel"));
+			CancelLabel->SetText(NSLOCTEXT("Artifact", "CancelUse", "취소"));
+			ArtifactCancelUseButton->SetContent(CancelLabel);
+			DetailScroll->AddChild(ArtifactCancelUseButton);
+		}
+	}
 	// 디자이너에 배치한 사용자 버튼들을 자동으로 연결합니다.
 	if (WidgetTree)
 		WidgetTree->ForEachWidget(
@@ -227,11 +255,45 @@ void UCSJournalDesignedWidget::RefreshArtifactCells()
 		}
 	}
 	FCSJournalArtifactView Selected;
-	SetLabel(TEXT("ArtifactDetailText"),
-			 GetSelectedArtifact(Selected)
-				 ? (Selected.bCollected ? Selected.Name.ToString() + TEXT("\n\n") + Selected.Description.ToString()
-										: FString(TEXT("아직 획득하지 못한 아티팩트입니다.")))
-				 : FString(TEXT("칸을 선택하면 아티팩트 정보를 확인할 수 있습니다.")));
+	FString Detail = TEXT("칸을 선택하면 아티팩트 정보를 확인할 수 있습니다.");
+	bool bCanUse = false;
+	if (GetSelectedArtifact(Selected))
+	{
+		Detail = Selected.bCollected
+			? Selected.Name.ToString() + TEXT("\n\n") + Selected.Description.ToString()
+			: FString(TEXT("아직 획득하지 못한 아티팩트입니다."));
+		if (Selected.bCollected)
+		{
+			Detail += FString::Printf(TEXT("\n\n보유: %d개"), GetSelectedArtifactCount());
+			if (GetSelectedArtifactStacks() > 0) Detail += FString::Printf(TEXT("\n적용 중첩: %d회"), GetSelectedArtifactStacks());
+			if (GetSelectedArtifactNextAvailableDay() > GetCurrentBusinessDay())
+				Detail += FString::Printf(TEXT("\n다음 사용 가능: %d일차"), GetSelectedArtifactNextAvailableDay());
+			if (const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr)
+			{
+				FCSJournalArtifactDataRow Definition;
+				const bool bHasDefinition = Artifacts->GetDefinition(SelectedArtifactId, Definition);
+				if (bHasDefinition && Definition.Effect == ECSArtifactEffectType::ChangeWeather)
+				{
+					const UCSWeatherSubsystem* Weather = GetWorld() ? GetWorld()->GetSubsystem<UCSWeatherSubsystem>() : nullptr;
+					if (Weather && Weather->GetFixedClearBusinessDays() > 0 &&
+						Weather->GetCurrentBusinessDay() <= Weather->GetFixedClearBusinessDays())
+					{
+						Detail += FString::Printf(TEXT("\n%d일차부터 사용 가능 (맑은 날씨 유지 기간)"), Weather->GetFixedClearBusinessDays() + 1);
+					}
+				}
+				bCanUse = GetSelectedArtifactCount() > 0 &&
+					GetSelectedArtifactNextAvailableDay() <= GetCurrentBusinessDay() &&
+					bHasDefinition &&
+					Definition.Effect != ECSArtifactEffectType::None && Definition.Effect != ECSArtifactEffectType::FairyHouse;
+			}
+		}
+	}
+	if (!ArtifactUseConfirmation.IsEmpty()) Detail += TEXT("\n\n") + ArtifactUseConfirmation.ToString();
+	SetLabel(TEXT("ArtifactDetailText"), Detail);
+	SetLabel(TEXT("ArtifactUseLabel"), ArtifactUseConfirmation.IsEmpty()
+		? NSLOCTEXT("Journal", "UseArtifact", "아티팩트 사용") : NSLOCTEXT("Artifact", "ConfirmPartialUse", "이대로 사용"));
+	if (ArtifactCancelUseButton) ArtifactCancelUseButton->SetVisibility(ArtifactUseConfirmation.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+	if (ArtifactUseButton) ArtifactUseButton->SetIsEnabled(bCanUse);
 	if (auto* Empty = GetWidgetFromName(TEXT("ArtifactEmptyText")))
 		Empty->SetVisibility(Entries.IsEmpty() ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }

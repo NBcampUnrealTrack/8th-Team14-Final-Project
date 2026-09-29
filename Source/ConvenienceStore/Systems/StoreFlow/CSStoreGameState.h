@@ -413,6 +413,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	bool IsMaximumStoreLevel() const;
 
+	// 아티팩트 사용 전에 최대치까지 실제로 받을 수 있는 양을 조회합니다.
+	int32 GetRemainingStoreExperience() const;
+	int32 GetRemainingReputation() const;
+
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	int32 GetReputationScore() const;
 

@@ -47,6 +47,20 @@ void ACSCartActor::OnConstruction(const FTransform& Transform)
 	SyncCargoSlotsFromMarkers();
 }
 
+float ACSCartActor::GetSpawnGroundOffset() const
+{
+	if (!IsValid(CartMesh) || !IsValid(CartMesh->GetStaticMesh())) return 5.0f;
+	const FBoxSphereBounds Bounds = GetSpawnMeshBounds();
+	return FMath::Max(5.0f, Bounds.BoxExtent.Z - Bounds.Origin.Z + 5.0f);
+}
+
+FBoxSphereBounds ACSCartActor::GetSpawnMeshBounds() const
+{
+	return IsValid(CartMesh) && IsValid(CartMesh->GetStaticMesh())
+		? CartMesh->CalcBounds(CartMesh->GetRelativeTransform())
+		: FBoxSphereBounds(FVector::ZeroVector, FVector::ZeroVector, 0.0f);
+}
+
 bool ACSCartActor::CanPlaceItem_Implementation(AActor* ItemActor) const
 {
 	return !bIsBeingPushed &&

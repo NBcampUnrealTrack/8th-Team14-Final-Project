@@ -51,6 +51,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather")
 	int32 GetCurrentBusinessDay() const { return CurrentBusinessDay; }
 
+	// 실제 날씨 제한과 사용 안내가 같은 설정을 참조하도록 고정 맑음 기간을 반환합니다.
+	UFUNCTION(BlueprintPure, Category = "Weather")
+	int32 GetFixedClearBusinessDays() const;
+
 	// 특정 일차(0 = 오늘, 1 = 내일)의 날씨를 조회
 	// 설정한 "공개 예보 범위(PublicForecastDays)"를 넘어서 조회하려 하면 None을 반환
 	UFUNCTION(BlueprintCallable, Category = "Weather")

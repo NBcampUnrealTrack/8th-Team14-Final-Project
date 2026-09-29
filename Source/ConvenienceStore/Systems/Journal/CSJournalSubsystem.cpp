@@ -1,6 +1,7 @@
-#include "Systems/Journal/CSJournalSubsystem.h"
+﻿#include "Systems/Journal/CSJournalSubsystem.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Data/CSJournalSettings.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
 
@@ -55,6 +56,7 @@ void UCSJournalSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
 
 void UCSJournalSubsystem::ResetJournal()
 {
+	if (UCSArtifactSubsystem* Artifacts = GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>()) Artifacts->ResetArtifacts();
 	UnlockedEntries.Reset();
 	CollectedArtifacts.Reset();
 	Events.Reset();
@@ -89,6 +91,71 @@ bool UCSJournalSubsystem::CollectArtifact(FName Id)
 	CollectedArtifacts.Add(Id);
 	OnJournalChanged.Broadcast();
 	return true;
+}
+
+void UCSJournalSubsystem::RegisterArtifactTable(UDataTable* Table)
+{
+	if (!IsValid(Table) || !Table->GetRowStruct() ||
+		!Table->GetRowStruct()->IsChildOf(FCSJournalArtifactDataRow::StaticStruct()) ||
+		ArtifactTables.Contains(Table))
+	{
+		return;
+	}
+	ArtifactTables.Add(Table);
+	OnJournalChanged.Broadcast();
+}
+
+TArray<FCSJournalArtifact> UCSJournalSubsystem::GetAllArtifacts() const
+{
+	TArray<FCSJournalArtifact> Result = Catalog ? Catalog->Artifacts : TArray<FCSJournalArtifact>();
+	for (const UDataTable* Table : ArtifactTables)
+	{
+		if (!IsValid(Table))
+		{
+			continue;
+		}
+		TArray<FName> RowNames = Table->GetRowNames();
+		RowNames.Sort([](const FName& A, const FName& B) { return A.ToString() < B.ToString(); });
+		for (const FName RowName : RowNames)
+		{
+			const FCSJournalArtifactDataRow* Row = Table->FindRow<FCSJournalArtifactDataRow>(RowName, TEXT("UCSJournalSubsystem::GetAllArtifacts"));
+			if (!Row)
+			{
+				continue;
+			}
+			FCSJournalArtifact Artifact;
+			Artifact.ArtifactId = RowName;
+			Artifact.Name = Row->DisplayName;
+			Artifact.Description = Row->Description;
+			Artifact.Icon = Row->Icon;
+			if (FCSJournalArtifact* Existing = Result.FindByPredicate(
+				[&](const FCSJournalArtifact& Entry) { return Entry.ArtifactId == RowName; }))
+			{
+				// 테이블에서 아직 채우지 않은 표시 항목은 기존 도감 에셋 값을 유지합니다.
+				if (!Artifact.Name.IsEmpty()) Existing->Name = Artifact.Name;
+				if (!Artifact.Description.IsEmpty()) Existing->Description = Artifact.Description;
+				if (Artifact.Icon) Existing->Icon = Artifact.Icon;
+			}
+			else
+			{
+				Result.Add(Artifact);
+			}
+		}
+	}
+	return Result;
+}
+
+bool UCSJournalSubsystem::FindArtifact(FName ArtifactId, FCSJournalArtifact& OutArtifact) const
+{
+	for (const FCSJournalArtifact& Artifact : GetAllArtifacts())
+	{
+		if (Artifact.ArtifactId == ArtifactId)
+		{
+			OutArtifact = Artifact;
+			return true;
+		}
+	}
+	return false;
 }
 // 같은 이벤트 ID와 같은 영업일의 중복을 방지하며 다른 날짜의 발생 기록은 누적합니다.
 void UCSJournalSubsystem::RecordEvent(FName Id, int32 Day, FText Title, FText Body)

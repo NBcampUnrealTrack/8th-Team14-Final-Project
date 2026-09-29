@@ -687,6 +687,19 @@ bool ACSStoreGameState::AddStoreExperience(int32 Amount)
 	return true;
 }
 
+int32 ACSStoreGameState::GetRemainingStoreExperience() const
+{
+	return IsValid(StoreProgressionDataAsset) && !IsMaximumStoreLevel()
+		? FMath::Max(0, StoreProgressionDataAsset->GetMaximumStoreExperience() - CurrentStoreExperience) : 0;
+}
+
+int32 ACSStoreGameState::GetRemainingReputation() const
+{
+	if (!IsValid(StoreProgressionDataAsset)) return 0;
+	const int32 Maximum = FMath::Max(FMath::Max(0, StoreProgressionDataAsset->MinimumReputationScore), StoreProgressionDataAsset->MaximumReputationScore);
+	return FMath::Max(0, Maximum - CurrentReputationScore);
+}
+
 bool ACSStoreGameState::AddReputation(int32 Delta, const FString& Reason)
 {
 	if (!IsValid(StoreProgressionDataAsset))
