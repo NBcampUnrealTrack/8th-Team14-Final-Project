@@ -1,4 +1,5 @@
 #include "Features/Ending/CSEndingActors.h"
+#include "Data/CSSaveTypes.h"
 #include "Features/Ending/CSEndingData.h"
 #include "Features/Ending/CSEndingWidget.h"
 #include "Features/Inventory/CSQuickbarInventoryComponent.h"
@@ -181,6 +182,25 @@ FText ACSEndingManager::GetWizardPrompt() const
 	}
 	return FText::Format(NSLOCTEXT("Ending", "Submit", "귀환 재료 하나 맡기기 ({0}/4) — 남은 재료: {1}"),
 		FText::AsNumber(SubmittedItemIds.Num()), FText::FromString(Missing));
+}
+
+void ACSEndingManager::CaptureSaveRecord(FCSEndingSaveRecord& OutRecord) const
+{
+	OutRecord = FCSEndingSaveRecord();
+	OutRecord.NextPurchaseIndex = NextPurchaseIndex;
+	OutRecord.SubmittedItemIds = SubmittedItemIds.Array();
+	OutRecord.bEndingStarted = bEndingStarted;
+}
+
+void ACSEndingManager::RestoreSaveRecord(const FCSEndingSaveRecord& InRecord)
+{
+	NextPurchaseIndex = InRecord.NextPurchaseIndex;
+	SubmittedItemIds.Reset();
+	SubmittedItemIds.Append(InRecord.SubmittedItemIds);
+	bEndingStarted = InRecord.bEndingStarted;
+
+	// 전시대가 제출 현황을 다시 표시하도록 알림
+	OnSubmissionChanged.Broadcast();
 }
 
 void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)

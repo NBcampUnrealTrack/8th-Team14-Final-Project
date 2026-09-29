@@ -17,6 +17,10 @@ class ACSProductPickupActor;
 class ACSDeliveryCrateActor;
 class UCShelfConfigurationWidget;
 class APlayerController;
+class UCSSaveIdComponent;
+class UDataTable;
+struct FCSShelfRecord;
+struct FCSProductRuntimeState;
 
 // 상품이 이 진열대의 슬롯에 실제로 배치되었을 때 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -197,6 +201,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Shelf|Configuration")
 	TArray<FCSShelfLevelConfiguration> GetLevelConfigurations() const { return LevelConfigurations; }
 
+	// ----- 세이브 / 로드 -----
+	// 슬롯과 단 설정이 protected이고 설치 여부가 Transient이므로 진열대가 직접 기록·복원
+
+	// 식별자·위치·단 설정·슬롯 상품을 세이브 레코드에 기록
+	// 상품이 없는 슬롯은 기록하지 않음
+	void CaptureSaveRecord(FCSShelfRecord& OutRecord) const;
+
+	// 세이브 레코드로 단 설정과 설치 상태를 복원하고 기록된 슬롯에만 상품을 다시 생성
+	void RestoreSaveRecord(const FCSShelfRecord& InRecord, const UDataTable* FallbackProductTable);
+
+	// 모든 슬롯의 상품을 점유 해제 후 제거
+	// BeginPlay의 SpawnInitialProducts()가 채운 초기 상품의 중복을 방지
+	void ClearAllSlotsForRestore();
+
 	// 플레이어가 단을 지정하지 않은 상태에서 상품 보관 타입이 맞지 않아 직원 정리가 필요한지 확인합니다.
 	bool ShouldEmployeeReorganizeProduct(const ACSProductPickupActor* Product) const;
 
@@ -242,6 +260,13 @@ protected:
 	bool IsProductCompatibleWithShelf(const FDataTableRowHandle& ProductRow) const;
 	// 실제 부착·충돌·점유 처리를 한곳에 모아 플레이어와 직원이 같은 배치 결과를 사용하게 합니다.
 	bool PlaceItemInSlot(AActor* ItemActor, int32 SlotIndex);
+	// 세이브 복원 전용으로 지정 슬롯에 상품을 생성하고 런타임 상태를 적용
+	// 단 설정 규칙을 거치지 않고 저장된 슬롯 번호에 그대로 배치
+	bool RestoreProductInSlot(
+		const FDataTableRowHandle& InProductRow,
+		int32 SlotIndex,
+		const FCSProductRuntimeState& InRuntimeState,
+		TSubclassOf<ACSProductPickupActor> InProductClass);
 	bool OpenShelfConfigurationWidget(AActor* Interactor);
 	UFUNCTION()
 	void HandleShelfConfigurationClosed();
@@ -267,6 +292,10 @@ protected:
 	// 가구 이동 모드가 바닥에 맞출 공통 기준점입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
+
+	// 세이브 복원 시 이 진열대를 다시 찾기 위한 안정 식별자
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UCSSaveIdComponent> SaveIdComponent;
 
 	// 개별 가구 블루프린트에서 메시 높이를 보정할 수 있도록 SceneRoot의 자식으로 둡니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")

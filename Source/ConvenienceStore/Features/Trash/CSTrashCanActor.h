@@ -8,6 +8,7 @@
 
 class USceneComponent;
 class UStaticMeshComponent;
+class UCSSaveIdComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FCSOnItemDisposed,
@@ -54,6 +55,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> TrashCanMesh;
+
+	// 세이브 복원 시 이 쓰레기통을 다시 찾기 위한 안정 식별자
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UCSSaveIdComponent> SaveIdComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facility",
 		meta = (RowType = "/Script/ConvenienceStore.CSFacilityDataRow"))

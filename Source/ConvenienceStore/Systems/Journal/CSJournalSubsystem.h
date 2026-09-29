@@ -2,17 +2,26 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Data/CSJournalTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSJournalSubsystem.generated.h"
+
+class UCSSaveGame;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSJournalChanged);
 
-// 플레이 중 수첩 기록을 유지하며 별도 파일에는 저장하지 않습니다. 향후 세이브·로드 시스템에서 기록을 저장하고 복원하실 수 있습니다.
+// 플레이 중 수첩 기록을 유지하며 세이브·로드 시스템 참가자로 기록을 저장·복원
 UCLASS()
-class CONVENIENCESTORE_API UCSJournalSubsystem : public UGameInstanceSubsystem
+class CONVENIENCESTORE_API UCSJournalSubsystem : public UGameInstanceSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
   public:
 	virtual void Initialize(FSubsystemCollectionBase &Collection) override;
+
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+
 	// 새 게임 시작 시 해금 상태와 누적 기록을 초기화하며 카탈로그 설정은 유지합니다.
 	UFUNCTION(BlueprintCallable, Category = "Journal") void ResetJournal();
 	UFUNCTION(BlueprintCallable, Category = "Journal") bool UnlockEntry(FName EntryId);

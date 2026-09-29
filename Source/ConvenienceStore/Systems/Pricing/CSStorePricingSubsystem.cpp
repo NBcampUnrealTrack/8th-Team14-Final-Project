@@ -1,7 +1,24 @@
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 
 #include "Data/CSProductTypes.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+
+void UCSStorePricingSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	OutSave.Pricing.SalePriceOverrides = SalePriceOverrides;
+}
+
+void UCSStorePricingSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	SalePriceOverrides = InSave.Pricing.SalePriceOverrides;
+
+	// 가격표 UI가 이전 값을 유지하지 않도록 복원된 항목을 모두 알림
+	for (const TPair<FName, int32>& Override : SalePriceOverrides)
+	{
+		OnSalePriceChanged.Broadcast(Override.Key, Override.Value);
+	}
+}
 
 bool UCSStorePricingSubsystem::CanChangeSalePrice(FText& OutReason) const
 {

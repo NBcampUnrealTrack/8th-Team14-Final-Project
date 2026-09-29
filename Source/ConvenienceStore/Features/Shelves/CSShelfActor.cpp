@@ -6,8 +6,11 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSSaveTypes.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Facilities/CSSaveIdComponent.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Systems/SaveLoad/CSSaveRecordUtils.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -24,6 +27,9 @@ ACSShelfActor::ACSShelfActor()
 	// 가구 이동 시 바닥에 맞출 기준점과 실제 메시를 분리합니다.
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
+
+	// 세이브 복원 시 진열대를 다시 찾기 위한 식별자 컴포넌트
+	SaveIdComponent = CreateDefaultSubobject<UCSSaveIdComponent>(TEXT("SaveIdComponent"));
 
 	// 메시를 자식으로 두어 블루프린트마다 피벗 높이를 보정할 수 있게 합니다.
 	ShelfMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShelfMesh"));
@@ -253,6 +259,185 @@ bool ACSShelfActor::SpawnInitialProductInSlot(
 		return false;
 	}
 
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// 세이브 / 로드
+// ---------------------------------------------------------------------------
+
+void ACSShelfActor::CaptureSaveRecord(FCSShelfRecord& OutRecord) const
+{
+	OutRecord = FCSShelfRecord();
+	OutRecord.SaveId = UCSSaveIdComponent::FindSaveId(this);
+	OutRecord.ActorClass = FSoftClassPath(GetClass());
+	OutRecord.Transform = GetActorTransform();
+	OutRecord.bIsInstalled = bIsInstalled;
+	OutRecord.bWasSpawnedAtRuntime = IsValid(SaveIdComponent) && SaveIdComponent->WasSpawnedAtRuntime();
+
+	OutRecord.LevelConfigurations.Reserve(LevelConfigurations.Num());
+	for (const FCSShelfLevelConfiguration& Configuration : LevelConfigurations)
+	{
+		FCSShelfLevelConfigRecord ConfigRecord;
+		ConfigRecord.SlotLevel = Configuration.SlotLevel;
+		ConfigRecord.ProductRow = FCSSaveRowRef::FromHandle(Configuration.ProductRow);
+		ConfigRecord.bIsPlayerConfigured = Configuration.bIsPlayerConfigured;
+		OutRecord.LevelConfigurations.Add(ConfigRecord);
+	}
+
+	// 상품이 올라가 있는 슬롯만 기록
+	for (int32 SlotIndex = 0; SlotIndex < Slots.Num(); ++SlotIndex)
+	{
+		const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Slots[SlotIndex].OccupyingItem);
+		if (!IsValid(Product))
+		{
+			continue;
+		}
+
+		FCSShelfSlotRecord SlotRecord;
+		SlotRecord.SlotIndex = SlotIndex;
+		SlotRecord.ActorClass = FSoftClassPath(Product->GetClass());
+		SlotRecord.ProductRow = FCSSaveRowRef::FromHandle(Product->GetProductRow());
+
+		// 신선도 감소 기준 시각이 월드 시간에 묶여 있어 경과분을 반영한 값으로 기록
+		SlotRecord.ProductState = CSSaveRecordUtils::ToRecord(
+			Product->GetProductRuntimeState(),
+			Product->GetCurrentFreshness());
+		OutRecord.OccupiedSlots.Add(SlotRecord);
+	}
+}
+
+void ACSShelfActor::RestoreSaveRecord(
+	const FCSShelfRecord& InRecord,
+	const UDataTable* FallbackProductTable)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	if (IsValid(SaveIdComponent))
+	{
+		SaveIdComponent->OverrideSaveId(InRecord.SaveId, InRecord.bWasSpawnedAtRuntime);
+	}
+
+	// 단 설정을 먼저 복원해 이후 슬롯 배치와 직원 정리 판정이 같은 품목 규칙을 사용하도록 설정
+	LevelConfigurations.Reset(InRecord.LevelConfigurations.Num());
+	for (const FCSShelfLevelConfigRecord& ConfigRecord : InRecord.LevelConfigurations)
+	{
+		FCSShelfLevelConfiguration Configuration;
+		Configuration.SlotLevel = ConfigRecord.SlotLevel;
+		Configuration.ProductRow = ConfigRecord.ProductRow.ToHandle(FallbackProductTable);
+		Configuration.bIsPlayerConfigured = ConfigRecord.bIsPlayerConfigured;
+		LevelConfigurations.Add(Configuration);
+	}
+
+	EnsureLevelConfigurations();
+
+	// 설치 여부만 대입하면 손님 런타임 등록과 물리 설정이 어긋나므로 기존 건축 경로로 처리
+	if (InRecord.bIsInstalled)
+	{
+		FinalizeBuildPlacement_Implementation();
+	}
+	else
+	{
+		InitializeAsUninstalledFacility_Implementation();
+	}
+
+	// 초기 상품과 저장 상품이 겹치지 않도록 슬롯을 먼저 비움
+	ClearAllSlotsForRestore();
+
+	const float CurrentWorldTimeSeconds = World->GetTimeSeconds();
+	for (const FCSShelfSlotRecord& SlotRecord : InRecord.OccupiedSlots)
+	{
+		const FDataTableRowHandle ProductRow = SlotRecord.ProductRow.ToHandle(FallbackProductTable);
+		if (ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+		{
+			continue;
+		}
+
+		// 저장된 상품 클래스를 불러오지 못하면 시작 진열 상품 클래스를 사용
+		TSubclassOf<ACSProductPickupActor> ProductClass = SlotRecord.ActorClass.TryLoadClass<ACSProductPickupActor>();
+		if (ProductClass == nullptr)
+		{
+			ProductClass = InitialProductActorClass;
+		}
+
+		const FCSProductRuntimeState RuntimeState = CSSaveRecordUtils::ToRuntime(
+			SlotRecord.ProductState,
+			CurrentWorldTimeSeconds);
+		if (!RestoreProductInSlot(ProductRow, SlotRecord.SlotIndex, RuntimeState, ProductClass))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] %s의 %d번 슬롯에 %s 상품을 복원하지 못했습니다."),
+				*GetName(),
+				SlotRecord.SlotIndex,
+				*ProductRow.RowName.ToString());
+		}
+	}
+}
+
+void ACSShelfActor::ClearAllSlotsForRestore()
+{
+	for (FCSShelfSlot& Slot : Slots)
+	{
+		AActor* OccupyingItem = Slot.OccupyingItem;
+		if (!IsValid(OccupyingItem))
+		{
+			Slot.OccupyingItem = nullptr;
+			continue;
+		}
+
+		// 기존 점유 해제 경로를 거친 뒤 액터를 제거
+		RemovePlacedItem_Implementation(OccupyingItem);
+		Slot.OccupyingItem = nullptr;
+		OccupyingItem->Destroy();
+	}
+}
+
+bool ACSShelfActor::RestoreProductInSlot(
+	const FDataTableRowHandle& InProductRow,
+	int32 SlotIndex,
+	const FCSProductRuntimeState& InRuntimeState,
+	TSubclassOf<ACSProductPickupActor> InProductClass)
+{
+	if (GetWorld() == nullptr ||
+		InProductClass == nullptr ||
+		!Slots.IsValidIndex(SlotIndex) ||
+		IsValid(Slots[SlotIndex].OccupyingItem))
+	{
+		return false;
+	}
+
+	const FTransform SlotWorldTransform = Slots[SlotIndex].LocalTransform * GetActorTransform();
+	ACSProductPickupActor* ProductActor = GetWorld()->SpawnActorDeferred<ACSProductPickupActor>(
+		InProductClass,
+		SlotWorldTransform,
+		this,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(ProductActor) || !ProductActor->InitializeProduct(InProductRow))
+	{
+		if (IsValid(ProductActor))
+		{
+			ProductActor->Destroy();
+		}
+
+		return false;
+	}
+
+	ProductActor->FinishSpawning(SlotWorldTransform);
+
+	// 가까운 빈 슬롯 탐색 없이 저장된 슬롯 번호에 그대로 배치
+	if (!PlaceItemInSlot(ProductActor, SlotIndex))
+	{
+		ProductActor->Destroy();
+		return false;
+	}
+
+	// 슬롯 배치가 보관 환경을 갱신한 뒤 저장 시점의 신선도·유통기한을 적용
+	ProductActor->ApplyProductRuntimeState(InRuntimeState);
 	return true;
 }
 

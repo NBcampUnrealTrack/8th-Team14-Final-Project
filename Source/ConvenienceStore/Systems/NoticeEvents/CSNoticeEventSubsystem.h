@@ -4,22 +4,29 @@
 #include "Data/CSNoticeEventTypes.h"
 #include "Math/RandomStream.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSNoticeEventSubsystem.generated.h"
 
 class ACSStoreGameState;
 class UDataTable;
+class UCSSaveGame;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnNoticeEventsChanged);
 
 /** 영업일마다 현재 뉴스와 기념일을 결정하고 데이터 기반 수요 보정값을 제공합니다. */
 UCLASS()
-class CONVENIENCESTORE_API UCSNoticeEventSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSNoticeEventSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
+
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	UPROPERTY(BlueprintAssignable, Category = "Notice Events")
 	FCSOnNoticeEventsChanged OnNoticeEventsChanged;

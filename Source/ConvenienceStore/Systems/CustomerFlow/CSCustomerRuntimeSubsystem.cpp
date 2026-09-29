@@ -1783,6 +1783,34 @@ bool UCSCustomerRuntimeSubsystem::IsEscapingShoplifter(const ACSCustomerCharacte
 	return true;
 }
 
+bool UCSCustomerRuntimeSubsystem::IsReadyForClosingSave() const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return false;
+	}
+
+	// 강제 퇴장(DropCustomerItems)·결제 완료·제압 경로는 모두 SelectProducts를 비우므로
+	// 목록이 남은 손님은 아직 떨어뜨리기 전이거나 도주 중인 절도 손님
+	for (TActorIterator<ACSCustomerCharacter> It(World); It; ++It)
+	{
+		const ACSCustomerCharacter* Customer = *It;
+		if (!IsValid(Customer))
+		{
+			continue;
+		}
+
+		const UCSCustomerStateComponent* State = Customer->GetCustomerState();
+		if (State != nullptr && State->SelectProducts.Num() > 0)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 void UCSCustomerRuntimeSubsystem::DespawnAllCustomers()
 {
 	UWorld* World = GetWorld();

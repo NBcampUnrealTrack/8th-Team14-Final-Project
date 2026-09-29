@@ -313,6 +313,18 @@ ECSVillainAction ACSCustomerSpawner::RollVillainAction(const UCSCustomerArchetyp
 	return Archetype->VillainActionWeights.Last().Action;
 }
 
+bool ACSCustomerSpawner::IsVillainCutoffActive() const
+{
+	const ACSStoreGameState* StoreState = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (StoreState == nullptr)
+	{
+		// 게임 상태를 못 찾으면 기존 동작 유지
+		return false;
+	}
+
+	return StoreState->CurrentGameMinutes >= VillainCutoffGameMinutes;
+}
+
 bool ACSCustomerSpawner::GetSpawnBodySize(float CharacterScale, float& OutRadius, float& OutHalfHeight) const
 {
 	OutRadius = 0.0f;
@@ -618,14 +630,24 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		const ECSVillainAction VillainAction = RollVillainAction(Decision->Archetype, VillainStream);
 
 		// 디버그 로직 (빌런 생성될때)
+		// 차단 시각 이후에도 추첨은 그대로 해서 MasterStream 뽑기 횟수를 고정하고, 배정만 생략
 		if (State != nullptr && VillainAction != ECSVillainAction::None)
 		{
-			State->AssignVillainAction(VillainAction);
+			if (IsVillainCutoffActive())
+			{
+				UE_LOG(LogTemp, Log, TEXT("[빌런차단] %s | 차단 시각 이후라 배정 생략 | 행동=%s"),
+				   *Customer->GetName(),
+				   *UEnum::GetDisplayValueAsText(VillainAction).ToString());
+			}
+			else
+			{
+				State->AssignVillainAction(VillainAction);
 
-			UE_LOG(LogTemp, Warning, TEXT("[빌런배정] %s | 종족=%s | 행동=%s"),
-			   *Customer->GetName(),
-			   Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"),
-			   *UEnum::GetDisplayValueAsText(VillainAction).ToString());
+				UE_LOG(LogTemp, Warning, TEXT("[빌런배정] %s | 종족=%s | 행동=%s"),
+				   *Customer->GetName(),
+				   Decision->Archetype ? *Decision->Archetype->DisplayName.ToString() : TEXT("미배정"),
+				   *UEnum::GetDisplayValueAsText(VillainAction).ToString());
+			}
 		}
 
 		// 청결도 신호(버리는 손님) pre-roll : 결과와 무관하게 항상 정확히 3회 뽑는다.

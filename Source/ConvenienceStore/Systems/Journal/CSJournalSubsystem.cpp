@@ -1,7 +1,58 @@
-#include "Systems/Journal/CSJournalSubsystem.h"
+﻿#include "Systems/Journal/CSJournalSubsystem.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Data/CSJournalSettings.h"
 #include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
+#include "Systems/SaveLoad/CSSaveRecordUtils.h"
+
+void UCSJournalSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSJournalSaveRecord& Record = OutSave.Journal;
+	Record.UnlockedEntries = UnlockedEntries.Array();
+	Record.CollectedArtifacts = CollectedArtifacts.Array();
+	Record.LatestDay = LatestDay;
+
+	Record.Events.Reset(Events.Num());
+	for (const FCSJournalEvent& Event : Events)
+	{
+		Record.Events.Add(CSSaveRecordUtils::ToRecord(Event));
+	}
+
+	Record.Deliveries.Reset(Deliveries.Num());
+	for (const FCSJournalDelivery& Delivery : Deliveries)
+	{
+		Record.Deliveries.Add(CSSaveRecordUtils::ToRecord(Delivery));
+	}
+}
+
+void UCSJournalSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSJournalSaveRecord& Record = InSave.Journal;
+
+	// 레벨 전환 후에도 유지되는 서브시스템이므로 이전 세션 기록이 섞이지 않도록 먼저 비움
+	UnlockedEntries.Reset();
+	CollectedArtifacts.Reset();
+	Events.Reset();
+	Deliveries.Reset();
+
+	UnlockedEntries.Append(Record.UnlockedEntries);
+	CollectedArtifacts.Append(Record.CollectedArtifacts);
+	LatestDay = FMath::Max(1, Record.LatestDay);
+
+	Events.Reserve(Record.Events.Num());
+	for (const FCSJournalEventRecord& EventRecord : Record.Events)
+	{
+		Events.Add(CSSaveRecordUtils::ToRuntime(EventRecord));
+	}
+
+	Deliveries.Reserve(Record.Deliveries.Num());
+	for (const FCSJournalDeliveryRecord& DeliveryRecord : Record.Deliveries)
+	{
+		Deliveries.Add(CSSaveRecordUtils::ToRuntime(DeliveryRecord));
+	}
+
+	OnJournalChanged.Broadcast();
+}
 
 void UCSJournalSubsystem::ResetJournal()
 {

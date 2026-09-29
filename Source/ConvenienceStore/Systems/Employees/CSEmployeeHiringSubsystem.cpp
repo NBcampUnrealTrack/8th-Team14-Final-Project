@@ -1,8 +1,106 @@
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
 
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+
+void UCSEmployeeHiringSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSEmployeeHiringSaveRecord& Record = OutSave.EmployeeHiring;
+	Record.Contracts.Reset(Contracts.Num());
+	for (const FCSEmployeeContract& Contract : Contracts)
+	{
+		// 직원 액터 참조는 Transient이며 복원 시 다시 연결하므로 제외
+		FCSEmployeeContractRecord ContractRecord;
+		ContractRecord.Slot = Contract.Slot;
+		ContractRecord.HireCost = Contract.HireCost;
+		ContractRecord.DailyWage = Contract.DailyWage;
+		ContractRecord.StartBusinessDay = Contract.StartBusinessDay;
+		Record.Contracts.Add(ContractRecord);
+	}
+}
+
+void UCSEmployeeHiringSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	TArray<FCSEmployeeContract> RestoredContracts;
+	RestoredContracts.Reserve(InSave.EmployeeHiring.Contracts.Num());
+	for (const FCSEmployeeContractRecord& ContractRecord : InSave.EmployeeHiring.Contracts)
+	{
+		FCSEmployeeContract Contract;
+		Contract.Slot = ContractRecord.Slot;
+		Contract.HireCost = ContractRecord.HireCost;
+		Contract.DailyWage = ContractRecord.DailyWage;
+		Contract.StartBusinessDay = ContractRecord.StartBusinessDay;
+		Contract.Employee = nullptr;
+		RestoredContracts.Add(Contract);
+	}
+
+	RestoreContracts(RestoredContracts);
+}
+
+void UCSEmployeeHiringSubsystem::RestoreContracts(const TArray<FCSEmployeeContract>& InContracts)
+{
+	UWorld* World = GetWorld();
+	const ACSStoreGameState* State = nullptr;
+	if (World != nullptr)
+	{
+		State = World->GetGameState<ACSStoreGameState>();
+	}
+
+	int32 CurrentBusinessDay = 1;
+	if (IsValid(State))
+	{
+		CurrentBusinessDay = State->CurrentBusinessDay;
+	}
+
+	// 복원 시점에는 고용소가 BeginPlay에서 생성한 지원자가 이미 배치되어 있으므로
+	// 새로 생성하지 않고 고용 자리가 같은 지원자를 수집
+	TMap<ECSEmployeeHireSlot, ACSStoreEmployeeCharacter*> ApplicantsBySlot;
+	if (World != nullptr)
+	{
+		for (TActorIterator<ACSStoreEmployeeCharacter> It(World); It; ++It)
+		{
+			ACSStoreEmployeeCharacter* Candidate = *It;
+			if (IsValid(Candidate) && Candidate->RequiresHiring())
+			{
+				ApplicantsBySlot.Add(Candidate->GetHiringSlot(), Candidate);
+			}
+		}
+	}
+
+	Contracts.Reset(InContracts.Num());
+	for (const FCSEmployeeContract& Source : InContracts)
+	{
+		FCSEmployeeContract Contract = Source;
+		Contract.Employee = nullptr;
+		if (ACSStoreEmployeeCharacter** Found = ApplicantsBySlot.Find(Contract.Slot))
+		{
+			Contract.Employee = *Found;
+		}
+
+		Contracts.Add(Contract);
+	}
+
+	// CanEmployeeWork()가 계약 목록을 조회하므로 계약 확정 후 직원 표시를 갱신
+	for (const FCSEmployeeContract& Contract : Contracts)
+	{
+		if (ACSStoreEmployeeCharacter* Employee = Contract.Employee.Get())
+		{
+			Employee->RefreshEmploymentPresentation();
+			continue;
+		}
+
+		UE_LOG(LogTemp, Warning,
+			TEXT("[EmployeeHiring] 복원한 계약의 직원 액터를 찾지 못했습니다. 자리 %d, 시작 일차 %d (현재 %d일차). 맵에 고용소가 있는지 확인해 주세요."),
+			static_cast<int32>(Contract.Slot),
+			Contract.StartBusinessDay,
+			CurrentBusinessDay);
+	}
+
+	OnEmployeeHired.Broadcast();
+}
 
 bool UCSEmployeeHiringSubsystem::IsSlotHired(ECSEmployeeHireSlot Slot) const
 {
