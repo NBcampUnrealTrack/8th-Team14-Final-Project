@@ -6,6 +6,8 @@
 #include "CSNoticeBoardWeatherTabWidget.generated.h"
 
 class UCSWeatherSubsystem;
+class UImage;
+class UTexture2D;
 
 // 날씨 서브시스템에서 조회한 오늘과 내일 날씨를 게시판 탭에 표시
 UCLASS(Abstract, Blueprintable)
@@ -33,6 +35,13 @@ public:
 	virtual void NativeDestruct() override;
 
 protected:
+	/** WBP에 배치된 오늘/내일 날씨 아이콘. 이름이 일치하면 자동 연결됩니다. */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_TodayWeather;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_TomorrowWeather;
+
 	// 날씨 예보 갱신 알림을 받아 날씨 탭을 갱신
 	UFUNCTION()
 	void HandleWeatherForecastUpdated();
@@ -40,4 +49,8 @@ protected:
 	// 날씨 조회와 예보 갱신 이벤트 구독에 사용할 서브시스템 참조를 보관
 	UPROPERTY(Transient)
 	TObjectPtr<UCSWeatherSubsystem> WeatherSubsystem;
+
+private:
+	void ApplyWeatherIcon(UImage* ImageWidget, ECSWeatherType WeatherType, bool bVisible) const;
+	UTexture2D* ResolveWeatherIcon(ECSWeatherType WeatherType) const;
 };

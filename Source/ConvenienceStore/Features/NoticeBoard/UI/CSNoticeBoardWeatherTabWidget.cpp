@@ -1,5 +1,7 @@
 #include "Features/NoticeBoard/UI/CSNoticeBoardWeatherTabWidget.h"
 
+#include "Components/Image.h"
+#include "Engine/Texture2D.h"
 #include "Systems/Weather/CSWeatherSubsystem.h"
 
 void UCSNoticeBoardWeatherTabWidget::NativeConstruct()
@@ -40,6 +42,8 @@ void UCSNoticeBoardWeatherTabWidget::RefreshWeatherTab()
 {
 	if (!IsValid(WeatherSubsystem))
 	{
+		ApplyWeatherIcon(Image_TodayWeather, ECSWeatherType::None, false);
+		ApplyWeatherIcon(Image_TomorrowWeather, ECSWeatherType::None, false);
 		RefreshWeatherTabView(FCSWeatherForecastEntry(), FCSWeatherForecastEntry(), false);
 		return;
 	}
@@ -70,8 +74,62 @@ void UCSNoticeBoardWeatherTabWidget::RefreshWeatherTab()
 		TomorrowWeather = FCSWeatherForecastEntry();
 	}
 
+	ApplyWeatherIcon(Image_TodayWeather, TodayWeather.WeatherType, Entries.IsValidIndex(0));
+	ApplyWeatherIcon(Image_TomorrowWeather, TomorrowWeather.WeatherType, bHasTomorrowForecast);
+
 	// 오늘과 내일 날씨를 블루프린트 화면에 전달
 	RefreshWeatherTabView(TodayWeather, TomorrowWeather, bHasTomorrowForecast);
+}
+
+void UCSNoticeBoardWeatherTabWidget::ApplyWeatherIcon(
+	UImage* ImageWidget,
+	const ECSWeatherType WeatherType,
+	const bool bVisible) const
+{
+	if (!IsValid(ImageWidget))
+	{
+		return;
+	}
+
+	UTexture2D* Icon = bVisible ? ResolveWeatherIcon(WeatherType) : nullptr;
+	if (!IsValid(Icon))
+	{
+		ImageWidget->SetVisibility(ESlateVisibility::Collapsed);
+		return;
+	}
+
+	ImageWidget->SetBrushFromTexture(Icon, false);
+	ImageWidget->SetVisibility(ESlateVisibility::Visible);
+}
+
+UTexture2D* UCSNoticeBoardWeatherTabWidget::ResolveWeatherIcon(const ECSWeatherType WeatherType) const
+{
+	const TCHAR* AssetPath = nullptr;
+	switch (WeatherType)
+	{
+	case ECSWeatherType::Clear:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_sunicon_.T_Board_sunicon_");
+		break;
+	case ECSWeatherType::Rain:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_rainicon_.T_Board_rainicon_");
+		break;
+	case ECSWeatherType::Snow:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_snowicon_.T_Board_snowicon_");
+		break;
+	case ECSWeatherType::Cloudy:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_Cloudicon.T_Board_Cloudicon");
+		break;
+	case ECSWeatherType::Heat:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_sunnyicon_.T_Board_sunnyicon_");
+		break;
+	case ECSWeatherType::Cold:
+		AssetPath = TEXT("/Game/ConvenienceStore/UI/NoticeBoard/Texture/T_Board_windyicon_.T_Board_windyicon_");
+		break;
+	default:
+		return nullptr;
+	}
+
+	return LoadObject<UTexture2D>(nullptr, AssetPath);
 }
 
 void UCSNoticeBoardWeatherTabWidget::HandleWeatherForecastUpdated()

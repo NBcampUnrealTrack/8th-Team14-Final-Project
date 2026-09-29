@@ -38,7 +38,7 @@ extern TAutoConsoleVariable<int32> CVarCS_FixedSeed;
 TAutoConsoleVariable<FString> CVarCS_ForcedNews(
 	TEXT("cs.news"),
 	TEXT("-1"),
-	TEXT("cs.news <검색어> — RowName에 검색어가 들어간 뉴스가 딱 1개면 매 영업일 그 뉴스를 강제한다. -1이면 해제. PIE 시작 전에 입력"),
+	TEXT("cs.news <검색어> — RowName에 검색어가 들어간 뉴스가 딱 1개면 매 영업일 그 뉴스를 강제한다. none이면 소식 없음, -1이면 해제. PIE 시작 전에 입력"),
 	ECVF_Default);
 
 namespace
@@ -113,6 +113,69 @@ bool UCSNoticeEventSubsystem::GetTodayNews(FCSNewsEventDataRow& OutNews) const
 
 	OutNews = *NewsRow;
 	return true;
+}
+
+void UCSNoticeEventSubsystem::GetTodayNewsDemandChanges(
+	TArray<FCSNoticeBoardDemandChange>& OutChanges) const
+{
+	OutChanges.Reset();
+	if (!IsValid(EffectRuleDataTable) || CurrentNewsRowName.IsNone())
+	{
+		return;
+	}
+
+	const UDataTable* ProductDataTable = LoadObject<UDataTable>(
+		nullptr,
+		TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster"));
+	const UEnum* ProductCategoryEnum = StaticEnum<ECSProductCategory>();
+
+	TArray<FCSNoticeEventEffectRuleRow*> EffectRules;
+	EffectRuleDataTable->GetAllRows(
+		TEXT("UCSNoticeEventSubsystem::GetTodayNewsDemandChanges"),
+		EffectRules);
+
+	for (const FCSNoticeEventEffectRuleRow* Rule : EffectRules)
+	{
+		if (Rule == nullptr || !Rule->bEnabled ||
+			Rule->SourceType != ECSNoticeEventSourceType::News ||
+			Rule->SourceId != CurrentNewsRowName ||
+			FMath::IsNearlyZero(Rule->DemandModifier))
+		{
+			continue;
+		}
+
+		FCSNoticeBoardDemandChange& Change = OutChanges.AddDefaulted_GetRef();
+		Change.TargetType = Rule->TargetType;
+		Change.TargetId = Rule->TargetId;
+		Change.DemandModifier = Rule->DemandModifier;
+		Change.bIsIncrease = Rule->DemandModifier > 0.0f;
+
+		if (Rule->TargetType == ECSNoticeEventTargetType::Product &&
+			IsValid(ProductDataTable))
+		{
+			if (const FCSProductDataRow* Product = ProductDataTable->FindRow<FCSProductDataRow>(
+				Rule->TargetId,
+				TEXT("UCSNoticeEventSubsystem::GetTodayNewsDemandChanges"),
+				false))
+			{
+				Change.TargetDisplayName = Product->DisplayName;
+			}
+		}
+		else if (Rule->TargetType == ECSNoticeEventTargetType::Category &&
+			ProductCategoryEnum != nullptr)
+		{
+			const int64 CategoryValue = ProductCategoryEnum->GetValueByName(Rule->TargetId);
+			if (CategoryValue != INDEX_NONE)
+			{
+				Change.TargetDisplayName = ProductCategoryEnum->GetDisplayNameTextByValue(CategoryValue);
+			}
+		}
+
+		if (Change.TargetDisplayName.IsEmpty())
+		{
+			Change.TargetDisplayName = FText::FromName(Rule->TargetId);
+		}
+	}
 }
 
 FName UCSNoticeEventSubsystem::GetTodayNewsRowName() const
@@ -376,6 +439,12 @@ bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
 	if (SearchTerm.IsEmpty() || SearchTerm == TEXT("-1"))
 	{
 		return false;
+	}
+	if (SearchTerm.Equals(TEXT("none"), ESearchCase::IgnoreCase) ||
+		SearchTerm.Equals(TEXT("없음"), ESearchCase::CaseSensitive))
+	{
+		CurrentNewsRowName = NAME_None;
+		return true;
 	}
 
 	if (!IsValid(NewsEventDataTable))
