@@ -18,17 +18,23 @@ void UCSArtifactSubsystem::RegisterTable(UDataTable* InTable)
 	if (IsValid(InTable) && InTable->GetRowStruct() &&
 		InTable->GetRowStruct()->IsChildOf(FCSJournalArtifactDataRow::StaticStruct()))
 	{
-		ArtifactTable = InTable;
+		ArtifactTables.AddUnique(InTable);
 	}
 }
 
 bool UCSArtifactSubsystem::GetDefinition(FName Id, FCSJournalArtifactDataRow& OutRow) const
 {
-	if (!ArtifactTable || Id.IsNone()) return false;
-	if (const auto* Row = ArtifactTable->FindRow<FCSJournalArtifactDataRow>(Id, TEXT("Artifact definition")))
+	if (Id.IsNone()) return false;
+	// 도감과 동일하게 나중에 등록된 테이블의 같은 ID를 우선합니다.
+	for (int32 Index = ArtifactTables.Num() - 1; Index >= 0; --Index)
 	{
-		OutRow = *Row;
-		return true;
+		const UDataTable* Table = ArtifactTables[Index];
+		if (!IsValid(Table)) continue;
+		if (const auto* Row = Table->FindRow<FCSJournalArtifactDataRow>(Id, TEXT("Artifact definition"), false))
+		{
+			OutRow = *Row;
+			return true;
+		}
 	}
 	return false;
 }
@@ -64,7 +70,20 @@ bool UCSArtifactSubsystem::Acquire(FName Id, int32 Quantity)
 	return true;
 }
 
-bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player)
+bool UCSArtifactSubsystem::GetStatUseAmounts(FName Id, ACSPlayerCharacter* Player, int32& Requested, int32& Applied) const
+{
+	Requested = Applied = 0;
+	FCSJournalArtifactDataRow Definition;
+	const ACSStoreGameState* State = IsValid(Player) && Player->GetWorld() ? Player->GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+	if (!State || !GetDefinition(Id, Definition) ||
+		(Definition.Effect != ECSArtifactEffectType::Reputation && Definition.Effect != ECSArtifactEffectType::Experience)) return false;
+	Requested = FMath::Max(0, FMath::RoundToInt(Definition.EffectValue));
+	Applied = FMath::Min(Requested, Definition.Effect == ECSArtifactEffectType::Reputation
+		? State->GetRemainingReputation() : State->GetRemainingStoreExperience());
+	return true;
+}
+
+bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player, int32 ConfirmedAppliedAmount)
 {
 	FCSJournalArtifactDataRow Definition;
 	if (!IsValid(Player) || !GetDefinition(Id, Definition) || GetCount(Id) < 1) return false;
@@ -73,6 +92,24 @@ bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player)
 	if (!State) return false;
 	const int32 Day = State->CurrentBusinessDay;
 	if (Day < GetNextAvailableDay(Id)) return false;
+	int32 Requested = 0;
+	int32 Applied = 0;
+	if (GetStatUseAmounts(Id, Player, Requested, Applied))
+	{
+		if (Applied <= 0 || (Applied < Requested && ConfirmedAppliedAmount != Applied))
+		{
+			if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()))
+			{
+				const FText Message = Applied > 0
+					? NSLOCTEXT("Artifact", "ConfirmOverflow", "효과가 일부만 적용됩니다. 아티팩트 도감에서 적용량을 확인한 후 사용해 주세요.")
+					: Definition.Effect == ECSArtifactEffectType::Reputation
+						? NSLOCTEXT("Artifact", "ReputationFull", "평판이 최대치여서 사용할 수 없습니다.")
+						: NSLOCTEXT("Artifact", "ExperienceFull", "상점이 최고 레벨에 도달하여 사용할 수 없습니다.");
+				Controller->ShowGameplayToast(FText::Format(NSLOCTEXT("Artifact", "UseUnavailable", "{0} 사용 불가"), Definition.DisplayName), Message);
+			}
+			return false;
+		}
+	}
 	bool bSucceeded = false;
 	bool bConsume = true;
 	switch (Definition.Effect)
@@ -166,6 +203,20 @@ bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player)
 		bConsume = false;
 		if (UCSWeatherSubsystem* Weather = World->GetSubsystem<UCSWeatherSubsystem>())
 		{
+			const int32 FixedClearDays = Weather->GetFixedClearBusinessDays();
+			if (FixedClearDays > 0 && Weather->GetCurrentBusinessDay() <= FixedClearDays)
+			{
+				if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()))
+				{
+					const FText Message = FixedClearDays == 1
+						? NSLOCTEXT("Artifact", "WeatherStoneFirstDay", "첫 영업일에는 맑은 날씨가 유지됩니다. 2일차부터 사용할 수 있습니다.")
+						: FText::Format(NSLOCTEXT("Artifact", "WeatherStoneFixedClear", "{0}일차까지는 맑은 날씨가 유지됩니다. {1}일차부터 사용할 수 있습니다."),
+							FText::AsNumber(FixedClearDays), FText::AsNumber(FixedClearDays + 1));
+					Controller->ShowGameplayToast(NSLOCTEXT("Artifact", "WeatherStoneUnavailable", "날씨의 돌 사용 불가"), Message);
+				}
+				// 고정 맑음 기간에는 효과를 실행하지 않고 수량과 쿨타임을 유지합니다.
+				return false;
+			}
 			const ECSWeatherType Candidates[] = {ECSWeatherType::Clear, ECSWeatherType::Rain, ECSWeatherType::Snow};
 			for (int32 Offset = 0; Offset < UE_ARRAY_COUNT(Candidates); ++Offset)
 			{

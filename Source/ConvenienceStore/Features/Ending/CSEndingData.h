@@ -17,6 +17,8 @@ struct FCSEndingItemDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TObjectPtr<UTexture2D> Icon = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TSubclassOf<ACSEndingItemActor> ActorClass;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "0")) int32 PriceGold = 100;
+	// 이 상점 레벨에 도달하면 기존 판매 순서에 따라 구매할 수 있습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "1")) int32 RequiredStoreLevel = 1;
 	// 위치·회전은 슬롯 기준이며, 크기는 슬롯 배율과 무관하게 기존 아이템 크기에 곱합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) FTransform DisplayTransform = FTransform::Identity;
 };

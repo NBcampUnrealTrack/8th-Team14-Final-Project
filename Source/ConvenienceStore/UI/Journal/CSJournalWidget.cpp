@@ -72,6 +72,9 @@ void UCSJournalWidget::NativeConstruct()
 // 닫힌 화면에 갱신 요청이 전달되지 않도록 알림 구독, 타이머와 버튼 연결을 해제합니다.
 void UCSJournalWidget::NativeDestruct()
 {
+	PendingUseArtifactId = NAME_None;
+	PendingUseAmount = -1;
+	ArtifactUseConfirmation = FText::GetEmpty();
 	if (GetWorld())
 		GetWorld()->GetTimerManager().ClearTimer(LiveUpdateTimer);
 	if (Journal)
@@ -108,6 +111,12 @@ void UCSJournalWidget::SelectPage(ECSJournalPage NewPage)
 	if (static_cast<int32>(NewPage) >= PageCount)
 		return;
 	const bool bChanged = SelectedPage != NewPage;
+	if (bChanged)
+	{
+		PendingUseArtifactId = NAME_None;
+		PendingUseAmount = -1;
+		ArtifactUseConfirmation = FText::GetEmpty();
+	}
 	SelectedPage = NewPage;
 	if (Journal && NewPage == ECSJournalPage::Calendar)
 		Journal->MarkDayRead(SelectedBusinessDay);
@@ -151,6 +160,9 @@ bool UCSJournalWidget::SelectDay(int32 BusinessDay)
 }
 bool UCSJournalWidget::SelectArtifact(FName ArtifactId)
 {
+	PendingUseArtifactId = NAME_None;
+	PendingUseAmount = -1;
+	ArtifactUseConfirmation = FText::GetEmpty();
 	FCSJournalArtifact Artifact;
 	if (!Journal || !Journal->FindArtifact(ArtifactId, Artifact))
 		return false;
@@ -181,7 +193,37 @@ int32 UCSJournalWidget::GetSelectedArtifactNextAvailableDay() const
 bool UCSJournalWidget::UseSelectedArtifact()
 {
 	UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
-	return Artifacts && Artifacts->TryUse(SelectedArtifactId, Cast<ACSPlayerCharacter>(GetOwningPlayerPawn()));
+	ACSPlayerCharacter* Player = Cast<ACSPlayerCharacter>(GetOwningPlayerPawn());
+	if (!Artifacts || !Player) return false;
+	int32 Requested = 0;
+	int32 Applied = 0;
+	const bool bPartial = Artifacts->GetCount(SelectedArtifactId) > 0 &&
+		Artifacts->GetStatUseAmounts(SelectedArtifactId, Player, Requested, Applied) && Applied > 0 && Applied < Requested;
+	// 확인하는 동안 수치가 바뀌었다면 새 적용량을 보여 주고 다시 확인받습니다.
+	if (bPartial && (PendingUseArtifactId != SelectedArtifactId || PendingUseAmount != Applied))
+	{
+		PendingUseArtifactId = SelectedArtifactId;
+		PendingUseAmount = Applied;
+		ArtifactUseConfirmation = FText::Format(NSLOCTEXT("Artifact", "PartialUseQuestion", "최대치까지 {0}만 증가하며, 나머지 {1}은 적용되지 않습니다.\n아티팩트 1개를 사용하시겠습니까?"),
+			FText::AsNumber(Applied), FText::AsNumber(Requested - Applied));
+		RefreshJournal();
+		return false;
+	}
+	const int32 ConfirmedAmount = bPartial ? PendingUseAmount : -1;
+	PendingUseArtifactId = NAME_None;
+	PendingUseAmount = -1;
+	ArtifactUseConfirmation = FText::GetEmpty();
+	const bool bUsed = Artifacts->TryUse(SelectedArtifactId, Player, ConfirmedAmount);
+	RefreshJournal();
+	return bUsed;
+}
+
+void UCSJournalWidget::CancelArtifactUse()
+{
+	PendingUseArtifactId = NAME_None;
+	PendingUseAmount = -1;
+	ArtifactUseConfirmation = FText::GetEmpty();
+	RefreshJournal();
 }
 
 // WBP의 자식 위젯을 다시 생성하지 않고 갱신 이벤트로 필요한 표시만 변경합니다.
