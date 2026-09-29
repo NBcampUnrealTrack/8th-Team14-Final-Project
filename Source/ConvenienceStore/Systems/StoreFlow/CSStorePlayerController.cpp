@@ -16,6 +16,9 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
 #include "UI/Settings/CSSettingsWidget.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
+#include "InputMappingContext.h"
 
 // 게임 입력 상태에서는 Tab/C/Esc로 각 화면을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
@@ -23,11 +26,23 @@ void ACSStorePlayerController::SetupInputComponent()
 	Super::SetupInputComponent();
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
-	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ACSStorePlayerController::ToggleSettings);
+
+	// 입력 에셋이 지정되지 않았으면 기존 Esc 바인딩을 그대로 쓴다
+	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
+	if (IsValid(EnhancedInput) && IsValid(ToggleSettingsAction))
+	{
+		EnhancedInput->BindAction(ToggleSettingsAction, ETriggerEvent::Started, this, &ACSStorePlayerController::ToggleSettings);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Settings] ToggleSettingsAction이 지정되지 않아 Esc를 옛 방식으로 받습니다. 솥 클로즈업 중 Esc가 설정창과 겹칠 수 있습니다."));
+		InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ACSStorePlayerController::ToggleSettings);
+	}
 }
 // 다른 조작 화면이나 일시 정지 상태와 충돌하지 않도록 확인한 뒤 수첩을 엽니다.
 void ACSStorePlayerController::ToggleJournal()
 {
+	if (bCraftCloseupActive) return;
 	if (IsValid(ActiveJournalWidget)) { CloseJournal(); return; }
 	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;
 	// WBP가 준비되지 않았으면 입력과 HUD 상태를 변경하지 않습니다.
@@ -89,6 +104,16 @@ void ACSStorePlayerController::BeginPlay()
 	Super::BeginPlay();
 	if (IsLocalPlayerController()) CSConfigureJournalWorld(GetWorld());
 	if (IsLocalPlayerController()) UCSSettingsWidget::ApplyStartupGraphicsDefault();
+
+	// 솥 클로즈업 IMC가 이보다 우선순위가 높아서 Esc를 먼저 가져간다
+	if (IsLocalPlayerController() && IsValid(ControllerMappingContext))
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* InputSubsystem =
+			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		{
+			InputSubsystem->AddMappingContext(ControllerMappingContext, 0);
+		}
+	}
 
 	if (IsLocalPlayerController() && StoreHUDWidgetClass != nullptr)
 	{
@@ -443,6 +468,7 @@ void ACSStorePlayerController::EndSleepTransition(AActor* Requester)
 
 void ACSStorePlayerController::ToggleDailySummary()
 {
+	if (bCraftCloseupActive) return;
 	if (IsValid(ActiveDailySummaryWidget))
 	{
 		// C는 조회용 화면만 닫으며, 실제 마감 정산의 확인을 대신하지 않습니다.

@@ -2895,8 +2895,10 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		RestoreGlobalShelfPlacementHighlights();
 		if (TrashCan->CanDisposeItem(HeldActor) && IsValid(StorePlayerController))
 		{
-			const FText DisposePrompt = Cast<ACSTrashActor>(HeldActor) != nullptr
-				? NSLOCTEXT("Interaction", "DisposeTrashPrompt", "[Q] 쓰레기 버리기")
+			// 제조 실패물은 종류 이름으로 보여 준다
+			const ACSTrashActor* HeldTrash = Cast<ACSTrashActor>(HeldActor);
+			const FText DisposePrompt = HeldTrash != nullptr
+				? FText::Format(NSLOCTEXT("Interaction", "DisposeTrashPromptNamed", "[Q] {0} 버리기"), HeldTrash->GetTrashDisplayName())
 				: NSLOCTEXT("Interaction", "DisposeItemPrompt", "[Q] 버리기");
 			StorePlayerController->SetInteractionPrompt(
 				DisposePrompt,
@@ -4968,9 +4970,10 @@ void ACSPlayerCharacter::UpdateQuickbarHUD()
 			ToolNames.Add(Crate->GetProductDisplayName());
 			ToolIcons.Add(Crate->GetProductIcon().LoadSynchronous());
 		}
-		else if (Cast<ACSTrashActor>(Item))
+		else if (const ACSTrashActor* Trash = Cast<ACSTrashActor>(Item))
 		{
-			ToolNames.Add(NSLOCTEXT("Quickbar", "Trash", "쓰레기"));
+			// 제조 실패물은 종류 이름으로 보여 준다
+			ToolNames.Add(Trash->GetTrashDisplayName());
 			ToolIcons.Add(nullptr);
 		}
 		else

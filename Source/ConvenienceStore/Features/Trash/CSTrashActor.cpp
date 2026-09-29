@@ -19,6 +19,16 @@ ACSTrashActor::ACSTrashActor()
 	// 별도 드롭 처리를 거치지 않는 배치·투척 쓰레기도 포함해 내비게이션 영향을 차단
 	// 생성자에서 설정하고 이후 콜리전 응답 재설정에도 유지
 	TrashMesh->SetCanEverAffectNavigation(false);
+
+	TrashDisplayName = NSLOCTEXT("Trash", "DefaultDisplayName", "쓰레기");
+}
+
+void ACSTrashActor::SetTrashMesh(UStaticMesh* InMesh)
+{
+	if (IsValid(TrashMesh) && InMesh != nullptr)
+	{
+		TrashMesh->SetStaticMesh(InMesh);
+	}
 }
 
 void ACSTrashActor::Interact_Implementation(AActor* Interactor)
@@ -31,7 +41,7 @@ void ACSTrashActor::Interact_Implementation(AActor* Interactor)
 
 FText ACSTrashActor::GetInteractionText_Implementation() const
 {
-	return NSLOCTEXT("Interaction", "PickUpTrash", "쓰레기 줍기");
+	return FText::Format(NSLOCTEXT("Interaction", "PickUpTrashNamed", "{0} 줍기"), TrashDisplayName);
 }
 
 void ACSTrashActor::PrepareForPickupPhysics()

@@ -81,6 +81,14 @@ public:
 	UDataTable* GetHolidayEventDataTable() const { return HolidayEventDataTable.Get(); }
 	UDataTable* GetNoticeEventEffectRuleDataTable() const { return NoticeEventEffectRuleDataTable.Get(); }
 
+	// 마법 제조 서브시스템이 시작 시점에 가져감
+	UDataTable* GetProductMasterTable() const { return ProductMasterTable.Get(); }
+	UDataTable* GetCraftRecipeTable() const { return CraftRecipeTable.Get(); }
+	UDataTable* GetCraftFailureTable() const { return CraftFailureTable.Get(); }
+	UDataTable* GetCraftMessageTable() const { return CraftMessageTable.Get(); }
+	UDataTable* GetCraftKeyHintTable() const { return CraftKeyHintTable.Get(); }
+	UDataTable* GetCraftRumorTable() const { return CraftRumorTable.Get(); }
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -174,6 +182,27 @@ protected:
 	// 지정하지 않으면 경고 로그를 남기고 날씨가 항상 맑음으로 유지됩니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Weather")
 	TObjectPtr<UCSWeatherSettingsDataAsset> WeatherSettingsDataAsset;
+
+	// 마법 제조용 데이터 테이블
+	// 서브시스템은 디테일 패널이 없어서 여기서 지정한다
+	// 레시피나 상품 표가 비어 있으면 제조 기능만 꺼진다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> ProductMasterTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> CraftRecipeTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> CraftFailureTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> CraftMessageTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> CraftKeyHintTable;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Crafting")
+	TObjectPtr<UDataTable> CraftRumorTable;
 
 private:
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;

@@ -7,6 +7,7 @@
 #include "CSTrashActor.generated.h"
 
 class USceneComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 
 // 튜토리얼 청소 단계에서 플레이어가 E로 줍는 쓰레기
@@ -40,7 +41,17 @@ public:
 	// 손님이 통로에 쓰레기를 흘렸을 때(런타임 스폰 직후) 호출
 	void PrepareForCustomerDrop();
 
+	// 제조 실패물처럼 이름·모양이 다른 쓰레기용.
+	// 스폰하는 쪽에서 FinishSpawning 전에 넣어 준다
+	FText GetTrashDisplayName() const { return TrashDisplayName; }
+	void SetTrashDisplayName(const FText& InDisplayName) { TrashDisplayName = InDisplayName; }
+	void SetTrashMesh(UStaticMesh* InMesh);
+
 protected:
+	// 줍기·퀵바·버리기 안내에 쓰는 이름. 기본값은 "쓰레기"
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trash")
+	FText TrashDisplayName;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
 
