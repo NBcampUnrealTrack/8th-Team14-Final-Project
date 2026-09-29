@@ -3,11 +3,13 @@
 #include "CoreMinimal.h"
 #include "Data/CSDeliveryOrderTypes.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSDeliveryOrderSubsystem.generated.h"
 
 class UDataTable;
 class UCSDeliveryOrderSettingsDataAsset;
 class ACSProductPickupActor;
+class UCSSaveGame;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnDeliveryOrderChanged,
@@ -18,11 +20,16 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnDeliveryOrdersChanged);
 
 // 영업 시간 중 배달 주문을 만들고, 재고 예약·기한·완료 처리를 일관되게 관리합니다.
 UCLASS()
-class CONVENIENCESTORE_API UCSDeliveryOrderSubsystem : public UTickableWorldSubsystem
+class CONVENIENCESTORE_API UCSDeliveryOrderSubsystem : public UTickableWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+
 	virtual void Tick(float DeltaTime) override;
 	virtual TStatId GetStatId() const override;
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;

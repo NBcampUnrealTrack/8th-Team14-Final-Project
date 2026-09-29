@@ -16,7 +16,9 @@
 #include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "GameFramework/Pawn.h"
 #include "NiagaraComponent.h"
+#include "Data/CSSaveTypes.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
+#include "Systems/SaveLoad/CSSaveRecordUtils.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "TimerManager.h"
 
@@ -171,6 +173,132 @@ void ACSDeliveryCrateActor::ReleaseEmployeeReservation(
 bool ACSDeliveryCrateActor::IsReservedByEmployee() const
 {
 	return IsValid(ReservedByEmployee);
+}
+
+void ACSDeliveryCrateActor::ApplyProductRuntimeState(
+	const FCSProductRuntimeState& InProductRuntimeState)
+{
+	ProductRuntimeState = InProductRuntimeState;
+
+	// 현재 보관 환경 기준으로 신선도 감소 여부를 다시 판정
+	UpdateFreshnessDecayState();
+	if (HasActorBegunPlay())
+	{
+		RefreshSpoiledVFXTimer();
+	}
+	UpdateSpoiledVFX();
+}
+
+void ACSDeliveryCrateActor::CaptureSaveRecord(FCSCrateRecord& OutRecord) const
+{
+	OutRecord = FCSCrateRecord();
+	OutRecord.ActorClass = FSoftClassPath(GetClass());
+	OutRecord.ProductRow = FCSSaveRowRef::FromHandle(ProductRow);
+	OutRecord.RemainingQuantity = RemainingQuantity;
+	OutRecord.Transform = GetActorTransform();
+	OutRecord.bAwaitingStockroomIntake = bAwaitingStockroomIntake;
+
+	// 신선도 감소 기준 시각이 월드 시간에 묶여 있어 경과분을 반영한 값으로 기록
+	OutRecord.ProductState = CSSaveRecordUtils::ToRecord(ProductRuntimeState, GetCurrentFreshness());
+
+	// 물리로 분리된 메시가 실제 위치이므로 메시 기준으로 위치를 기록
+	if (IsValid(CrateMesh) && CrateMesh->IsSimulatingPhysics())
+	{
+		OutRecord.Transform = FTransform(
+			CrateMesh->GetComponentRotation(),
+			CrateMesh->GetComponentLocation(),
+			GetActorScale3D());
+		OutRecord.bWorldDropPhysics = true;
+	}
+
+	if (!bPackingCrate)
+	{
+		return;
+	}
+
+	// 포장 상자는 상품을 꺼낼 때 사용할 클래스와 낱개별 상태를 함께 기록
+	OutRecord.bPackingCrate = true;
+	OutRecord.ProductActorClass = FSoftClassPath(ProductActorClass.Get());
+
+	const UWorld* World = GetWorld();
+	const ACSStoreGameState* StoreGameState = nullptr;
+	if (IsValid(World))
+	{
+		StoreGameState = World->GetGameState<ACSStoreGameState>();
+	}
+
+	const UCSFreshnessSettingsDataAsset* FreshnessSettings = nullptr;
+	if (IsValid(StoreGameState))
+	{
+		FreshnessSettings = StoreGameState->GetFreshnessSettings();
+	}
+
+	OutRecord.PackedProductStates.Reserve(PackedProductStates.Num());
+	for (const FCSProductRuntimeState& State : PackedProductStates)
+	{
+		// 설정을 조회하지 못하면 감소 전 저장값을 사용
+		int32 CurrentFreshness = FMath::Clamp(State.Freshness, 0, 100);
+		if (IsValid(World) && IsValid(FreshnessSettings))
+		{
+			CurrentFreshness = State.GetCurrentFreshness(
+				World->GetTimeSeconds(),
+				FreshnessSettings->DecayIntervalSeconds,
+				FreshnessSettings->DecayAmountPerInterval);
+		}
+
+		OutRecord.PackedProductStates.Add(CSSaveRecordUtils::ToRecord(State, CurrentFreshness));
+	}
+}
+
+void ACSDeliveryCrateActor::RestoreSaveRecord(const FCSCrateRecord& InRecord)
+{
+	const UWorld* World = GetWorld();
+	float CurrentWorldTimeSeconds = 0.0f;
+	if (IsValid(World))
+	{
+		CurrentWorldTimeSeconds = World->GetTimeSeconds();
+	}
+
+	bAwaitingStockroomIntake = InRecord.bAwaitingStockroomIntake;
+	ProductRuntimeState = CSSaveRecordUtils::ToRuntime(InRecord.ProductState, CurrentWorldTimeSeconds);
+
+	if (InRecord.bPackingCrate)
+	{
+		bPackingCrate = true;
+		bAwaitingStockroomIntake = false;
+
+		// 포장 상자는 원본 상품 클래스와 외형 레지스트리를 다시 연결
+		if (UClass* LoadedProductClass = InRecord.ProductActorClass.TryLoadClass<ACSProductPickupActor>())
+		{
+			ProductActorClass = LoadedProductClass;
+			if (!IsValid(VisualRegistry))
+			{
+				VisualRegistry = LoadedProductClass->GetDefaultObject<ACSProductPickupActor>()->GetVisualRegistry();
+			}
+		}
+
+		PackedProductStates.Reset(InRecord.PackedProductStates.Num());
+		for (const FCSProductStateRecord& StateRecord : InRecord.PackedProductStates)
+		{
+			PackedProductStates.Add(CSSaveRecordUtils::ToRuntime(StateRecord, CurrentWorldTimeSeconds));
+		}
+
+		// 낱개 상태 수를 수량으로 사용하고 대표 상태를 첫 상품으로 설정
+		if (!PackedProductStates.IsEmpty())
+		{
+			RemainingQuantity = PackedProductStates.Num();
+			ProductRuntimeState = PackedProductStates[0];
+		}
+	}
+
+	// 현재 보관 환경 기준으로 신선도 감소 여부를 다시 판정
+	UpdateFreshnessDecayState();
+	if (HasActorBegunPlay())
+	{
+		RefreshSpoiledVFXTimer();
+	}
+	UpdateSpoiledVFX();
+	OnQuantityChanged.Broadcast(RemainingQuantity);
 }
 
 bool ACSDeliveryCrateActor::InitializeCrate(

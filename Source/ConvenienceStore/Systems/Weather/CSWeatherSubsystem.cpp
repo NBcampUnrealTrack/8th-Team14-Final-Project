@@ -10,9 +10,39 @@
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraSystem.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "UObject/Class.h"
+
+void UCSWeatherSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSWeatherSaveRecord& Record = OutSave.Weather;
+	Record.DecidedWeather = DecidedWeather;
+	Record.CurrentWeather = CurrentWeather;
+	Record.ChanceLayers = ChanceLayers;
+	Record.CurrentBusinessDay = CurrentBusinessDay;
+}
+
+void UCSWeatherSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSWeatherSaveRecord& Record = InSave.Weather;
+
+	// 확정 날씨 배열을 복원해 EnsureDecidedThrough()가 이미 결정된 날과 예보를 재추첨하지 않도록 유지
+	DecidedWeather = Record.DecidedWeather;
+	ChanceLayers = Record.ChanceLayers;
+	CurrentWeather = Record.CurrentWeather;
+	CurrentBusinessDay = FMath::Max(1, Record.CurrentBusinessDay);
+
+	// 값 대입만으로는 파티클과 문 앞 연출이 바뀌지 않으므로 연출을 다시 적용
+	// OnWorldBeginPlay에서 날씨 행 캐시가 생성된 이후에 호출
+	ApplyWeatherEffect(CurrentWeather);
+	ApplyZoneSystem(FindWeatherRow(CurrentWeather));
+	UpdateShelterState(true);
+
+	OnWeatherChanged.Broadcast(CurrentWeather, CurrentWeather);
+	OnWeatherForecastUpdated.Broadcast();
+}
 
 void UCSWeatherSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
@@ -615,6 +645,11 @@ void UCSWeatherSubsystem::RebalanceEvenIn(FCSWeatherWeightSet& Weights,ECSWeathe
 // ---------------------------------------------------------------------------
 // 이벤트 개입 (예보 확정 변경)
 // ---------------------------------------------------------------------------
+
+int32 UCSWeatherSubsystem::GetFixedClearBusinessDays() const
+{
+	return IsValid(Settings) ? FMath::Max(0, Settings->FixedClearBusinessDays) : 0;
+}
 
 bool UCSWeatherSubsystem::SetForecastWeather(int32 DayOffset, ECSWeatherType NewWeather)
 {

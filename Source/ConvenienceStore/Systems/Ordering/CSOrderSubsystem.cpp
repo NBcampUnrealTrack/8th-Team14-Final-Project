@@ -5,7 +5,104 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Delivery/CSDeliveryPortalActor.h"
 #include "Features/Delivery/CSFacilityDeliveryPortalActor.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+
+void UCSOrderSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	FCSOrderSaveRecord& Record = OutSave.Order;
+
+	// 상품 발주는 행과 상자 수를 기록
+	Record.PendingProductOrders.Reset(PendingProductOrders.Num());
+	for (const FCSPendingProductOrder& PendingOrder : PendingProductOrders)
+	{
+		FCSPendingOrderRecord OrderRecord;
+		OrderRecord.DeliveryBusinessDay = PendingOrder.DeliveryBusinessDay;
+		OrderRecord.OrderLines.Reserve(PendingOrder.OrderLines.Num());
+		for (const FCSOrderLine& Line : PendingOrder.OrderLines)
+		{
+			FCSOrderLineRecord LineRecord;
+			LineRecord.Row = FCSSaveRowRef::FromHandle(Line.ProductRow);
+			LineRecord.Quantity = Line.CrateCount;
+			OrderRecord.OrderLines.Add(LineRecord);
+		}
+
+		Record.PendingProductOrders.Add(OrderRecord);
+	}
+
+	// 시설 발주는 행과 수량을 기록
+	Record.PendingFacilityOrders.Reset(PendingFacilityOrders.Num());
+	for (const FCSPendingFacilityOrder& PendingOrder : PendingFacilityOrders)
+	{
+		FCSPendingOrderRecord OrderRecord;
+		OrderRecord.DeliveryBusinessDay = PendingOrder.DeliveryBusinessDay;
+		OrderRecord.OrderLines.Reserve(PendingOrder.OrderLines.Num());
+		for (const FCSFacilityOrderLine& Line : PendingOrder.OrderLines)
+		{
+			FCSOrderLineRecord LineRecord;
+			LineRecord.Row = FCSSaveRowRef::FromHandle(Line.FacilityRow);
+			LineRecord.Quantity = Line.Quantity;
+			OrderRecord.OrderLines.Add(LineRecord);
+		}
+
+		Record.PendingFacilityOrders.Add(OrderRecord);
+	}
+
+	// 같은 영업일의 배송 스폰 위치가 처음부터 다시 배정되는 상황을 방지
+	Record.DeliverySpawnIndexBusinessDay = DeliverySpawnIndexBusinessDay;
+	Record.NextProductDeliverySpawnIndex = NextProductDeliverySpawnIndex;
+	Record.NextFacilityDeliverySpawnIndex = NextFacilityDeliverySpawnIndex;
+}
+
+void UCSOrderSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	const FCSOrderSaveRecord& Record = InSave.Order;
+
+	// 테이블을 해석하지 못한 줄은 배송할 수 없으므로 제외
+	PendingProductOrders.Reset(Record.PendingProductOrders.Num());
+	for (const FCSPendingOrderRecord& OrderRecord : Record.PendingProductOrders)
+	{
+		FCSPendingProductOrder PendingOrder;
+		PendingOrder.DeliveryBusinessDay = OrderRecord.DeliveryBusinessDay;
+		PendingOrder.OrderLines.Reserve(OrderRecord.OrderLines.Num());
+		for (const FCSOrderLineRecord& LineRecord : OrderRecord.OrderLines)
+		{
+			FCSOrderLine Line;
+			Line.ProductRow = LineRecord.Row.ToHandle();
+			Line.CrateCount = LineRecord.Quantity;
+			if (Line.ProductRow.DataTable != nullptr)
+			{
+				PendingOrder.OrderLines.Add(Line);
+			}
+		}
+
+		PendingProductOrders.Add(PendingOrder);
+	}
+
+	PendingFacilityOrders.Reset(Record.PendingFacilityOrders.Num());
+	for (const FCSPendingOrderRecord& OrderRecord : Record.PendingFacilityOrders)
+	{
+		FCSPendingFacilityOrder PendingOrder;
+		PendingOrder.DeliveryBusinessDay = OrderRecord.DeliveryBusinessDay;
+		PendingOrder.OrderLines.Reserve(OrderRecord.OrderLines.Num());
+		for (const FCSOrderLineRecord& LineRecord : OrderRecord.OrderLines)
+		{
+			FCSFacilityOrderLine Line;
+			Line.FacilityRow = LineRecord.Row.ToHandle();
+			Line.Quantity = LineRecord.Quantity;
+			if (Line.FacilityRow.DataTable != nullptr)
+			{
+				PendingOrder.OrderLines.Add(Line);
+			}
+		}
+
+		PendingFacilityOrders.Add(PendingOrder);
+	}
+
+	DeliverySpawnIndexBusinessDay = Record.DeliverySpawnIndexBusinessDay;
+	NextProductDeliverySpawnIndex = Record.NextProductDeliverySpawnIndex;
+	NextFacilityDeliverySpawnIndex = Record.NextFacilityDeliverySpawnIndex;
+}
 
 namespace
 {
@@ -118,7 +215,7 @@ bool UCSOrderSubsystem::IsProductUnlocked(const FDataTableRowHandle& Row) const
 	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSProductDataRow::StaticStruct()) return false;
 	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
 	const FCSProductDataRow* Data = Row.GetRow<FCSProductDataRow>(TEXT("Order unlock"));
-	return State && Data && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
+	return State && Data && Data->bOrderable && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
 		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition);
 }
 
@@ -382,6 +479,12 @@ FCSOrderResult UCSOrderSubsystem::EvaluateOrderWithDelivery(
 		if (ProductData == nullptr)
 		{
 			Result.FailureReason = ECOrderFailureReason::InvalidProductRow;
+			return Result;
+		}
+
+		if (!ProductData->bOrderable)
+		{
+			Result.FailureReason = ECOrderFailureReason::ProductNotOrderable;
 			return Result;
 		}
 
@@ -837,7 +940,7 @@ int32 UCSOrderSubsystem::CalculateProductOrderLineCost(
 	const FCSProductDataRow* ProductData =
 		ProductRow.GetRow<FCSProductDataRow>(
 			TEXT("UCSOrderSubsystem::CalculateProductOrderLineCost"));
-	if (ProductData == nullptr || ProductData->PurchasePrice < 0 ||
+	if (ProductData == nullptr || !ProductData->bOrderable || ProductData->PurchasePrice < 0 ||
 		ProductData->OrderPackQuantity < 1)
 	{
 		return 0;

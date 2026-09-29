@@ -3,7 +3,10 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSStorePricingSubsystem.generated.h"
+
+class UCSSaveGame;
 
 // 상품 판매가가 실제로 변경(저장)에 성공했을 때만 방송됨
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -14,11 +17,16 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	NewSalePrice);
 
 UCLASS()
-class CONVENIENCESTORE_API UCSStorePricingSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSStorePricingSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
+	// ICSSaveParticipant
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+
 	UFUNCTION(BlueprintPure, Category = "Store|Pricing")
 	int32 GetSalePrice(const FDataTableRowHandle& ProductRow) const;
 

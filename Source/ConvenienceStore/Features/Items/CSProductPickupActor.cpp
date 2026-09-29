@@ -292,6 +292,12 @@ void ACSProductPickupActor::EnableWorldDropPhysics()
 	ProductMesh->SetSimulatePhysics(true);
 }
 
+void ACSProductPickupActor::LaunchFromGacha(const FVector& Impulse)
+{
+	EnableWorldDropPhysics();
+	if (IsValid(ProductMesh) && ProductMesh->IsSimulatingPhysics()) ProductMesh->AddImpulse(Impulse);
+}
+
 void ACSProductPickupActor::SetStoredForPlayerInteraction(bool bStoredForPlayerInteraction)
 {
 	if (!IsValid(ProductMesh))

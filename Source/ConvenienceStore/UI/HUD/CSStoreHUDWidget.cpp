@@ -58,6 +58,9 @@ void UCSStoreHUDWidget::NativeConstruct()
 		this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 	StoreGameState->OnBusinessDayStarted.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
+	// 세이브 복원으로 바뀐 영업일도 같은 표시 갱신 경로로 처리
+	StoreGameState->OnBusinessDayRestored.AddDynamic(
+		this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 	StoreGameState->OnStoreExperienceChanged.AddDynamic(
 		this, &UCSStoreHUDWidget::HandleStoreExperienceChanged);
 	StoreGameState->OnStoreLevelChanged.AddDynamic(
@@ -118,6 +121,8 @@ void UCSStoreHUDWidget::NativeDestruct()
 		StoreGameState->OnReputationGradeChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleReputationGradeChanged);
 		StoreGameState->OnBusinessDayStarted.RemoveDynamic(
+			this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
+		StoreGameState->OnBusinessDayRestored.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleBusinessDayStarted);
 		StoreGameState->OnStoreExperienceChanged.RemoveDynamic(
 			this, &UCSStoreHUDWidget::HandleStoreExperienceChanged);

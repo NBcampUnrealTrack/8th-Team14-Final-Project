@@ -8,12 +8,14 @@
 // RecordShopliftLoss가 FCSStolenProductRecord 배열을 받으므로 전방 선언으로는 부족합니다.
 #include "Data/CSVillainTypes.h"
 #include "Data/CSEmployeeHiringTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSStoreGameState.generated.h"
 
 class UCSStoreProgressionDataAsset;
 class UCSFreshnessSettingsDataAsset;
 class UCSStoreEconomyDataAsset;
 class ACSProductPickupActor;
+class UCSSaveGame;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnStorePhaseChanged,
@@ -100,11 +102,22 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnMagicCircleUpgraded, int32, NewLevel);
 
 UCLASS()
-class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase
+class CONVENIENCESTORE_API ACSStoreGameState : public AGameStateBase,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
+	// ICSSaveParticipant
+	// 직원 배치와 발주 복원 전에 자금·일차를 확정하도록 가장 먼저 복원
+	virtual int32 GetSaveRestorePriority() const override { return 0; }
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+
+	// 불러온 세이브의 저장 당시 단계
+	// 직접 적용하지 않고 보관만 하며 불러오기 후 GameMode가 이어서 적용
+	ECStorePhase RestoredSavePhase = ECStorePhase::Preparation;
+
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
 	int32 GetMagicCircleLevel() const { return MagicCircleLevel; }
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
@@ -296,6 +309,11 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
 	FOnStoreBusinessDayStarted OnBusinessDayStarted;
 
+	// 세이브 복원으로 영업일이 바뀌었을 때 표시 갱신 전용으로 방송
+	// 날씨·공지·발주가 OnBusinessDayStarted로 하루 결과를 새로 결정하므로 복원값 재추첨을 방지
+	UPROPERTY(BlueprintAssignable, Category = "Store|Time")
+	FOnStoreBusinessDayStarted OnBusinessDayRestored;
+
 	UPROPERTY(BlueprintAssignable, Category = "Store|Progression")
 	FCSOnStoreExperienceChanged OnStoreExperienceChanged;
 
@@ -394,6 +412,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	bool IsMaximumStoreLevel() const;
+
+	// 아티팩트 사용 전에 최대치까지 실제로 받을 수 있는 양을 조회합니다.
+	int32 GetRemainingStoreExperience() const;
+	int32 GetRemainingReputation() const;
 
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	int32 GetReputationScore() const;

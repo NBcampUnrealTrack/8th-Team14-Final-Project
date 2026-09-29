@@ -9,16 +9,19 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "Math/RandomStream.h"
 #include "Data/CSPurchaseDecisionTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSStoreReputationSubsystem.generated.h"
 
 class ACSCustomerCharacter;
+class UCSSaveGame;
 
 // 하루 카운터(입장/정상결제/계산포기/빈손퇴장/가격불쾌/쓰레기목격) 중 하나가 바뀔 때마다 방송
 // 실시간 정산창(C)이 아직 마감 전인 오늘자 평판 변동을 미리 보여줄 때 구독해서 씀
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnReputationStatsChanged);
 
 UCLASS()
-class CONVENIENCESTORE_API UCSStoreReputationSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSStoreReputationSubsystem : public UWorldSubsystem,
+	public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
@@ -28,6 +31,11 @@ public:
 
 	// 월드가 끝날 때(레벨 전환, PIE 종료 등) 구독을 정리
 	virtual void Deinitialize() override;
+
+	// ICSSaveParticipant
+	// 영업 종료 직후 저장한 세이브를 불러온 뒤 잠자기 정산이 같은 결과를 내도록 하루 카운터를 기록·복원
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	UPROPERTY(BlueprintAssignable, Category = "Reputation")
 	FCSOnReputationStatsChanged OnReputationStatsChanged;

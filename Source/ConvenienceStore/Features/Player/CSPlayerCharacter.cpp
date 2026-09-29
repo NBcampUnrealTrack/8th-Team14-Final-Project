@@ -22,10 +22,13 @@
 #include "Features/Tools/CSMagicWandActor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/Employees/CSStoreEmployeeSubsystem.h"
+#include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSSaveTypes.h"
+#include "Systems/SaveLoad/CSWorldStateSaveHandler.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 
@@ -261,6 +264,7 @@ ACSPlayerCharacter::ACSPlayerCharacter()
 void ACSPlayerCharacter::BeginPlay()
 {
     Super::BeginPlay();
+	RefreshArtifactMoveSpeed();
 
 	if (IsValid(QuickbarInventory))
 	{
@@ -471,8 +475,8 @@ void ACSPlayerCharacter::Look(const FInputActionValue& Value)
 {
     const FVector2D LookAxisVector = Value.Get<FVector2D>();
 
-    AddControllerYawInput(LookAxisVector.X);
-    AddControllerPitchInput(LookAxisVector.Y);
+    AddControllerYawInput(LookAxisVector.X * MouseSensitivity);
+    AddControllerPitchInput(LookAxisVector.Y * MouseSensitivity);
 }
 
 void ACSPlayerCharacter::StartSprint()
@@ -483,12 +487,22 @@ void ACSPlayerCharacter::StartSprint()
 		return;
 	}
 
-    GetCharacterMovement()->MaxWalkSpeed = SprintSpeed;
+	bArtifactSprinting = true;
+	RefreshArtifactMoveSpeed();
 }
 
 void ACSPlayerCharacter::StopSprint()
 {
-    GetCharacterMovement()->MaxWalkSpeed = WalkSpeed;
+	bArtifactSprinting = false;
+	RefreshArtifactMoveSpeed();
+}
+
+void ACSPlayerCharacter::RefreshArtifactMoveSpeed()
+{
+	const UCSArtifactSubsystem* Artifacts = GetGameInstance() ? GetGameInstance()->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
+	const float Multiplier = Artifacts ? Artifacts->GetSpeedMultiplier(ECSArtifactEffectType::PlayerSpeed) : 1.0f;
+	GetCharacterMovement()->MaxWalkSpeed = (bArtifactSprinting ? SprintSpeed : WalkSpeed) * Multiplier;
+	GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchSpeed * Multiplier;
 }
 
 void ACSPlayerCharacter::StartCrouch()
@@ -1137,6 +1151,137 @@ bool ACSPlayerCharacter::TryTakeStoredCrate(
 	// 예외적으로 손 부착에 실패하면 같은 슬롯으로 되돌려 상자 유실을 막습니다.
 	StoragePoint->TryStoreCrateInSlot(StoredCrate, TargetInteractionComponent);
 	return false;
+}
+
+// ---------------------------------------------------------------------------
+// 세이브 / 로드
+// ---------------------------------------------------------------------------
+
+void ACSPlayerCharacter::CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) const
+{
+	OutRecord = FCSQuickbarRecord();
+	if (!IsValid(QuickbarInventory))
+	{
+		return;
+	}
+
+	OutRecord.SelectedSlotIndex = QuickbarInventory->GetSelectedSlotIndex();
+
+	// 빈 칸도 빈 레코드로 기록해 슬롯 수와 선택 번호를 유지
+	const int32 SlotCount = QuickbarInventory->GetSlotCount();
+	OutRecord.Slots.SetNum(SlotCount);
+	for (int32 SlotIndex = 0; SlotIndex < SlotCount; ++SlotIndex)
+	{
+		const AActor* Item = QuickbarInventory->GetItemAt(SlotIndex);
+		FCSQuickbarSlotRecord& SlotRecord = OutRecord.Slots[SlotIndex];
+		if (const ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(Item))
+		{
+			SlotRecord.ToolClass = FSoftClassPath(Tool->GetClass());
+		}
+		else if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Item))
+		{
+			SlotRecord.bHasCrate = true;
+			Crate->CaptureSaveRecord(SlotRecord.Crate);
+		}
+	}
+}
+
+void ACSPlayerCharacter::RestoreQuickbarRecord(
+	const FCSQuickbarRecord& InRecord,
+	const UDataTable* FallbackProductTable)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || !IsValid(QuickbarInventory))
+	{
+		return;
+	}
+
+	for (const FCSQuickbarSlotRecord& SlotRecord : InRecord.Slots)
+	{
+		AActor* RestoredItem = nullptr;
+		bool bSpawned = false;
+		if (SlotRecord.ToolClass.IsValid())
+		{
+			UClass* ToolClass = SlotRecord.ToolClass.TryLoadClass<ACSUsableToolActor>();
+			if (ToolClass == nullptr)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[CSSave] 퀵바 도구 클래스를 불러오지 못했습니다: %s"),
+					*SlotRecord.ToolClass.ToString());
+				continue;
+			}
+
+			RestoredItem = FindOrSpawnQuickbarTool(ToolClass, bSpawned);
+		}
+		else if (SlotRecord.bHasCrate)
+		{
+			RestoredItem = UCSWorldStateSaveHandler::SpawnCrateFromRecord(
+				*World,
+				SlotRecord.Crate,
+				GetActorTransform(),
+				FallbackProductTable);
+			bSpawned = true;
+		}
+
+		if (!IsValid(RestoredItem))
+		{
+			continue;
+		}
+
+		// 이전 항목을 퀵바 보관 위치로 옮겨 손을 비운 뒤 다음 항목을 첫 빈 칸에 추가
+		StoreHeldQuickbarItem();
+		if (!TryPickUp(RestoredItem) && bSpawned)
+		{
+			// 퀵바가 가득 찼거나 장착 조건이 맞지 않으면 새로 만든 액터를 제거
+			RestoredItem->Destroy();
+		}
+	}
+
+	// 저장 시점의 선택 슬롯을 복원하고 같은 번호로 선택이 생략된 경우에도 장착 상태를 맞춤
+	const int32 MaxSlotIndex = FMath::Max(0, QuickbarInventory->GetSlotCount() - 1);
+	QuickbarInventory->SelectSlot(FMath::Clamp(InRecord.SelectedSlotIndex, 0, MaxSlotIndex));
+	EquipSelectedQuickbarTool();
+	UpdateQuickbarHUD();
+}
+
+bool ACSPlayerCharacter::IsQuickbarItem(const AActor* ItemActor) const
+{
+	return IsValid(QuickbarInventory) && QuickbarInventory->ContainsItem(ItemActor);
+}
+
+ACSUsableToolActor* ACSPlayerCharacter::FindOrSpawnQuickbarTool(UClass* ToolClass, bool& bOutSpawned)
+{
+	bOutSpawned = false;
+	UWorld* World = GetWorld();
+	if (World == nullptr || ToolClass == nullptr)
+	{
+		return nullptr;
+	}
+
+	// 마법봉은 시설 거치대가 레벨 시작 시 생성하므로 퀵바에 없는 기존 액터를 재사용
+	if (ToolClass->IsChildOf(ACSMagicWandActor::StaticClass()))
+	{
+		for (TActorIterator<ACSMagicWandActor> It(World); It; ++It)
+		{
+			ACSMagicWandActor* MagicWand = *It;
+			if (IsValid(MagicWand) &&
+				MagicWand->GetClass() == ToolClass &&
+				!IsQuickbarItem(MagicWand) &&
+				Cast<ACSPlayerCharacter>(MagicWand->GetAttachParentActor()) == nullptr)
+			{
+				return MagicWand;
+			}
+		}
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACSUsableToolActor* ToolActor = World->SpawnActor<ACSUsableToolActor>(
+		ToolClass,
+		GetActorTransform(),
+		SpawnParameters);
+	bOutSpawned = IsValid(ToolActor);
+	return ToolActor;
 }
 
 void ACSPlayerCharacter::UpdateInteractionHUD()
@@ -3339,6 +3484,7 @@ void ACSPlayerCharacter::DropHeldItem()
 	{
 		ToolToDrop->OnUnequipped();
 		ToolToDrop->EnableWorldDropPhysics();
+		ToolToDrop->OnReleasedToWorld(false);
 	}
 
 	// 최종 안전 위치로 이동한 뒤 실제 월드 Drop 대상의 메시 물리만 활성화합니다.
@@ -3523,6 +3669,7 @@ void ACSPlayerCharacter::ThrowHeldItem()
 
 	HeldActor = nullptr;
 	DestroyPlacementPreview();
+	if (IsValid(ToolToThrow)) ToolToThrow->OnReleasedToWorld(true);
 }
 
 bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)

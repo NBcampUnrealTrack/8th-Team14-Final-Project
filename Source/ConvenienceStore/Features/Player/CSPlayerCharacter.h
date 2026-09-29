@@ -29,6 +29,8 @@ class UCSQuickbarInventoryComponent;
 class ACSEndingDisplayActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
+struct FCSQuickbarRecord;
+class UDataTable;
 
 UENUM(BlueprintType)
 enum class ECSPlayerMode : uint8
@@ -62,6 +64,13 @@ public:
 
 	float GetMagicWandHeldScaleMultiplier() const { return MagicWandHeldScaleMultiplier; }
 
+	// 설정창 마우스 감도 슬라이더가 읽고 쓰기 위한 접근자.
+	UFUNCTION(BlueprintPure, Category = "Input")
+	float GetMouseSensitivity() const { return MouseSensitivity; }
+
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SetMouseSensitivity(float NewSensitivity) { MouseSensitivity = FMath::Clamp(NewSensitivity, 0.1f, 3.0f); }
+
 	// Post Process AnimBP에서만 소비하는 Mesh Component Space IK 목표입니다.
 	UFUNCTION(BlueprintPure, Category = "Animation|Magic Wand")
 	void GetMagicWandIKTargets(FTransform& HandTarget, FVector& ElbowTarget) const;
@@ -83,6 +92,19 @@ public:
 	bool TryTakeStoredCrate(
 		ACSFreshnessSafeZoneActor* StoragePoint,
 		const UPrimitiveComponent* TargetInteractionComponent);
+
+	// ----- 세이브 / 로드 -----
+
+	// 퀵바 슬롯 순서대로 도구 클래스와 상자 상태를 레코드에 기록
+	// 쓰레기는 저장 대상이 아니므로 빈 칸으로 기록
+	void CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) const;
+
+	// 기록된 도구와 상자를 다시 생성해 퀵바에 넣고 선택 슬롯을 복원
+	// 부착·장착 처리를 재사용하기 위해 기존 TryPickUp() 경로를 사용
+	void RestoreQuickbarRecord(const FCSQuickbarRecord& InRecord, const UDataTable* FallbackProductTable);
+
+	// 퀵바에 보관 중인 액터인지 확인
+	bool IsQuickbarItem(const AActor* ItemActor) const;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Mode")
 	bool IsBuildMode() const
@@ -450,6 +472,8 @@ private:
 	void UpdatePlayerLocomotionAnimation(bool bForce = false);
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+	// 0.1~3.0 클램프. 기본값 1.0은 변경 전 룩 감도와 동일.
+	float MouseSensitivity = 1.0f;
 	void StartSprint();
 	void StopSprint();
 	void StartCrouch();
@@ -482,6 +506,9 @@ private:
 	USceneComponent* GetHeldItemAttachTarget(const AActor* ItemActor) const;
 	void StoreEquippedQuickbarTool();
 	void StoreHeldQuickbarItem();
+	// 퀵바 복원용 도구를 조회하고 없으면 새로 생성
+	// 마법봉은 거치대에 있는 기존 액터를 재사용해 중복 생성을 방지
+	ACSUsableToolActor* FindOrSpawnQuickbarTool(UClass* ToolClass, bool& bOutSpawned);
 	void RemoveHeldItemFromQuickbar();
 	void UpdateQuickbarHUD();
 
@@ -661,6 +688,7 @@ private:
 
 
 public:
+	void RefreshArtifactMoveSpeed();
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement")
 	float WalkSpeed = 700.0f;
 
@@ -670,4 +698,7 @@ public:
 	// 웅크린 상태에서 적용할 이동 속도입니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (ClampMin = "0.0"))
 	float CrouchSpeed = 200.0f;
+
+private:
+	bool bArtifactSprinting = false;
 };

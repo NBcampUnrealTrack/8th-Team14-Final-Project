@@ -17,6 +17,7 @@ class UPrimitiveComponent;
 class UNiagaraComponent;
 class ACSStoreGameState;
 class ACSStoreEmployeeCharacter;
+struct FCSCrateRecord;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FCSOnCrateQuantityChanged,
@@ -71,6 +72,19 @@ public:
 	{
 		return ProductRuntimeState;
 	}
+
+	// 세이브 복원 전용으로 상품 런타임 상태를 적용
+	// InitializeCrate()는 신선도를 초기값으로만 설정하므로 저장 시점 상태를 되돌릴 때 사용
+	UFUNCTION(BlueprintCallable, Category = "Delivery|Product")
+	void ApplyProductRuntimeState(const FCSProductRuntimeState& InProductRuntimeState);
+
+	// 상품·수량·신선도·포장 상태를 세이브 레코드에 기록
+	// 포장 상자의 낱개별 상태가 protected이므로 상자가 직접 기록
+	void CaptureSaveRecord(FCSCrateRecord& OutRecord) const;
+
+	// 세이브 레코드의 신선도·입고 대기·포장 상태를 적용
+	// InitializeCrate()와 FinishSpawning() 이후에 호출
+	void RestoreSaveRecord(const FCSCrateRecord& InRecord);
 
 	UFUNCTION(BlueprintPure, Category = "Delivery|Freshness")
 	int32 GetCurrentFreshness() const;

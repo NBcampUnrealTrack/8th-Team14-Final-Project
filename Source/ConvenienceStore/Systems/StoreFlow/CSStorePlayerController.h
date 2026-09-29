@@ -8,6 +8,7 @@
 #include "CSStorePlayerController.generated.h"
 
 class UCSJournalWidget;
+class UCSSettingsWidget;
 class ACSStoreGameState;
 class UCSStoreHUDWidget;
 class UCSStoreTopBarWidget;
@@ -17,6 +18,7 @@ class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
 class UCSDeliveryToastWidget;
 class UCSNoticeBannerWidgetBase;
+class UCSSaveLoadMenuWidget;
 class UTexture2D;
 enum class ECSStatusAnnouncementType : uint8;
 
@@ -54,9 +56,24 @@ public:
 	void ToggleJournal();
 	UFUNCTION(BlueprintCallable, Category = "Journal")
 	void CloseJournal();
+
+	UFUNCTION(BlueprintCallable, Category = "UI|Settings")
+	void ToggleSettings();
+	UFUNCTION(BlueprintCallable, Category = "UI|Settings")
+	void CloseSettings();
 	// 임시 타이틀의 시작 버튼에서 호출합니다. 정식 타이틀 도입 시 이 구역 전체를 제거할 수 있습니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Temporary Title")
 	void StartGameFromTemporaryTitle();
+
+	// ----- 세이브 / 로드 -----
+
+	// 저장·불러오기 메뉴를 열거나 닫음
+	UFUNCTION(BlueprintCallable, Category = "UI|Save")
+	void ToggleSaveLoadMenu();
+
+	// 열려 있는 저장·불러오기 메뉴를 닫고 입력 잠금과 HUD 숨김을 해제
+	UFUNCTION(BlueprintCallable, Category = "UI|Save")
+	void CloseSaveLoadMenu();
 
 	// 발주·계산처럼 게임 조작을 막아야 하는 UI가 열리고 닫힐 때 입력 잠금을 갱신합니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Input")
@@ -140,6 +157,11 @@ protected:
 	TSubclassOf<UCSJournalWidget> JournalWidgetClass;
 	UPROPERTY(Transient)
 	TObjectPtr<UCSJournalWidget> ActiveJournalWidget;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Settings")
+	TSubclassOf<UCSSettingsWidget> SettingsWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSSettingsWidget> ActiveSettingsWidget;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UFUNCTION()
@@ -176,6 +198,19 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> ActiveTemporaryTitleWidget;
 	// === End Temporary Title Screen ===
+
+	// 메뉴 위젯의 닫기 요청을 처리
+	UFUNCTION()
+	void HandleSaveLoadMenuClosed();
+
+	// 저장·불러오기 메뉴 위젯 클래스
+	// 지정하지 않으면 메뉴가 열리지 않음
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Save")
+	TSubclassOf<UCSSaveLoadMenuWidget> SaveLoadMenuWidgetClass;
+
+	// 현재 열려 있는 저장·불러오기 메뉴
+	UPROPERTY(Transient)
+	TObjectPtr<UCSSaveLoadMenuWidget> ActiveSaveLoadMenuWidget;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;

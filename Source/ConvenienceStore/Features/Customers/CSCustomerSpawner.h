@@ -108,6 +108,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Spawn|Trash", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MaxTrashDropProgress = 0.8f;
 
+	// 이 게임 시각(0시부터 경과 분) 이후 생성되는 손님에게는 빌런을 배정하지 않음 (1260 = 21:00)
+	// 이유: 마감 시각에 도주 중인 절도 손님이 남으면 영업 종료 자동 저장이 늦어지기 때문
+	UPROPERTY(EditAnywhere, Category = "Spawn|Villain", meta = (ClampMin = "0.0", ClampMax = "1440.0"))
+	float VillainCutoffGameMinutes = 1260.0f;
+
 private:
 	//스포너가 만든 손님들 중 레벨에 존재하고 있는 배열
 	UPROPERTY()
@@ -161,6 +166,9 @@ private:
 
 	// 아키타입의 VillainChance / VillainActionWeights를 읽어 이 손님의 빌런 행동을 결정.
 	ECSVillainAction RollVillainAction(const UCSCustomerArchetypeDataAsset* Archetype,FRandomStream& Stream) const;
+
+	// 현재 게임 시각이 VillainCutoffGameMinutes 이후라 빌런 배정을 막아야 하는지
+	bool IsVillainCutoffActive() const;
 
 	// 손님이 스폰될 때 가지게 될 캡슐의 크기(반경, 반높이)를 계산
 	// 이유: 박스를 캡슐 반경만큼 줄여 손님이 영역 밖으로 삐져나오지 않게 검사하기 위해
