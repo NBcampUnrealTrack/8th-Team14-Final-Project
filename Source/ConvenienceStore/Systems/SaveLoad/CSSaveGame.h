@@ -30,6 +30,11 @@ public:
 
 	// 서브시스템
 
+	// 잠자기 때 평판 계산에 쓰는 그날 손님 통계
+	// UCSStoreReputationSubsystem이 기록하고 복원
+	UPROPERTY()
+	FCSReputationDailySaveRecord ReputationDaily;
+
 	// 상품별 판매가 오버라이드
 	// UCSStorePricingSubsystem이 기록하고 복원
 	UPROPERTY()

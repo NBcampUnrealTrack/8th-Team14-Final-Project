@@ -114,6 +114,10 @@ public:
 	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
 	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
+	// 불러온 세이브의 저장 당시 단계
+	// 직접 적용하지 않고 보관만 하며 불러오기 후 GameMode가 이어서 적용
+	ECStorePhase RestoredSavePhase = ECStorePhase::Preparation;
+
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
 	int32 GetMagicCircleLevel() const { return MagicCircleLevel; }
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")

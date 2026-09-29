@@ -42,17 +42,9 @@ public:
 	bool SaveToSlot(FName SlotName);
 
 	// 자동 세이브 슬롯에 저장하고 성공 여부를 반환
+	// 영업 종료 후 손님 상품 떨어뜨림이 끝난 시점에 ACSStoreGameMode가 호출
 	UFUNCTION(BlueprintCallable, Category = "Save")
 	bool SaveToAutoSlot();
-
-	// 수동 저장이 가능한 시점인지 확인하고 불가능하면 사유를 반환
-	// 영업 단계 상태는 저장하지 않으므로 준비 단계에서만 허용
-	UFUNCTION(BlueprintCallable, Category = "Save")
-	bool CanManualSave(FText& OutReason) const;
-
-	// 다음 틱에 자동 세이브를 예약
-	// OnBusinessDayStarted 구독자가 그날 상태를 확정한 뒤에 저장하도록 한 프레임 지연
-	void RequestAutoSaveNextTick(AActor* ContextActor);
 
 	// 세이브를 읽어 보관한 뒤 헤더에 기록된 레벨을 열고 성공 여부를 반환
 	// 실제 복원은 새 월드에서 ApplyPendingLoad()가 수행
@@ -127,9 +119,6 @@ private:
 
 	static FName GetMetaSlotName() { return TEXT("CS_Meta"); }
 
-	// 예약된 자동 세이브를 실행
-	void HandleAutoSaveTimer();
-
 	// 레벨 재오픈 후 적용할 세이브 데이터
 	// 레벨 전환 중 GC로 제거되지 않도록 UPROPERTY로 유지
 	UPROPERTY(Transient)
@@ -137,7 +126,4 @@ private:
 
 	// 불러온 세이브에서 이어받은 플레이 시간(초)
 	float BasePlayTimeSeconds = 0.0f;
-
-	// 같은 틱에 자동 세이브가 중복 예약되는 상황을 방지
-	bool bAutoSaveScheduled = false;
 };

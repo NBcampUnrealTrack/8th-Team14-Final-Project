@@ -1042,8 +1042,36 @@ void ACSStoreGameState::CaptureSaveData(UCSSaveGame& OutSave) const
 	Record.LastRentProcessedBusinessDay = LastRentProcessedBusinessDay;
 	Record.LastPayrollProcessedBusinessDay = LastPayrollProcessedBusinessDay;
 
-	// 하루 단위 집계와 단계 상태(bIsDailySummaryPending, CurrentPhase, bIsStoreOpen 등)는 기록하지 않음
-	// StartStoreFlow()가 로드 시 다시 확정하며 기록하면 정산 화면이 다시 표시됨
+	// 불러온 뒤 자유 시간 복귀 여부를 가르는 기준
+	Record.SavedPhase = CurrentPhase;
+	Record.bHasStoreOpenedToday = bHasStoreOpenedToday;
+
+	// 영업 종료 직후 저장이므로 그날 집계를 기록해 불러온 뒤 정산 결과를 유지
+	Record.DailySalesGold = DailySalesGold;
+	Record.DailyCostGold = DailyCostGold;
+	Record.DailyProfitGold = DailyProfitGold;
+	Record.DailySoldQuantity = DailySoldQuantity;
+	Record.CompletedCheckoutCount = CompletedCheckoutCount;
+	Record.DailyWasteLossGold = DailyWasteLossGold;
+	Record.DailyRentGold = DailyRentGold;
+	Record.DailyExpenseGold = DailyExpenseGold;
+	Record.DailyMagicCircleUpgradeExpenseGold = DailyMagicCircleUpgradeExpenseGold;
+	Record.DailyEmployeeHireExpenseGold = DailyEmployeeHireExpenseGold;
+	Record.DailyEmployeeWageGold = DailyEmployeeWageGold;
+	Record.DailyProductOrderExpenseGold = DailyProductOrderExpenseGold;
+	Record.DailyFacilityOrderExpenseGold = DailyFacilityOrderExpenseGold;
+	Record.DailyQuickProductOrderExpenseGold = DailyQuickProductOrderExpenseGold;
+	Record.DailyQuickFacilityOrderExpenseGold = DailyQuickFacilityOrderExpenseGold;
+	Record.DailyShopliftLossGold = DailyShopliftLossGold;
+	Record.DailyDisposedProductQuantities = DailyDisposedProductQuantities;
+	Record.DailyDisposedProductNames = DailyDisposedProductNames;
+	Record.DailyStolenProductQuantities = DailyStolenProductQuantities;
+	Record.DailyStolenProductNames = DailyStolenProductNames;
+	Record.DailyCheckoutTransactions = DailyCheckoutTransactions;
+	Record.NextTransactionId = NextTransactionId;
+
+	// 시계·영업 여부·정산 대기(bIsDailySummaryPending) 등은 기록하지 않음
+	// 불러온 뒤 GameMode가 SavedPhase 기준으로 다시 확정
 }
 
 void ACSStoreGameState::RestoreSaveData(const UCSSaveGame& InSave)
@@ -1061,8 +1089,32 @@ void ACSStoreGameState::RestoreSaveData(const UCSSaveGame& InSave)
 	LastRentProcessedBusinessDay = Record.LastRentProcessedBusinessDay;
 	LastPayrollProcessedBusinessDay = Record.LastPayrollProcessedBusinessDay;
 
-	// 영업일 단위 거래 순번은 새로 시작
-	NextTransactionId = 1;
+	// 단계는 여기서 적용하지 않고 GameMode가 모든 참가자 복원 후 이어서 적용
+	RestoredSavePhase = Record.SavedPhase;
+	bHasStoreOpenedToday = Record.bHasStoreOpenedToday;
+
+	DailySalesGold = Record.DailySalesGold;
+	DailyCostGold = Record.DailyCostGold;
+	DailyProfitGold = Record.DailyProfitGold;
+	DailySoldQuantity = Record.DailySoldQuantity;
+	CompletedCheckoutCount = Record.CompletedCheckoutCount;
+	DailyWasteLossGold = Record.DailyWasteLossGold;
+	DailyRentGold = Record.DailyRentGold;
+	DailyExpenseGold = Record.DailyExpenseGold;
+	DailyMagicCircleUpgradeExpenseGold = Record.DailyMagicCircleUpgradeExpenseGold;
+	DailyEmployeeHireExpenseGold = Record.DailyEmployeeHireExpenseGold;
+	DailyEmployeeWageGold = Record.DailyEmployeeWageGold;
+	DailyProductOrderExpenseGold = Record.DailyProductOrderExpenseGold;
+	DailyFacilityOrderExpenseGold = Record.DailyFacilityOrderExpenseGold;
+	DailyQuickProductOrderExpenseGold = Record.DailyQuickProductOrderExpenseGold;
+	DailyQuickFacilityOrderExpenseGold = Record.DailyQuickFacilityOrderExpenseGold;
+	DailyShopliftLossGold = Record.DailyShopliftLossGold;
+	DailyDisposedProductQuantities = Record.DailyDisposedProductQuantities;
+	DailyDisposedProductNames = Record.DailyDisposedProductNames;
+	DailyStolenProductQuantities = Record.DailyStolenProductQuantities;
+	DailyStolenProductNames = Record.DailyStolenProductNames;
+	DailyCheckoutTransactions = Record.DailyCheckoutTransactions;
+	NextTransactionId = FMath::Max(1, Record.NextTransactionId);
 
 	// UI가 이전 값을 유지하지 않도록 변경을 알림
 	OnFundsChanged.Broadcast(CurrentFunds);

@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "Data/CSCheckoutTypes.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSStorePhaseTypes.h"
 #include "Data/CSWeatherTypes.h"
 #include "Data/CSEmployeeHiringTypes.h"
 #include "Data/CSDeliveryOrderTypes.h"
@@ -13,7 +15,8 @@
 // 마이그레이션 없이 버전 불일치를 로드 거부로 처리
 // 2: 퀵바 슬롯별 레코드, 포장 상자·창고 보관·바닥 물리 상태 추가
 // 3: 월드 쓰레기 레코드 추가
-#define CS_SAVE_VERSION_CURRENT 3
+// 4: 영업 종료 시점 저장, 저장 당시 단계·당일 집계·평판 당일 통계 추가
+#define CS_SAVE_VERSION_CURRENT 4
 
 // DataTable 행을 세이브에 담는 공용 표현
 // RowName을 기준으로 저장하고 테이블 경로는 복원용 힌트로 함께 보관
@@ -142,11 +145,17 @@ struct CONVENIENCESTORE_API FCSSaveHeader
 // -----------------------------------------------------------------------------
 
 // 영업 진행 상태 레코드
-// 하루 단위 집계와 단계 상태는 StartStoreFlow()가 다시 확정하므로 제외
+// 영업 종료 직후에 저장하므로 그날 집계를 함께 기록해 불러온 뒤 정산이 같은 결과를 내도록 유지
+// 시계·영업 여부 등 나머지 단계 상태는 불러온 뒤 GameMode가 SavedPhase 기준으로 다시 확정
 USTRUCT()
 struct CONVENIENCESTORE_API FCSStoreStateRecord
 {
 	GENERATED_BODY()
+
+	// 저장 당시 단계
+	// ClosingFreeRoam이면 불러온 뒤 자유 시간으로 복귀하고 그 외에는 준비 단계 아침으로 시작
+	UPROPERTY()
+	ECStorePhase SavedPhase = ECStorePhase::Preparation;
 
 	// 저장 시점의 영업일
 	UPROPERTY()
@@ -194,6 +203,134 @@ struct CONVENIENCESTORE_API FCSStoreStateRecord
 	// 복원하지 않으면 로드 직후 인건비를 이중 청구
 	UPROPERTY()
 	int32 LastPayrollProcessedBusinessDay = INDEX_NONE;
+
+	// 당일 집계
+	// 필드 의미는 ACSStoreGameState의 같은 이름 멤버와 동일
+
+	// 오늘 영업을 한 번이라도 시작했는지
+	UPROPERTY()
+	bool bHasStoreOpenedToday = false;
+
+	// 오늘 결제 완료된 거래의 총매출
+	UPROPERTY()
+	int32 DailySalesGold = 0;
+
+	// 오늘 판매된 상품의 총매입가
+	UPROPERTY()
+	int32 DailyCostGold = 0;
+
+	// 오늘 총매출에서 총매입가를 뺀 이익
+	UPROPERTY()
+	int32 DailyProfitGold = 0;
+
+	// 오늘 결제 완료된 상품의 총수량
+	UPROPERTY()
+	int32 DailySoldQuantity = 0;
+
+	// 오늘 완료한 손님 결제 횟수
+	UPROPERTY()
+	int32 CompletedCheckoutCount = 0;
+
+	// 오늘 낱개 상품을 폐기하며 잃은 매입가 합계
+	UPROPERTY()
+	int32 DailyWasteLossGold = 0;
+
+	// 오늘 마감 처리에서 실제로 납부한 임대료
+	UPROPERTY()
+	int32 DailyRentGold = 0;
+
+	// 오늘 보유 자금에서 실제로 차감된 모든 지출의 합계
+	UPROPERTY()
+	int32 DailyExpenseGold = 0;
+
+	// 오늘 마법진 강화에 쓴 지출
+	UPROPERTY()
+	int32 DailyMagicCircleUpgradeExpenseGold = 0;
+
+	// 오늘 직원 고용에 쓴 지출
+	UPROPERTY()
+	int32 DailyEmployeeHireExpenseGold = 0;
+
+	// 오늘 마감 처리에서 지급한 직원 인건비
+	UPROPERTY()
+	int32 DailyEmployeeWageGold = 0;
+
+	// 오늘 일반 상품 발주에 쓴 지출
+	UPROPERTY()
+	int32 DailyProductOrderExpenseGold = 0;
+
+	// 오늘 일반 시설 발주에 쓴 지출
+	UPROPERTY()
+	int32 DailyFacilityOrderExpenseGold = 0;
+
+	// 오늘 빠른 상품 발주에 쓴 지출
+	UPROPERTY()
+	int32 DailyQuickProductOrderExpenseGold = 0;
+
+	// 오늘 빠른 시설 발주에 쓴 지출
+	UPROPERTY()
+	int32 DailyQuickFacilityOrderExpenseGold = 0;
+
+	// 도주에 성공한 절도 손님이 훔친 상품의 판매가 합계
+	UPROPERTY()
+	int32 DailyShopliftLossGold = 0;
+
+	// 상품 분석에 표시할 오늘 폐기된 상품별 수량
+	UPROPERTY()
+	TMap<FName, int32> DailyDisposedProductQuantities;
+
+	// 폐기 후 상품 액터가 사라져도 분석 화면에 표시할 상품명
+	UPROPERTY()
+	TMap<FName, FText> DailyDisposedProductNames;
+
+	// 상품 분석에 표시할 오늘 도난당한 상품별 수량
+	UPROPERTY()
+	TMap<FName, int32> DailyStolenProductQuantities;
+
+	// 도주 손님이 파괴된 뒤에도 분석 화면에 표시할 도난 상품명
+	UPROPERTY()
+	TMap<FName, FText> DailyStolenProductNames;
+
+	// 정산과 판매 보고서가 읽는 그날 결제 거래 목록
+	UPROPERTY()
+	TArray<FCSCheckoutTransaction> DailyCheckoutTransactions;
+
+	// 영업일 안에서 다음 거래에 사용할 순번
+	UPROPERTY()
+	int32 NextTransactionId = 1;
+};
+
+// 잠자기 때 평판 계산에 쓰는 그날 손님 통계
+// UCSStoreReputationSubsystem의 Daily* 멤버와 1:1
+USTRUCT()
+struct CONVENIENCESTORE_API FCSReputationDailySaveRecord
+{
+	GENERATED_BODY()
+
+	// 매장에 실제로 들어온 손님 수 (지나간 행인·영업 종료 강제 퇴장 손님 제외)
+	// 만족도 계산의 분모
+	UPROPERTY()
+	int32 DailyEnteredCustomers = 0;
+
+	// 정상 결제를 완료한 횟수
+	UPROPERTY()
+	int32 DailyNormalCheckouts = 0;
+
+	// 추첨을 통과해 카운트에 반영된 계산 포기 횟수
+	UPROPERTY()
+	int32 DailyCheckoutAbandoned = 0;
+
+	// 추첨을 통과해 카운트에 반영된 빈손 퇴장 횟수
+	UPROPERTY()
+	int32 DailyEmptyHandedDepartures = 0;
+
+	// 누적된 가격 불쾌 가중치 합 (손님당 최대 1.0, 1일 1회 제한)
+	UPROPERTY()
+	float DailyPriceUpsetSum = 0.0f;
+
+	// 다른 손님의 쓰레기를 목격해 평판에 반영된 횟수 (손님당 1일 1회 제한)
+	UPROPERTY()
+	int32 DailyTrashWitnessed = 0;
 };
 
 // -----------------------------------------------------------------------------

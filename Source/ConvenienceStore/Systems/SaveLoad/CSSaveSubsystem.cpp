@@ -5,19 +5,16 @@
 #include "GameFramework/GameStateBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "TimerManager.h"
 #include "UObject/SoftObjectPath.h"
 
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveParticipant.h"
-#include "Systems/StoreFlow/CSStoreGameState.h"
 
 void UCSSaveSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	PendingLoadData = nullptr;
 	BasePlayTimeSeconds = 0.0f;
-	bAutoSaveScheduled = false;
 }
 
 void UCSSaveSubsystem::Deinitialize()
@@ -165,66 +162,6 @@ bool UCSSaveSubsystem::SaveToAutoSlot()
 	return SaveToSlot(GetAutoSaveSlotName());
 }
 
-bool UCSSaveSubsystem::CanManualSave(FText& OutReason) const
-{
-	const UWorld* World = GetWorld();
-	const ACSStoreGameState* StoreGameState = nullptr;
-	if (World != nullptr)
-	{
-		StoreGameState = World->GetGameState<ACSStoreGameState>();
-	}
-
-	if (!IsValid(StoreGameState))
-	{
-		OutReason = NSLOCTEXT("Save", "SaveUnavailable", "지금은 저장할 수 없습니다.");
-		return false;
-	}
-
-	// 영업 중 저장 후 불러오면 준비 단계로 돌아가 수락한 배달이 실패 처리되므로 차단
-	if (StoreGameState->CurrentPhase != ECStorePhase::Preparation)
-	{
-		OutReason = NSLOCTEXT("Save", "SaveOnlyInPreparation", "영업 준비 시간에만 저장할 수 있습니다.");
-		return false;
-	}
-
-	OutReason = FText::GetEmpty();
-	return true;
-}
-
-void UCSSaveSubsystem::RequestAutoSaveNextTick(AActor* ContextActor)
-{
-	if (bAutoSaveScheduled)
-	{
-		return;
-	}
-
-	UWorld* World = GetWorld();
-	if (ContextActor != nullptr)
-	{
-		World = ContextActor->GetWorld();
-	}
-
-	if (World == nullptr)
-	{
-		return;
-	}
-
-	// 복원 대기 중에는 이전 월드 상태로 자동 세이브를 덮어쓰지 않도록 차단
-	if (HasPendingLoad())
-	{
-		return;
-	}
-
-	bAutoSaveScheduled = true;
-	World->GetTimerManager().SetTimerForNextTick(this, &UCSSaveSubsystem::HandleAutoSaveTimer);
-}
-
-void UCSSaveSubsystem::HandleAutoSaveTimer()
-{
-	bAutoSaveScheduled = false;
-	SaveToAutoSlot();
-}
-
 bool UCSSaveSubsystem::LoadFromSlot(FName SlotName)
 {
 	if (SlotName.IsNone())
@@ -262,9 +199,6 @@ bool UCSSaveSubsystem::LoadFromSlot(FName SlotName)
 	PendingLoadData = LoadedSave;
 	BasePlayTimeSeconds = LoadedSave->Header.PlayTimeSeconds;
 
-	// 예약된 자동 세이브가 레벨 전환 직전에 실행되지 않도록 해제
-	bAutoSaveScheduled = false;
-
 	// 헤더에 기록된 레벨을 열고 경로가 없으면 현재 레벨을 다시 열기
 	const FSoftObjectPath& LevelPath = LoadedSave->Header.LevelPath;
 	if (LevelPath.IsValid())
@@ -285,9 +219,6 @@ bool UCSSaveSubsystem::ApplyPendingLoad(UWorld& InWorld)
 	{
 		return false;
 	}
-
-	// 복원 도중 자동 세이브가 끼어들지 않도록 예약 해제
-	bAutoSaveScheduled = false;
 
 	UCSSaveGame* SaveToApply = PendingLoadData;
 

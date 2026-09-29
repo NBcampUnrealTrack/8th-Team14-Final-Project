@@ -4,6 +4,8 @@
 #include "Components/TextBlock.h"
 #include "Internationalization/Text.h"
 
+#include "Systems/SaveLoad/CSSaveSubsystem.h"
+
 void UCSSaveSlotWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -45,10 +47,18 @@ void UCSSaveSlotWidget::SetupSlot(const FCSSaveHeader& InHeader)
 
 void UCSSaveSlotWidget::RefreshDisplay()
 {
+	// 수동 저장이 없으므로 저장 버튼은 항상 숨김
+	// 버튼과 OnSaveRequested는 2단계 슬롯(새로 시작) 용도로 남겨 둠
+	if (IsValid(SaveButton))
+	{
+		SaveButton->SetVisibility(ESlateVisibility::Collapsed);
+	}
+
 	// 자동 세이브 슬롯은 슬롯 이름 대신 고정 제목을 표시
+	// 빈 슬롯은 헤더가 없으므로 슬롯 이름으로도 확인
 	if (IsValid(SlotTitleText))
 	{
-		if (Header.bIsAutoSave)
+		if (Header.bIsAutoSave || SlotName == UCSSaveSubsystem::GetAutoSaveSlotName())
 		{
 			SlotTitleText->SetText(NSLOCTEXT("Save", "AutoSlotTitle", "자동 저장"));
 		}

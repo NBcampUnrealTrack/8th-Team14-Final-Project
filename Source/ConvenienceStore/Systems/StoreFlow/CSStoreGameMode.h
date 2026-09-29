@@ -148,6 +148,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store")
 	bool bStartFlowOnBeginPlay = true;
 
+	// 영업 종료 후 손님이 상품을 모두 떨어뜨렸는지 확인하는 간격(초)입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Save", meta = (ClampMin = "0.05"))
+	float ClosingSaveCheckIntervalSeconds = 0.2f;
+
+	// 영업 종료 자동 저장을 기다리는 최대 시간(초)입니다.
+	// 도주 손님이 끝내 사라지지 않는 등 조건이 참이 되지 않으면 이 시간이 지난 뒤 경고 로그와 함께 저장합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Save", meta = (ClampMin = "0.1"))
+	float ClosingSaveMaxWaitSeconds = 10.0f;
+
 	// 이 값이 true인 게임모드(BP_TutorialGameMode)를 쓰는 맵에서만 튜토리얼이 시작됨
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Tutorial")
 	bool bTutorialEnabled = false;
@@ -180,6 +189,25 @@ private:
 	// BeginPlay 다음 틱에 호출
 	void ApplyPendingSaveLoad();
 
+	// 영업 종료 시점 세이브를 불러온 뒤 자유 시간으로 복귀
+	// 기존 마감 처리(BeginClosingCheckpoint)를 재사용하고 임대료·인건비는 처리일 검사로 다시 청구되지 않음
+	void RestoreClosingCheckpoint();
+
+	// 손님이 상품을 모두 떨어뜨린 뒤 자동 저장하도록 대기 시작
+	void BeginClosingSaveWait();
+
+	// 저장 조건을 확인하고 만족하면 자동 저장
+	void TryClosingAutoSave();
+
+	// 최대 대기 시간이 지나면 조건과 관계없이 자동 저장
+	void HandleClosingSaveTimeout();
+
+	// 대기 타이머를 정리하고 자동 저장을 실행
+	void ExecuteClosingAutoSave();
+
+	// 대기 타이머 정리
+	void ClearClosingSaveTimers();
+
 	const FCSStorePhaseData* FindPhaseData(ECStorePhase Phase) const;
 	const FCSStorePhaseData* FindPhaseDataAtTime(float GameMinutes) const;
 	void UpdateGameClock();
@@ -193,4 +221,13 @@ private:
 	FTimerHandle GameClockTimerHandle;
 	TSet<FName> FiredScheduleEventRows;
 	bool bClosingWarningFired = false;
+
+	FTimerHandle ClosingSaveCheckTimerHandle;
+	FTimerHandle ClosingSaveTimeoutTimerHandle;
+
+	// 오늘 영업 종료 자동 저장을 마쳤는지
+	bool bClosingAutoSaveDone = false;
+
+	// 불러오기로 자유 시간에 복귀한 경우 같은 상태를 다시 저장하지 않도록 차단
+	bool bSkipClosingAutoSave = false;
 };

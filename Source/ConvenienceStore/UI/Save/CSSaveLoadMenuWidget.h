@@ -14,7 +14,8 @@ class UCSSaveSubsystem;
 // 닫기 버튼 클릭 알림
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnSaveLoadMenuClosed);
 
-// 자동 세이브와 수동 슬롯 3개를 함께 표시하는 저장·불러오기 메뉴
+// 게임 중 P로 여는 불러오기 전용 메뉴
+// 저장은 영업 종료 직후 자동으로만 수행되므로 자동 세이브 슬롯의 불러오기·삭제만 제공
 UCLASS(Abstract)
 class CONVENIENCESTORE_API UCSSaveLoadMenuWidget : public UUserWidget
 {
@@ -31,9 +32,6 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
-
-	UFUNCTION()
-	void HandleSlotSaveRequested(FName SlotName);
 
 	UFUNCTION()
 	void HandleSlotLoadRequested(FName SlotName);
@@ -67,10 +65,6 @@ protected:
 	// 슬롯 한 칸을 표시할 위젯 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Save|Menu")
 	TSubclassOf<UCSSaveSlotWidget> SlotWidgetClass;
-
-	// 자동 세이브 슬롯의 목록 표시 여부
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Save|Menu")
-	bool bShowAutoSaveSlot = true;
 
 	// 현재 생성된 슬롯 위젯 목록
 	UPROPERTY(Transient)

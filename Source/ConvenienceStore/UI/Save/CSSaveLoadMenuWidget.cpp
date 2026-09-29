@@ -60,17 +60,10 @@ void UCSSaveLoadMenuWidget::RefreshSlots()
 			});
 	};
 
-	if (bShowAutoSaveSlot)
-	{
-		const FName AutoSlotName = UCSSaveSubsystem::GetAutoSaveSlotName();
-		CreateSlotWidget(AutoSlotName, FindHeader(AutoSlotName));
-	}
-
-	for (int32 SlotIndex = 0; SlotIndex < UCSSaveSubsystem::GetManualSlotCount(); ++SlotIndex)
-	{
-		const FName ManualSlotName = UCSSaveSubsystem::MakeManualSlotName(SlotIndex);
-		CreateSlotWidget(ManualSlotName, FindHeader(ManualSlotName));
-	}
+	// 수동 슬롯(CS_Slot0~2)은 V2 1단계에서 숨기고 자동 세이브 슬롯만 표시
+	// 2단계에서 세이브 파일 슬롯으로 재사용 예정
+	const FName AutoSlotName = UCSSaveSubsystem::GetAutoSaveSlotName();
+	CreateSlotWidget(AutoSlotName, FindHeader(AutoSlotName));
 
 	SetStatusMessage(FText::GetEmpty());
 }
@@ -99,47 +92,13 @@ UCSSaveSlotWidget* UCSSaveLoadMenuWidget::CreateSlotWidget(
 		SlotWidget->SetupEmptySlot(SlotName);
 	}
 
-	// 자동 세이브 슬롯에는 수동 저장 요청을 연결하지 않음
-	if (SlotName != UCSSaveSubsystem::GetAutoSaveSlotName())
-	{
-		SlotWidget->OnSaveRequested.AddUniqueDynamic(this, &UCSSaveLoadMenuWidget::HandleSlotSaveRequested);
-	}
-
+	// 수동 저장이 없으므로 저장 요청은 연결하지 않음
 	SlotWidget->OnLoadRequested.AddUniqueDynamic(this, &UCSSaveLoadMenuWidget::HandleSlotLoadRequested);
 	SlotWidget->OnDeleteRequested.AddUniqueDynamic(this, &UCSSaveLoadMenuWidget::HandleSlotDeleteRequested);
 
 	SlotContainer->AddChild(SlotWidget);
 	SlotWidgets.Add(SlotWidget);
 	return SlotWidget;
-}
-
-void UCSSaveLoadMenuWidget::HandleSlotSaveRequested(FName SlotName)
-{
-	UCSSaveSubsystem* SaveSubsystem = GetSaveSubsystem();
-	if (SaveSubsystem == nullptr)
-	{
-		return;
-	}
-
-	// 영업 중 저장은 불러올 때 배달 실패·평판 감소를 일으키므로 준비 단계에서만 허용
-	FText BlockedReason;
-	if (!SaveSubsystem->CanManualSave(BlockedReason))
-	{
-		SetStatusMessage(BlockedReason);
-		return;
-	}
-
-	if (!SaveSubsystem->SaveToSlot(SlotName))
-	{
-		SetStatusMessage(NSLOCTEXT("Save", "SaveFailed", "저장에 실패했습니다."));
-		return;
-	}
-
-	// 목록을 먼저 갱신한 뒤 결과 메시지를 표시
-	RefreshSlots();
-	SetStatusMessage(FText::Format(
-		NSLOCTEXT("Save", "SaveSucceeded", "{0}에 저장했습니다."),
-		FText::FromName(SlotName)));
 }
 
 void UCSSaveLoadMenuWidget::HandleSlotLoadRequested(FName SlotName)

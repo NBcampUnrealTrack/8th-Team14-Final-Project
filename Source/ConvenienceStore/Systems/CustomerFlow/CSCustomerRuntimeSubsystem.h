@@ -451,6 +451,12 @@ public:
 	// 마감 확정과 영업일 전환이 같은 기준을 쓰도록 한 곳에 모아둡니다.
 	bool IsEscapingShoplifter(const ACSCustomerCharacter* Customer) const;
 
+	// 영업 종료 자동 저장이 가능한 상태인지 확인
+	// 손님이 집은 상품은 SelectProducts에 데이터로만 있어 세이브에 담기지 않으므로
+	// 상품 데이터를 가진 손님이 한 명도 없을 때만 true
+	// 도주 중인 절도 손님은 잡히거나 빠져나갈 때까지 false를 유지
+	bool IsReadyForClosingSave() const;
+
 	FCSOnCustomerForcedToLeave OnCustomerForcedToLeave;
 
 	// =====================================================================
