@@ -62,6 +62,13 @@ void UCSStoreTopBarWidget::NativeDestruct()
 	Super::NativeDestruct();
 }
 
+void UCSStoreTopBarWidget::SetBuildModeActive(
+	const bool bIsBuildMode,
+	const bool bPlayTransition)
+{
+	OnBuildModeVisualChanged(bIsBuildMode, bPlayTransition);
+}
+
 void UCSStoreTopBarWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);

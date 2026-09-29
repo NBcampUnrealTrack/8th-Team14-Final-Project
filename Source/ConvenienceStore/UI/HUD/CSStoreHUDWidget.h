@@ -5,6 +5,7 @@
 #include "Data/CSProductTypes.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "UI/HUD/CSInteractionPrompt.h"
+#include "TimerManager.h"
 #include "CSStoreHUDWidget.generated.h"
 
 class ACSStoreGameState;
@@ -16,6 +17,7 @@ class UProgressBar;
 class UTextBlock;
 class UTexture2D;
 class UWidget;
+class UWidgetAnimation;
 
 // 게임 상태 이벤트를 UMG 위젯 표시에 연결하는 HUD 기본 클래스입니다.
 UCLASS(Abstract)
@@ -66,6 +68,7 @@ protected:
 
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> PhaseNameText;
@@ -155,6 +158,22 @@ protected:
 
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> BuildModeNoticeText;
+
+	UPROPERTY(Transient, meta = (BindWidgetAnimOptional))
+	TObjectPtr<UWidgetAnimation> Anim_BuildModeBorder;
+
+	// 선 테두리는 고정하고, 화면 가장자리의 은은한 광원 이미지만 C++에서 펄스시킵니다.
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UImage> Image_BuildModeGlow;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Build Mode Glow", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BuildModeGlowMinOpacity = 0.28f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Build Mode Glow", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float BuildModeGlowMaxOpacity = 0.62f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Build Mode Glow", meta = (ClampMin = "0.1"))
+	float BuildModeGlowPulseSeconds = 2.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|HUD|Player Mode")
 	TObjectPtr<UTexture2D> BusinessModeIconTexture;
@@ -261,6 +280,7 @@ private:
 	void UpdateEndOfDayPanel();
 	void UpdateDailySalesDisplay();
 	void ApplyClosingClockColor(float ClosingColorAlpha);
+	UFUNCTION() void FinishBuildModeBorderExit();
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	float CurrentPhaseSelectionY = 0.0f;
@@ -269,4 +289,7 @@ private:
 	FLinearColor InitialClockHourColor = FLinearColor::White;
 	FLinearColor InitialClockColonColor = FLinearColor::White;
 	FLinearColor InitialClockMinuteColor = FLinearColor::White;
+	FTimerHandle BuildModeBorderExitTimerHandle;
+	float BuildModeGlowElapsedSeconds = 0.0f;
+	bool bBuildModeGlowActive = false;
 };
