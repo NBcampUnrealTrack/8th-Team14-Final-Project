@@ -22,25 +22,62 @@ ACSGachaArtifactPickup::ACSGachaArtifactPickup()
 	DisplayMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DisplayMesh"));
 	DisplayMesh->SetupAttachment(InteractionBox);
 	DisplayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	DisplayMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")));
+	FallbackMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	DisplayMesh->SetStaticMesh(FallbackMesh);
 	DisplayMesh->SetRelativeScale3D(FVector(0.3f));
 }
 
-void ACSGachaArtifactPickup::InitializeArtifact(FName InArtifactId, int32 InQuantity)
+void ACSGachaArtifactPickup::OnConstruction(const FTransform& Transform)
 {
-	ArtifactId = InArtifactId;
+	Super::OnConstruction(Transform);
+	ApplyArtifactRow();
+}
+
+void ACSGachaArtifactPickup::BeginPlay()
+{
+	Super::BeginPlay();
+	if (ApplyArtifactRow()) RegisterArtifactTable();
+}
+
+bool ACSGachaArtifactPickup::InitializeArtifact(FDataTableRowHandle InArtifactRow, int32 InQuantity)
+{
+	ArtifactRow = InArtifactRow;
 	Quantity = FMath::Max(1, InQuantity);
+	const bool bValidRow = ApplyArtifactRow();
+	if (bValidRow && HasActorBegunPlay()) RegisterArtifactTable();
+	return bValidRow;
+}
+
+bool ACSGachaArtifactPickup::ApplyArtifactRow()
+{
+	ArtifactId = NAME_None;
 	ArtifactDisplayName = FText::GetEmpty();
-	if (const UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr)
+	DisplayMesh->SetStaticMesh(FallbackMesh);
+	Quantity = FMath::Max(1, Quantity);
+	if (!ArtifactRow.DataTable || ArtifactRow.RowName.IsNone() || !ArtifactRow.DataTable->GetRowStruct() ||
+		!ArtifactRow.DataTable->GetRowStruct()->IsChildOf(FCSJournalArtifactDataRow::StaticStruct())) return false;
+	const FCSJournalArtifactDataRow* Definition = ArtifactRow.GetRow<FCSJournalArtifactDataRow>(TEXT("Artifact pickup"));
+	if (!Definition) return false;
+	ArtifactId = ArtifactRow.RowName;
+	ArtifactDisplayName = Definition->DisplayName;
+	if (Definition->WorldMesh) DisplayMesh->SetStaticMesh(Definition->WorldMesh);
+	return true;
+}
+
+void ACSGachaArtifactPickup::RegisterArtifactTable()
+{
+	// 가챠 기계가 없는 테스트 레벨에서도 획득과 도감 등록을 사용할 수 있게 합니다.
+	if (UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr)
 	{
-		if (const UCSArtifactSubsystem* Artifacts = GameInstance->GetSubsystem<UCSArtifactSubsystem>())
+		// 등록 함수의 포인터 형식에 맞추며 테이블 내용은 수정하지 않습니다.
+		UDataTable* Table = const_cast<UDataTable*>(ArtifactRow.DataTable.Get());
+		if (UCSArtifactSubsystem* Artifacts = GameInstance->GetSubsystem<UCSArtifactSubsystem>())
 		{
-			FCSJournalArtifactDataRow Definition;
-			if (Artifacts->GetDefinition(ArtifactId, Definition))
-			{
-				ArtifactDisplayName = Definition.DisplayName;
-				if (Definition.WorldMesh) DisplayMesh->SetStaticMesh(Definition.WorldMesh);
-			}
+			Artifacts->RegisterTable(Table);
+		}
+		if (UCSJournalSubsystem* Journal = GameInstance->GetSubsystem<UCSJournalSubsystem>())
+		{
+			Journal->RegisterArtifactTable(Table);
 		}
 	}
 }

@@ -14,6 +14,7 @@ UCSEndingData::UCSEndingData()
 		FCSEndingItemDefinition& Item = Items.AddDefaulted_GetRef();
 		Item.ItemId = Ids[Index];
 		Item.DisplayName = Names[Index];
+		Item.RequiredStoreLevel = 4 + Index * 2;
 		Item.ActorClass = ACSEndingItemActor::StaticClass();
 	}
 }
@@ -24,7 +25,7 @@ bool UCSEndingData::IsConfigurationValid() const
 	TSet<FName> Ids;
 	for (const FCSEndingItemDefinition& Item : Items)
 	{
-		if (Item.ItemId.IsNone() || Ids.Contains(Item.ItemId) || Item.PriceGold < 0 || !Item.ActorClass ||
+		if (Item.ItemId.IsNone() || Ids.Contains(Item.ItemId) || Item.PriceGold < 0 || Item.RequiredStoreLevel < 1 || !Item.ActorClass ||
 			Item.ActorClass->HasAnyClassFlags(CLASS_Abstract)) return false;
 		Ids.Add(Item.ItemId);
 	}

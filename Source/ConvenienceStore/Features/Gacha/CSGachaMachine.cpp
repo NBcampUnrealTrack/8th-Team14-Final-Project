@@ -7,9 +7,6 @@
 #include "Data/CSProductTypes.h"
 #include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
-#include "EngineUtils.h"
-#include "Features/Ending/CSEndingActors.h"
-#include "Features/Ending/CSEndingData.h"
 #include "Features/Gacha/CSGachaArtifactPickup.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -62,7 +59,9 @@ TArray<FCSGachaPoolRow> ACSGachaMachine::BuildRewards() const
 	{
 		if (const FCSGachaPoolRow* Row = RewardPool->GachaTable->FindRow<FCSGachaPoolRow>(RowName, TEXT("Gacha draw")))
 		{
-			if (Row->bEnabled && Row->Weight > 0) Result.Add(*Row);
+			// 이전 테이블에 엔딩 행이 남아 있어도 구매 전용 아이템은 추첨하지 않습니다.
+			if (Row->bEnabled && Row->Weight > 0 &&
+				(Row->RewardType == ECSGachaRewardType::Product || Row->RewardType == ECSGachaRewardType::Artifact)) Result.Add(*Row);
 		}
 	}
 	return Result;
@@ -107,20 +106,6 @@ bool ACSGachaMachine::IsRewardAvailable(const FCSGachaPoolRow& Reward) const
 		const UCSArtifactSubsystem* Artifacts = Instance ? Instance->GetSubsystem<UCSArtifactSubsystem>() : nullptr;
 		FCSJournalArtifactDataRow Definition;
 		return ArtifactActorClass && Artifacts && Artifacts->GetDefinition(Reward.ArtifactRow.RowName.IsNone() ? Reward.RewardId : Reward.ArtifactRow.RowName, Definition);
-	}
-	if (Reward.RewardType == ECSGachaRewardType::Ending)
-	{
-		if (Reward.Quantity != 1) return false;
-		for (TActorIterator<ACSEndingManager> It(GetWorld()); It; ++It)
-		{
-			if (const UCSEndingData* Data = It->GetEndingData())
-			{
-				for (const FCSEndingItemDefinition& Item : Data->Items)
-				{
-					if (Item.ItemId == Reward.RewardId && Item.ActorClass) return true;
-				}
-			}
-		}
 	}
 	return false;
 }
@@ -203,36 +188,16 @@ void ACSGachaMachine::CompleteDraw()
 	}
 	else if (SelectedReward.RewardType == ECSGachaRewardType::Artifact)
 	{
+		FDataTableRowHandle Handle = SelectedReward.ArtifactRow;
+		if (!Handle.DataTable) Handle.DataTable = RewardPool->ArtifactTable;
+		if (Handle.RowName.IsNone()) Handle.RowName = SelectedReward.RewardId;
 		ACSGachaArtifactPickup* Artifact = GetWorld()->SpawnActorDeferred<ACSGachaArtifactPickup>(ArtifactActorClass, Transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (IsValid(Artifact))
+		if (IsValid(Artifact) && Artifact->InitializeArtifact(Handle, SelectedReward.Quantity))
 		{
-			Artifact->InitializeArtifact(SelectedReward.ArtifactRow.RowName.IsNone() ? SelectedReward.RewardId : SelectedReward.ArtifactRow.RowName, SelectedReward.Quantity);
 			Artifact->FinishSpawning(Transform);
 			Spawned = Artifact;
 		}
-	}
-	else if (SelectedReward.RewardType == ECSGachaRewardType::Ending)
-	{
-		for (TActorIterator<ACSEndingManager> It(GetWorld()); It && !Spawned; ++It)
-		{
-			if (const UCSEndingData* Data = It->GetEndingData())
-			{
-				for (const FCSEndingItemDefinition& Item : Data->Items)
-				{
-					if (Item.ItemId != SelectedReward.RewardId || !Item.ActorClass) continue;
-					UClass* RowClass = SelectedReward.ActorClass.LoadSynchronous();
-					UClass* Class = RowClass && RowClass->IsChildOf(ACSEndingItemActor::StaticClass()) ? RowClass : Item.ActorClass.Get();
-					ACSEndingItemActor* Ending = GetWorld()->SpawnActorDeferred<ACSEndingItemActor>(Class, Transform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-					if (IsValid(Ending))
-					{
-						Ending->InitializeItem(Item, *It);
-						Ending->FinishSpawning(Transform);
-						Spawned = Ending;
-					}
-					break;
-				}
-			}
-		}
+		else if (IsValid(Artifact)) Artifact->Destroy();
 	}
 	// 액터 생성이 끝난 뒤 결제하여 생성 실패에 따른 골드 손실을 방지합니다.
 	if (!IsValid(Spawned))
@@ -250,7 +215,6 @@ void ACSGachaMachine::CompleteDraw()
 	const FVector Impulse = (GetActorForwardVector() * 0.55f + FVector::UpVector) * LaunchImpulse;
 	if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Spawned)) Product->LaunchFromGacha(Impulse);
 	else if (ACSGachaArtifactPickup* Artifact = Cast<ACSGachaArtifactPickup>(Spawned)) Artifact->Launch(Impulse);
-	else if (ACSEndingItemActor* Ending = Cast<ACSEndingItemActor>(Spawned)) Ending->LaunchFromGacha(Impulse);
 	OnRewardDispensed(SelectedReward.RewardType, SelectedReward.RewardId);
 	NotifyPlayer(NSLOCTEXT("Gacha", "TakeReward", "보상이 나왔습니다. 획득해 주세요."));
 }
