@@ -40,6 +40,8 @@ public:
 	virtual void PrepareForPickupPhysics();
 	// 도구를 바닥에 내려놓을 때 중력과 충돌을 포함한 월드 물리를 활성화합니다.
 	virtual void EnableWorldDropPhysics();
+	// 실제 Q 조작이 끝났을 때만 호출합니다. 퀵바 전환과 최초 배출은 포함하지 않습니다.
+	virtual void OnReleasedToWorld(bool bThrown) {}
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
