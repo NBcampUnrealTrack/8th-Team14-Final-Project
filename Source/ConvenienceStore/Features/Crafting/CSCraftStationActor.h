@@ -76,12 +76,13 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
 	void OnStirred(int32 NewStirCount);
 
-	// 거품 주기가 시작될 때마다 부른다. Period 끝에 가장 커지게 그려야 가루 판정 시점과 맞는다
+	// 거품 주기가 시작될 때마다 부른다. Period 끝에 가장 커지게 그려야 판정 시점과 맞는다
 	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
 	void OnBubbleCycle(float Period);
 
+	// 거품은 맞든 틀리든 터진다. BubbleHiddenSeconds 동안 숨겨야 같은 최고점에서 다시 부풀어 보이지 않는다
 	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
-	void OnPowderResult(bool bOnTime);
+	void OnBubblePopResult(bool bHit, const FText& ResultText, float BubbleHiddenSeconds);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
 	void OnCraftFinished(ECSCraftOutcome Outcome, int32 Quantity);
@@ -152,7 +153,7 @@ protected:
 	TObjectPtr<UInputAction> StirAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
-	TObjectPtr<UInputAction> PowderAction;
+	TObjectPtr<UInputAction> PopAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
 	TObjectPtr<UInputAction> FinishAction;
@@ -167,9 +168,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Timing", meta = (ClampMin = "0.1"))
 	float DefaultBubblePeriod = 2.0f;
 
-	// 거품 최고점과의 허용 오차(초). 임시값이고 성공률 70~80%를 보고 조정한다
+	// 거품 최고점과의 허용 오차(초). 밸런스 전 시작값
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Timing", meta = (ClampMin = "0.0"))
-	float PowderToleranceSeconds = 0.3f;
+	float PopToleranceSeconds = 0.08f;
+
+	// 레시피가 없는 조합도 거품을 터트려야 끝난다. 바로 끝나면 없는 조합인 게 드러난다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Timing", meta = (ClampMin = "1"))
+	int32 DefaultPopCount = 2;
 
 	// 플레이어 E 거리(InteractionDistance 750)와 맞춘다. 짧으면 모형을 조준해도 몸통으로 잡힌다
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Interaction", meta = (ClampMin = "0.0"))
@@ -200,7 +205,21 @@ protected:
 	float CurrentBubblePeriod = 0.0f;
 
 	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
-	bool bPowderOnTime = false;
+	int32 CurrentPopCount = 0;
+
+	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
+	int32 PopsUsed = 0;
+
+	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
+	int32 PopHits = 0;
+
+	// 시작 후 몇 번째 최고점의 거품을 마지막으로 터트렸는지. 0이면 아직 없다
+	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
+	int32 LastPoppedPeakIndex = 0;
+
+	// 결과물 스폰에 실패했을 때만 켜진다. 이때만 E로 완성을 다시 시도한다
+	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
+	bool bFinishRetryPending = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCSCraftCloseupWidget> ActiveCloseupWidget;
@@ -246,7 +265,7 @@ private:
 	void HandleHeatDown();
 	void HandleHeatUp();
 	void HandleStir();
-	void HandlePowder();
+	void HandleBubblePop();
 	void HandleFinish();
 	void HandleExit();
 	void HandleBubbleCycle();

@@ -21,12 +21,12 @@ public:
 	// 레시피 표나 상품 표가 없으면 false. 이때 제조대는 제조를 시작하지 않는다
 	bool IsCraftingAvailable() const { return bCraftingAvailable; }
 
-	// Ingredients는 재료 RowName별 개수. 레시피, 꽝, 개수, 불, 젓기 순으로 보고 먼저 틀린 것을 결과로 낸다
+	// Ingredients는 재료 RowName별 개수. 레시피, 꽝, 개수, 불, 젓기, 거품 순으로 보고 먼저 틀린 것을 결과로 낸다
 	FCSCraftEvaluation EvaluateCraft(
 		const TMap<FName, int32>& Ingredients,
 		ECSCraftHeat Heat,
 		int32 StirCount,
-		bool bPowderOnTime) const;
+		int32 PopHits) const;
 
 	bool IsRecipeDiscovered(FName IngredientA, FName IngredientB) const;
 	// 성공, 대성공, 꽝일 때만 부른다. 쓰레기가 나온 건 조합을 알아낸 게 아니다
@@ -42,6 +42,8 @@ public:
 	TArray<FCSTutorialHintEntry> GetKeyHints(ECSCraftStep Step) const;
 	// 레시피가 없으면 0
 	float GetRecipePeriod(FName IngredientA, FName IngredientB) const;
+	// 레시피가 없으면 0. 제조대가 자기 기본값을 쓴다
+	int32 GetRecipePopCount(FName IngredientA, FName IngredientB) const;
 	UDataTable* GetProductTable() const { return ProductTable; }
 
 private:

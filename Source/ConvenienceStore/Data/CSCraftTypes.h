@@ -27,7 +27,8 @@ enum class ECSCraftRecipeKind : uint8
 	Junk UMETA(DisplayName = "꽝")
 };
 
-// 실패 4종의 값 이름을 DT_CraftFailure RowName으로 쓴다. 이름을 바꾸면 DT 행 이름도 같이 바꿔야 한다
+// 실패 쓰레기 5종의 값 이름을 DT_CraftFailure RowName으로 쓴다. 이름을 바꾸면 DT 행 이름도 같이 바꿔야 한다
+// 새 값은 맨 끝에만 붙인다. 중간에 넣으면 저장된 값이 밀린다
 UENUM(BlueprintType)
 enum class ECSCraftOutcome : uint8
 {
@@ -38,7 +39,8 @@ enum class ECSCraftOutcome : uint8
 	MismatchedCount UMETA(DisplayName = "짝짝이 덩어리"),
 	Burnt UMETA(DisplayName = "새까맣게 탄 덩어리"),
 	Undermixed UMETA(DisplayName = "덜 섞인 반죽"),
-	Unknown UMETA(DisplayName = "정체불명의 덩어리")
+	Unknown UMETA(DisplayName = "정체불명의 덩어리"),
+	PopFailed UMETA(DisplayName = "김빠진 덩어리")
 };
 
 // 제조대 진행 단계. 순서가 고정이고 완성하면 Idle로 돌아간다
@@ -48,7 +50,7 @@ enum class ECSCraftStep : uint8
 	Idle UMETA(DisplayName = "대기"),
 	Heat UMETA(DisplayName = "불"),
 	Stir UMETA(DisplayName = "젓기"),
-	Powder UMETA(DisplayName = "가루")
+	Pop UMETA(DisplayName = "거품 터트리기")
 };
 
 // 레시피에 붙지 않는 소문 분류. 게시판 소문 탭에서 쓴다
@@ -99,6 +101,14 @@ struct CONVENIENCESTORE_API FCSCraftRecipeRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Method", meta = (ClampMin = "0.1", UIMin = "0.1"))
 	float BubblePeriodSeconds = 2.0f;
 
+	// 터트릴 거품 수. 꽝도 채운다. 0이면 첫 Space에 끝나서 꽝인 게 드러난다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Method", meta = (ClampMin = "1", UIMin = "1"))
+	int32 PopCount = 2;
+
+	// 이만큼 못 맞히면 김빠진 덩어리. 제조 전용은 PopCount를 전부 맞히면 대성공이다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Method", meta = (ClampMin = "1", UIMin = "1"))
+	int32 PopSuccessHits = 1;
+
 	// 도감 소문 1단계 재료, 2단계 불, 3단계 젓기. 제조 전용 행만 채운다
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Rumor", meta = (MultiLine = "true"))
 	FText RumorStage1Text;
@@ -110,7 +120,7 @@ struct CONVENIENCESTORE_API FCSCraftRecipeRow : public FTableRowBase
 	FText RumorStage3Text;
 };
 
-// RowName은 ECSCraftOutcome 값 이름(MismatchedCount, Burnt, Undermixed, Unknown)
+// RowName은 ECSCraftOutcome 값 이름(MismatchedCount, Burnt, Undermixed, Unknown, PopFailed)
 // 쓰레기는 DT_ProductMaster에 행이 없어서 이름과 메시를 여기 둔다
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSCraftFailureRow : public FTableRowBase

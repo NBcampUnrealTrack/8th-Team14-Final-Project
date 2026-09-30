@@ -103,10 +103,10 @@ void ACSCraftStationActor::BeginPlay()
 		ResultModelBaseTransforms[Index] = GetResultModel(Index)->GetRelativeTransform();
 	}
 
-	if (PowderToleranceSeconds >= DefaultBubblePeriod * 0.5f)
+	if (PopToleranceSeconds >= DefaultBubblePeriod * 0.5f)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 가루 허용폭 %.2f초가 기본 거품 주기 %.2f초의 절반 이상이라 언제 넣어도 성공합니다."),
-			*GetName(), PowderToleranceSeconds, DefaultBubblePeriod);
+		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 거품 허용폭 %.2f초가 기본 거품 주기 %.2f초의 절반 이상이라 언제 터트려도 맞습니다."),
+			*GetName(), PopToleranceSeconds, DefaultBubblePeriod);
 	}
 	if (!ProductActorClass || !TrashActorClass)
 	{
@@ -734,7 +734,7 @@ void ACSCraftStationActor::BindCloseupInput()
 	Bind(HeatDownAction, &ACSCraftStationActor::HandleHeatDown, TEXT("HeatDownAction"));
 	Bind(HeatUpAction, &ACSCraftStationActor::HandleHeatUp, TEXT("HeatUpAction"));
 	Bind(StirAction, &ACSCraftStationActor::HandleStir, TEXT("StirAction"));
-	Bind(PowderAction, &ACSCraftStationActor::HandlePowder, TEXT("PowderAction"));
+	Bind(PopAction, &ACSCraftStationActor::HandleBubblePop, TEXT("PopAction"));
 	Bind(FinishAction, &ACSCraftStationActor::HandleFinish, TEXT("FinishAction"));
 	Bind(ExitAction, &ACSCraftStationActor::HandleExit, TEXT("ExitAction"));
 	bCloseupInputBound = true;
@@ -804,11 +804,17 @@ void ACSCraftStationActor::TryStartCraft()
 	Counts.GetKeys(Names);
 	const float RecipePeriod = Crafting->GetRecipePeriod(Names[0], Names[1]);
 	CurrentBubblePeriod = RecipePeriod > 0.0f ? RecipePeriod : DefaultBubblePeriod;
-	if (PowderToleranceSeconds >= CurrentBubblePeriod * 0.5f)
+	if (PopToleranceSeconds >= CurrentBubblePeriod * 0.5f)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[제조] 가루 허용폭 %.2f초가 거품 주기 %.2f초의 절반 이상이라 언제 넣어도 성공합니다."),
-			PowderToleranceSeconds, CurrentBubblePeriod);
+		UE_LOG(LogTemp, Warning, TEXT("[제조] 거품 허용폭 %.2f초가 거품 주기 %.2f초의 절반 이상이라 언제 터트려도 맞습니다."),
+			PopToleranceSeconds, CurrentBubblePeriod);
 	}
+	const int32 RecipePopCount = Crafting->GetRecipePopCount(Names[0], Names[1]);
+	CurrentPopCount = RecipePopCount > 0 ? RecipePopCount : FMath::Max(1, DefaultPopCount);
+	PopsUsed = 0;
+	PopHits = 0;
+	LastPoppedPeakIndex = 0;
+	bFinishRetryPending = false;
 
 	bIngredientsLocked = true;
 	StirCount = 1;
@@ -826,9 +832,10 @@ void ACSCraftStationActor::HandleBubbleCycle()
 	OnBubbleCycle(CurrentBubblePeriod);
 }
 
-void ACSCraftStationActor::HandlePowder()
+void ACSCraftStationActor::HandleBubblePop()
 {
-	if (CraftStep != ECSCraftStep::Stir)
+	// 재시도 대기 중에는 거품을 다 쓴 상태라 더 터트리면 횟수가 PopCount를 넘는다
+	if ((CraftStep != ECSCraftStep::Stir && CraftStep != ECSCraftStep::Pop) || bFinishRetryPending)
 	{
 		return;
 	}
@@ -837,19 +844,42 @@ void ACSCraftStationActor::HandlePowder()
 	// 거품 최고점은 시작 후 Period의 정수배(1배 이상)
 	const float Elapsed = GetWorld()->GetTimeSeconds() - CraftStartTimeSeconds;
 	const int32 PeakIndex = FMath::Max(1, FMath::RoundToInt(Elapsed / CurrentBubblePeriod));
-	bPowderOnTime = FMath::Abs(Elapsed - PeakIndex * CurrentBubblePeriod) <= PowderToleranceSeconds;
+	// 이미 터진 거품이다. 연타가 거품 수를 깎지 않게 한다
+	if (PeakIndex <= LastPoppedPeakIndex)
+	{
+		return;
+	}
 
-	GetWorld()->GetTimerManager().ClearTimer(BubbleTimerHandle);
-	OnPowderResult(bPowderOnTime);
-	SetStep(ECSCraftStep::Powder);
+	const float PeakTime = PeakIndex * CurrentBubblePeriod;
+	const bool bHit = FMath::Abs(Elapsed - PeakTime) <= PopToleranceSeconds;
+	++PopsUsed;
+	LastPoppedPeakIndex = PeakIndex;
+	if (bHit)
+	{
+		++PopHits;
+	}
 
-	// 가루가 마지막 단계라 넣는 즉시 완성한다. 결과물 스폰이 실패하면 가루 단계에 남고 E로 다시 시도한다
-	FinishCraft();
+	// 허용 구간이 끝날 때까지 숨겨야 터트린 거품이 같은 최고점에서 다시 보이지 않는다
+	const float HiddenSeconds = FMath::Max(0.0f, PeakTime + PopToleranceSeconds - Elapsed);
+	OnBubblePopResult(bHit, GetMessage(bHit ? TEXT("PopPerfect") : TEXT("PopMiss")), HiddenSeconds);
+
+	if (PopsUsed >= CurrentPopCount)
+	{
+		FinishCraft();
+	}
+	else if (CraftStep != ECSCraftStep::Pop)
+	{
+		SetStep(ECSCraftStep::Pop);
+	}
+	else
+	{
+		RefreshInfoWidget();
+	}
 }
 
 void ACSCraftStationActor::HandleFinish()
 {
-	if (CraftStep == ECSCraftStep::Powder)
+	if (bFinishRetryPending)
 	{
 		FinishCraft();
 	}
@@ -869,10 +899,18 @@ void ACSCraftStationActor::FinishCraft()
 		return;
 	}
 
-	const FCSCraftEvaluation Evaluation = Crafting->EvaluateCraft(CountIngredients(), CurrentHeat, StirCount, bPowderOnTime);
+	const FCSCraftEvaluation Evaluation = Crafting->EvaluateCraft(CountIngredients(), CurrentHeat, StirCount, PopHits);
 	const bool bMadeProduct = Evaluation.Outcome == ECSCraftOutcome::GreatSuccess ||
 		Evaluation.Outcome == ECSCraftOutcome::Success ||
 		Evaluation.Outcome == ECSCraftOutcome::Junk;
+
+	// 재료를 지우기 전이라 거품 단계에 머물고 E로 다시 시도한다
+	auto WaitForRetry = [this]()
+	{
+		bFinishRetryPending = true;
+		SetStep(ECSCraftStep::Pop);
+		ShowBanner(TEXT("FinishFailed"));
+	};
 
 	FText ResultName;
 	if (bMadeProduct)
@@ -880,8 +918,8 @@ void ACSCraftStationActor::FinishCraft()
 		TArray<ACSProductPickupActor*> Products;
 		if (!SpawnResultProducts(Evaluation, Products))
 		{
-			// 재료를 지우기 전이라 가루 단계에 머문다
 			UE_LOG(LogTemp, Error, TEXT("[제조] 결과물 '%s' 스폰에 실패해서 재료를 그대로 둡니다."), *Evaluation.ResultProduct.ToString());
+			WaitForRetry();
 			return;
 		}
 		ResultName = Products[0]->GetProductDisplayName();
@@ -889,8 +927,11 @@ void ACSCraftStationActor::FinishCraft()
 	else if (!SpawnFailureTrash(Evaluation.Outcome, ResultName))
 	{
 		UE_LOG(LogTemp, Error, TEXT("[제조] 실패 쓰레기 스폰에 실패해서 재료를 그대로 둡니다."));
+		WaitForRetry();
 		return;
 	}
+
+	GetWorld()->GetTimerManager().ClearTimer(BubbleTimerHandle);
 
 	// 결과가 생긴 뒤에 재료를 지운다. 쓰레기통을 거치지 않아서 폐기 손실에 잡히지 않는다
 	for (TObjectPtr<ACSProductPickupActor>& Ingredient : IngredientSlots)
@@ -924,7 +965,11 @@ void ACSCraftStationActor::FinishCraft()
 
 	bIngredientsLocked = false;
 	StirCount = 0;
-	bPowderOnTime = false;
+	CurrentPopCount = 0;
+	PopsUsed = 0;
+	PopHits = 0;
+	LastPoppedPeakIndex = 0;
+	bFinishRetryPending = false;
 	CurrentBubblePeriod = 0.0f;
 	SetHeat(ECSCraftHeat::None);
 	SetStep(ECSCraftStep::Idle);
@@ -1153,10 +1198,11 @@ void ACSCraftStationActor::RefreshInfoWidget()
 		break;
 	}
 	case ECSCraftStep::Stir:
-		Status = FText::Format(GetMessage(TEXT("StatusStir")), FText::AsNumber(StirCount));
+		Status = FText::Format(GetMessage(TEXT("StatusStir")), FText::AsNumber(StirCount), FText::AsNumber(CurrentPopCount));
 		break;
-	case ECSCraftStep::Powder:
-		Status = GetMessage(TEXT("StatusPowder"));
+	case ECSCraftStep::Pop:
+		// 맞힌 횟수는 보여 주지 않는다. 성공 기준이 드러난다
+		Status = FText::Format(GetMessage(TEXT("StatusPop")), FText::AsNumber(FMath::Max(0, CurrentPopCount - PopsUsed)));
 		break;
 	default:
 		Status = GetMessage(TEXT("StatusIdle"));

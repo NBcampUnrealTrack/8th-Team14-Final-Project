@@ -11,7 +11,7 @@ namespace
 #if !UE_BUILD_SHIPPING
 FAutoConsoleCommandWithWorldAndArgs CmdCraftTest(
 	TEXT("cs.CraftTest"),
-	TEXT("제조 판정만 실행해 결과를 로그로 남깁니다. cs.CraftTest <재료A> <개수A> <재료B> <개수B> <Low|Medium|High> <젓기> <가루0/1>"),
+	TEXT("제조 판정만 실행해 결과를 로그로 남깁니다. cs.CraftTest <재료A> <개수A> <재료B> <개수B> <Low|Medium|High> <젓기> <맞힌 거품 수>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
 	{
 		const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
@@ -22,7 +22,7 @@ FAutoConsoleCommandWithWorldAndArgs CmdCraftTest(
 		}
 		if (Args.Num() < 7)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("[제조] 사용법: cs.CraftTest <재료A> <개수A> <재료B> <개수B> <Low|Medium|High> <젓기> <가루0/1>"));
+			UE_LOG(LogTemp, Warning, TEXT("[제조] 사용법: cs.CraftTest <재료A> <개수A> <재료B> <개수B> <Low|Medium|High> <젓기> <맞힌 거품 수>"));
 			return;
 		}
 
@@ -42,7 +42,7 @@ FAutoConsoleCommandWithWorldAndArgs CmdCraftTest(
 			Ingredients,
 			static_cast<ECSCraftHeat>(HeatValue),
 			FCString::Atoi(*Args[5]),
-			FCString::Atoi(*Args[6]) != 0);
+			FCString::Atoi(*Args[6]));
 
 		UE_LOG(LogTemp, Display, TEXT("[제조] 판정=%s 레시피=%s 결과=%s 개수=%d"),
 			*StaticEnum<ECSCraftOutcome>()->GetNameStringByValue(static_cast<int64>(Result.Outcome)),
@@ -195,11 +195,20 @@ void UCSCraftingSubsystem::ValidateTables() const
 			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] %s의 결과 '%s'는 제조 전용·꽝인데 bOrderable이 true입니다."),
 				*Pair.Key.ToString(), *Row->ResultProduct.ToString());
 		}
+
+		// 기준이 PopCount보다 크면 전부 맞혀도 실패하고, 0이면 하나도 안 맞혀도 성공한다
+		if (Row->RecipeKind != ECSCraftRecipeKind::Junk &&
+			(Row->PopCount < 1 || Row->PopSuccessHits < 1 || Row->PopSuccessHits > Row->PopCount))
+		{
+			++WarningCount;
+			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] %s의 거품 수 %d, 성공 기준 %d가 맞지 않습니다."),
+				*Pair.Key.ToString(), Row->PopCount, Row->PopSuccessHits);
+		}
 	}
 
 	const UEnum* OutcomeEnum = StaticEnum<ECSCraftOutcome>();
 	for (const ECSCraftOutcome Outcome : { ECSCraftOutcome::MismatchedCount, ECSCraftOutcome::Burnt,
-		ECSCraftOutcome::Undermixed, ECSCraftOutcome::Unknown })
+		ECSCraftOutcome::Undermixed, ECSCraftOutcome::Unknown, ECSCraftOutcome::PopFailed })
 	{
 		if (GetFailureRow(Outcome) == nullptr)
 		{
@@ -235,7 +244,7 @@ FCSCraftEvaluation UCSCraftingSubsystem::EvaluateCraft(
 	const TMap<FName, int32>& Ingredients,
 	ECSCraftHeat Heat,
 	int32 StirCount,
-	bool bPowderOnTime) const
+	int32 PopHits) const
 {
 	FCSCraftEvaluation Result;
 	Result.Outcome = ECSCraftOutcome::Unknown;
@@ -283,9 +292,15 @@ FCSCraftEvaluation UCSCraftingSubsystem::EvaluateCraft(
 		return Result;
 	}
 
+	if (PopHits < Recipe->PopSuccessHits)
+	{
+		Result.Outcome = ECSCraftOutcome::PopFailed;
+		return Result;
+	}
+
 	Result.ResultProduct = Recipe->ResultProduct;
-	// 품질은 가격 대신 개수로 나타낸다. 양념 조합은 가루와 상관없이 1개
-	if (Recipe->RecipeKind == ECSCraftRecipeKind::CraftOnly && bPowderOnTime)
+	// 품질은 가격 대신 개수로 나타낸다. 양념 조합은 거품을 다 맞혀도 1개
+	if (Recipe->RecipeKind == ECSCraftRecipeKind::CraftOnly && PopHits >= Recipe->PopCount)
 	{
 		Result.Outcome = ECSCraftOutcome::GreatSuccess;
 		Result.Quantity = 2;
@@ -378,4 +393,10 @@ float UCSCraftingSubsystem::GetRecipePeriod(FName IngredientA, FName IngredientB
 {
 	const FCSCraftRecipeRow* Recipe = FindRecipe(IngredientA, IngredientB);
 	return Recipe != nullptr ? Recipe->BubblePeriodSeconds : 0.0f;
+}
+
+int32 UCSCraftingSubsystem::GetRecipePopCount(FName IngredientA, FName IngredientB) const
+{
+	const FCSCraftRecipeRow* Recipe = FindRecipe(IngredientA, IngredientB);
+	return Recipe != nullptr ? Recipe->PopCount : 0;
 }
