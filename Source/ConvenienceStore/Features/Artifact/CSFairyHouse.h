@@ -6,6 +6,8 @@
 
 class UArrowComponent;
 class UStaticMeshComponent;
+class UBoxComponent;
+class ACSCleaningFairy;
 
 UCLASS(Blueprintable)
 class CONVENIENCESTORE_API ACSFairyHouse : public AActor
@@ -13,6 +15,14 @@ class CONVENIENCESTORE_API ACSFairyHouse : public AActor
 	GENERATED_BODY()
 public:
 	ACSFairyHouse();
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> DoorPoint;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FlightPoint;
+	// BP_StoreInterior가 없는 레벨에서만 사용합니다. 매장 내부에 맞춰 범위와 위치를 조절해 주세요.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UBoxComponent> CleaningArea;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fairy") TSubclassOf<ACSCleaningFairy> FairyClass;
+	UPROPERTY(Transient, BlueprintReadOnly, Category="Fairy") TObjectPtr<ACSCleaningFairy> ActiveFairy;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy House")
 	TObjectPtr<UStaticMeshComponent> HouseMesh;
 };

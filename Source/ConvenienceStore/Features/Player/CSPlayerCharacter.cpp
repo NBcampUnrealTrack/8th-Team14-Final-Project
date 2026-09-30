@@ -940,6 +940,8 @@ void ACSPlayerCharacter::UpdatePlayerLocomotionAnimation(bool bForce)
 
 bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 {
+	// 이동 중 예약된 쓰레기는 먼저 주우실 수 있지만 요정이 운반 중인 쓰레기는 보호합니다.
+	if (const ACSTrashActor* Trash = Cast<ACSTrashActor>(PickupActor); Trash && Trash->IsCarriedByCleaner()) return false;
 	USceneComponent* AttachTarget = GetHeldItemAttachTarget(PickupActor);
 	if (!IsValid(AttachTarget))
 	{
