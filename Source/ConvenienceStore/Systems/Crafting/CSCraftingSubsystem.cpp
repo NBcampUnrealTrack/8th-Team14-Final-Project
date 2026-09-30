@@ -239,6 +239,11 @@ const FCSCraftRecipeRow* UCSCraftingSubsystem::FindRecipe(FName IngredientA, FNa
 	return RecipeTable->FindRow<FCSCraftRecipeRow>(*RowName, TEXT(""), false);
 }
 
+const FCSCraftRecipeRow* UCSCraftingSubsystem::FindRecipeByRowName(FName RecipeRowName) const
+{
+	return IsValid(RecipeTable) ? RecipeTable->FindRow<FCSCraftRecipeRow>(RecipeRowName, TEXT(""), false) : nullptr;
+}
+
 FCSCraftEvaluation UCSCraftingSubsystem::EvaluateCraft(
 	const TMap<FName, int32>& Ingredients,
 	ECSCraftHeat Heat,
