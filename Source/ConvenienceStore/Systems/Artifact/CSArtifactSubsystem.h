@@ -24,11 +24,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetCount(FName Id) const;
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetAppliedStacks(FName Id) const;
 	UFUNCTION(BlueprintPure, Category="Artifact") int32 GetNextAvailableDay(FName Id) const;
+	UFUNCTION(BlueprintPure, Category="Artifact", meta=(WorldContext="WorldContextObject"))
+	bool IsFairyHousePlaced(const UObject* WorldContextObject) const;
 	float GetSpeedMultiplier(ECSArtifactEffectType Effect) const;
 	UFUNCTION(BlueprintCallable, Category="Artifact") void ResetArtifacts();
 	UPROPERTY(BlueprintAssignable, Category="Artifact") FCSArtifactChanged OnArtifactsChanged;
 
 private:
+	bool bUsingArtifact = false;
 	// 배치 액터가 다른 테이블을 등록해도 기존 아티팩트의 사용 정보를 유지합니다.
 	UPROPERTY(Transient) TArray<TObjectPtr<UDataTable>> ArtifactTables;
 	UPROPERTY(Transient) TMap<FName, int32> Counts;
