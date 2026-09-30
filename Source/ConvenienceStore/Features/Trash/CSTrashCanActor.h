@@ -9,6 +9,7 @@
 class USceneComponent;
 class UStaticMeshComponent;
 class UCSSaveIdComponent;
+class UArrowComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FCSOnItemDisposed,
@@ -25,6 +26,14 @@ class CONVENIENCESTORE_API ACSTrashCanActor : public AActor,
 
 public:
 	ACSTrashCanActor();
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FairyApproachPoint;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FairyApproachBack;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FairyApproachLeft;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FairyApproachRight;
+	TArray<UArrowComponent*> GetFairyApproachPoints() const;
+	// 운반하는 쓰레기가 입구 중앙 위에 오도록 위치를 조절해 주세요.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy") TObjectPtr<UArrowComponent> FairyDropPoint;
+	bool IsAvailableForFairy() const;
 
 	virtual FName GetFacilityId_Implementation() const override;
 	virtual bool IsFacilityInstalled_Implementation() const override;
