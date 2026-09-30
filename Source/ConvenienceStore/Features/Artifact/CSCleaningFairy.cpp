@@ -19,6 +19,8 @@
 #include "NavigationSystem.h"
 #include "NavigationPath.h"
 #include "NiagaraComponent.h"
+#include "Features/Customers/CSCustomerAnimInstance.h"
+#include "Misc/ScopeExit.h"
 
 ACSCleaningFairy::ACSCleaningFairy()
 {
@@ -84,11 +86,87 @@ void ACSCleaningFairy::Initialize(ACSFairyHouse* InHouse)
 void ACSCleaningFairy::BeginPlay()
 {
 	Super::BeginPlay();
+	MeshRestRotation = FairyMesh->GetRelativeRotation().Quaternion();
+	PreviousVisualLocation = GetActorLocation();
+	HoverAnimation = Cast<UAnimSequence>(FairyMesh->AnimationData.AnimToPlay);
+	bVisualAnimationsReady = HoverAnimation && PickupTrashAnimation && CarryTrashAnimation &&
+		PickupTrashAnimation->GetSkeleton() == HoverAnimation->GetSkeleton() &&
+		CarryTrashAnimation->GetSkeleton() == HoverAnimation->GetSkeleton() &&
+		PickupAttachTime < PickupTrashAnimation->GetPlayLength();
+	if (bVisualAnimationsReady)
+	{
+		// Reuse the existing native single-sequence crossfade; no new AnimBP or rig.
+		FairyMesh->SetAnimInstanceClass(UCSCustomerAnimInstance::StaticClass());
+		PlayVisualAnimation(HoverAnimation, true);
+		// Still one CarryPoint. Follow only the visual mesh, including its flight tilt.
+		CarryPoint->AttachToComponent(FairyMesh, FAttachmentTransformRules::KeepWorldTransform);
+		CarryPoint->SetAbsolute(false, false, true);
+		CarryPoint->SetWorldScale3D(FVector::OneVector);
+		CarryPoint->SetRelativeRotation(MeshRestRotation.Inverse());
+		CarryPoint->SetRelativeLocation(PickupGripOffset);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CleaningFairy] %s: compatible pickup/carry animations are missing; preserving the existing cleanup behavior."), *GetName());
+	}
 	// 실제 플레이가 시작된 뒤에만 대기 상태의 요정을 숨깁니다.
 	ShowOrb(false);
 	if (auto* Material = Orb->CreateDynamicMaterialInstance(0)) Material->SetScalarParameterValue(TEXT("Glow"), 6.f);
 	for (UStaticMeshComponent* Spark : Sparks)
 		if (auto* Material = Spark->CreateDynamicMaterialInstance(0)) Material->SetScalarParameterValue(TEXT("Glow"), 4.f);
+}
+
+FVector ACSCleaningFairy::GetCarryOffset() const
+{
+	// CarryPoint may be below FairyMesh; relative location alone is no longer actor space.
+	return GetActorQuat().UnrotateVector(CarryPoint->GetComponentLocation() - GetActorLocation());
+}
+
+void ACSCleaningFairy::PlayVisualAnimation(UAnimSequence* Animation, bool bLooping, float StartTime)
+{
+	if (UCSCustomerAnimInstance* Instance = Cast<UCSCustomerAnimInstance>(FairyMesh->GetAnimInstance()))
+	{
+		if (Animation && Instance->GetAnimationAsset() != Animation)
+		{
+			Instance->PlaySequence(Animation, bLooping, .18f);
+			Instance->SetPosition(FMath::Fmod(StartTime, FMath::Max(.001f, Animation->GetPlayLength())), false);
+		}
+	}
+}
+
+void ACSCleaningFairy::UpdateVisuals(float DeltaSeconds)
+{
+	const FVector Velocity = (GetActorLocation() - PreviousVisualLocation) / FMath::Max(DeltaSeconds, SMALL_NUMBER);
+	PreviousVisualLocation = GetActorLocation();
+	const float HorizontalSpeed = Velocity.Size2D();
+	const bool bFlightState = State == ECSFairyState::ToTrash || State == ECSFairyState::ToBin ||
+		State == ECSFairyState::Returning || State == ECSFairyState::LeavingBin;
+	bHorizontalFlight = bFlightState && HorizontalSpeed > (bHorizontalFlight ? 5.f : 10.f) &&
+		HorizontalSpeed > FMath::Abs(Velocity.Z) * (bHorizontalFlight ? 1.15f : 1.5f);
+	FQuat TargetTilt = FQuat::Identity;
+	if (bHorizontalFlight)
+	{
+		const FVector Direction = GetActorQuat().UnrotateVector(Velocity.GetSafeNormal2D());
+		TargetTilt = FQuat(FVector::CrossProduct(FVector::UpVector, Direction).GetSafeNormal(), FMath::DegreesToRadians(MovementTiltAngle));
+	}
+	VisualTilt = FQuat::Slerp(VisualTilt, TargetTilt, 1.f - FMath::Exp(-8.f * DeltaSeconds)).GetNormalized();
+	FairyMesh->SetRelativeRotation(VisualTilt * MeshRestRotation);
+	if (!bVisualAnimationsReady) return;
+
+	float LiftAlpha = bCarrying && !bPickupPlaying ? 1.f : 0.f;
+	if (bPickupPlaying)
+	{
+		// These times match AN_Fairy_PickupTrash's authored reach and lift.
+		LiftAlpha = FMath::SmoothStep(.8f, 1.5f, PickupElapsed);
+	}
+	const FVector HoverOffset = FairyMesh->GetSocketTransform(TEXT("Root"), RTS_Component).GetLocation();
+	CarryPoint->SetRelativeLocation(FMath::Lerp(PickupGripOffset, CarryGripOffset, LiftAlpha) + HoverOffset);
+	if (!bPickupPlaying)
+	{
+		UAnimSequence* Desired = bCarrying ? CarryTrashAnimation.Get() : HoverAnimation.Get();
+		if (auto* Instance = Cast<UCSCustomerAnimInstance>(FairyMesh->GetAnimInstance()))
+			PlayVisualAnimation(Desired, true, Instance->GetCurrentTime());
+	}
 }
 
 bool ACSCleaningFairy::BuildPath(const FVector& Start, const FVector& End, TArray<FVector>& OutPath) const
@@ -133,7 +211,7 @@ bool ACSCleaningFairy::FindBinApproach(ACSTrashCanActor* TrashCan, const FVector
 		const FVector RequestedApproach(PointLocation.X, PointLocation.Y, Approach.Z);
 		const FVector Drop = TrashCan->FairyDropPoint->GetComponentLocation();
 		const FRotator Facing(0, (Drop - Approach).Rotation().Yaw, 0);
-		const FVector DropGoal = Drop - Facing.RotateVector(CarryPoint->GetRelativeLocation());
+		const FVector DropGoal = Drop - Facing.RotateVector(GetCarryOffset());
 		// 바닥 경로가 있어도 입구까지의 비행 구간이 벽에 막힌 면은 선택하지 않습니다.
 		FHitResult Hit;
 		// NavMesh가 벽 안의 지점을 옆으로 투영하더라도 실제 지정 지점이 막혀 있으면 제외합니다.
@@ -307,6 +385,7 @@ void ACSCleaningFairy::UpdateOrb(float DeltaSeconds)
 
 void ACSCleaningFairy::ReleaseTrash(bool bRestorePickup, bool bReleaseReservation)
 {
+	bPickupPlaying = false;
 	if (Trash.IsValid())
 	{
 		if (bCarrying && Trash->GetAttachParentActor() == this)
@@ -356,6 +435,7 @@ void ACSCleaningFairy::BeginReturn()
 void ACSCleaningFairy::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	ON_SCOPE_EXIT { UpdateVisuals(DeltaSeconds); };
 	if (!House.IsValid()) { Destroy(); return; }
 	const double Now = GetWorld()->GetTimeSeconds();
 	if (State == ECSFairyState::Waiting)
@@ -432,8 +512,20 @@ void ACSCleaningFairy::Tick(float DeltaSeconds)
 		break;
 	case ECSFairyState::Descending:
 	{
-		const FVector Goal = Trash->GetCleaningLocation() - GetActorRotation().RotateVector(CarryPoint->GetRelativeLocation());
-		if (MoveTowards(Goal, VerticalSpeed, DeltaSeconds))
+		const FVector Goal = Trash->GetCleaningLocation() - GetActorRotation().RotateVector(GetCarryOffset());
+		if (!bPickupPlaying)
+		{
+			if (!MoveTowards(Goal, VerticalSpeed, DeltaSeconds)) break;
+			if (bVisualAnimationsReady)
+			{
+				bPickupPlaying = true;
+				PickupElapsed = 0.f;
+				Deadline = Now + PickupTrashAnimation->GetPlayLength() + 8;
+				PlayVisualAnimation(PickupTrashAnimation, false);
+			}
+		}
+		else PickupElapsed += DeltaSeconds;
+		if (!bCarrying && (!bVisualAnimationsReady || PickupElapsed >= PickupAttachTime))
 		{
 			PickupLocation = Trash->GetCleaningLocation();
 			// 물리 메시의 실제 위치를 보존한 뒤 루트에 복원하고 운반 지점에 붙입니다.
@@ -441,6 +533,11 @@ void ACSCleaningFairy::Tick(float DeltaSeconds)
 			Trash->SetActorEnableCollision(false);
 			bCarrying = Trash->AttachToComponent(CarryPoint, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 			if (!bCarrying) { Trash->SetActorEnableCollision(true); Trash->EnableWorldDropPhysics(); FinishJob(true); break; }
+		}
+		if (bCarrying && (!bPickupPlaying || PickupElapsed >= PickupTrashAnimation->GetPlayLength()))
+		{
+			bPickupPlaying = false;
+			if (bVisualAnimationsReady) PlayVisualAnimation(CarryTrashAnimation, true, PickupElapsed);
 			State = ECSFairyState::Ascending; Deadline = Now + 8;
 		}
 		break;
@@ -468,7 +565,7 @@ void ACSCleaningFairy::Tick(float DeltaSeconds)
 		// 회전 중 운반 지점이 바뀌어 목표 좌표가 흔들리지 않도록 투하 방향을 고정합니다.
 		if (!TurnTowards(AlignmentYaw, DeltaSeconds)) break;
 		// 요정의 몸 대신 쓰레기의 운반 지점이 투하 위치와 일치하도록 정렬합니다.
-		const FVector Goal = Bin->FairyDropPoint->GetComponentLocation() - FRotator(0, AlignmentYaw, 0).RotateVector(CarryPoint->GetRelativeLocation());
+		const FVector Goal = Bin->FairyDropPoint->GetComponentLocation() - FRotator(0, AlignmentYaw, 0).RotateVector(GetCarryOffset());
 		if (MoveTowards(Goal, VerticalSpeed, DeltaSeconds, true))
 		{
 			State = ECSFairyState::AwaitingDisposal; Deadline = Now + FMath::Max(1.f, DisposalTimeout);
