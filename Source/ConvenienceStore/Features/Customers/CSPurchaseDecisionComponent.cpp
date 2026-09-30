@@ -5,6 +5,7 @@
 #include "GameFramework/Actor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "Systems/Weather/CSWeatherSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
@@ -846,10 +847,29 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 	TArray<FName> Candidates;
 	TArray<float> Weights;
 
+	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+	if (!IsValid(Crafting))
+	{
+		// 없어도 계획 상품은 돌지만 꽝이 뽑혀 "못 찾음"이 뜰 수 있다
+		static bool bWarnedMissingCrafting = false;
+		if (!bWarnedMissingCrafting)
+		{
+			bWarnedMissingCrafting = true;
+			UE_LOG(LogTemp, Warning, TEXT("[계획수요] 제조 서브시스템이 없어 꽝 상품을 계획 후보에서 빼지 못합니다."));
+		}
+	}
+
 	for (const TPair<FName, uint8*>& Pair : ProductMasterDataTable->GetRowMap())
 	{
 		const FCSProductDataRow* Row = reinterpret_cast<const FCSProductDataRow*>(Pair.Value);
 		if (Row == nullptr)
+		{
+			continue;
+		}
+		// 꽝은 매대에 거의 없어서 계획 상품으로 뽑히면 "못 찾음"만 뜬다.
+		// 난수를 굴리기 전에 빼므로 꽝 행이 없던 때와 굴림 횟수가 같다
+		if (IsValid(Crafting) && Crafting->IsJunkResultProduct(Pair.Key))
 		{
 			continue;
 		}

@@ -20,6 +20,8 @@ class UCSDeliveryToastWidget;
 class UCSNoticeBannerWidgetBase;
 class UCSSaveLoadMenuWidget;
 class UTexture2D;
+class UInputAction;
+class UInputMappingContext;
 enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
@@ -89,6 +91,10 @@ public:
 
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
+
+	// C, Tab, P는 BindKey라 클로즈업 IMC에 막히지 않아서 이 값으로 거른다
+	void SetCraftCloseupActive(bool bActive) { bCraftCloseupActive = bActive; }
+	bool IsCraftCloseupActive() const { return bCraftCloseupActive; }
 
 	// 수면 중에도 정산 데이터 이벤트는 유지하고, 중간 정산 UI만 생략합니다.
 	bool BeginSleepTransition(AActor* Requester);
@@ -272,7 +278,16 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> ActiveSleepTransitionWidget;
 
+	// 설정창 Esc를 Enhanced Input으로 받아야 솥 클로즈업의 Esc가 먼저 가져가서
+	// 클로즈업을 나가면서 설정창까지 열리지 않는다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputMappingContext> ControllerMappingContext;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> ToggleSettingsAction;
+
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	ECStorePhase LastObservedStorePhase = ECStorePhase::Preparation;
 	bool bClosingAnnouncementPending = false;
+	bool bCraftCloseupActive = false;
 };
