@@ -7,6 +7,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
+#include "Components/PanelSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 
@@ -15,11 +16,14 @@ void UCSInteractionPanelWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 	if (!WidgetTree || !InteractionPromptRow || !InteractionPromptText) return;
 	UPanelWidget* Parent = InteractionPromptRow->GetParent();
-	if (!Parent) return;
+	UPanelSlot* PromptSlot = InteractionPromptRow->Slot;
+	if (!Parent || !PromptSlot || PromptSlot->Parent != Parent) return;
 
 	// Slate가 생성되기 전에 기존 슬롯을 유지하며 안내 영역을 세로 목록으로 확장합니다.
 	UVerticalBox* PromptList = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (!Parent->ReplaceChildAt(Parent->GetChildIndex(InteractionPromptRow), PromptList)) return;
+	PromptSlot->Content = PromptList;
+	PromptList->Slot = PromptSlot;
+	PromptSlot->SynchronizeProperties();
 	InteractionPromptRow->Slot = nullptr;
 	PromptList->AddChildToVerticalBox(InteractionPromptRow);
 	for (int32 Index = 0; Index < 2; ++Index)

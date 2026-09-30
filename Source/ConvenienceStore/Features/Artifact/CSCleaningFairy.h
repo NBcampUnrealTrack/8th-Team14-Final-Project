@@ -11,6 +11,7 @@ class USkeletalMeshComponent;
 class UStaticMeshComponent;
 class USceneComponent;
 class UNiagaraComponent;
+class UAnimSequence;
 
 UENUM(BlueprintType)
 enum class ECSFairyState : uint8
@@ -44,8 +45,27 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Fairy", meta=(ClampMin="1")) float DisposalTimeout = 4;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Fairy") ECSFairyState State = ECSFairyState::Waiting;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Fairy") FText Status;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Fairy|Animation") TObjectPtr<UAnimSequence> PickupTrashAnimation;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Fairy|Animation") TObjectPtr<UAnimSequence> CarryTrashAnimation;
+	// Authored against the existing Compact mesh, in mesh space (before component scale).
+	UPROPERTY(EditDefaultsOnly, Category="Fairy|Animation") FVector PickupGripOffset = FVector(0, 72, 20);
+	UPROPERTY(EditDefaultsOnly, Category="Fairy|Animation") FVector CarryGripOffset = FVector(0, 66, 26);
+	UPROPERTY(EditDefaultsOnly, Category="Fairy|Animation", meta=(ClampMin="0")) float PickupAttachTime = .75f;
+	UPROPERTY(EditDefaultsOnly, Category="Fairy|Animation", meta=(ClampMin="0", ClampMax="35")) float MovementTiltAngle = 20.f;
+	UFUNCTION(BlueprintPure, Category="Fairy|Animation") bool IsCarryingTrash() const { return bCarrying; }
 
 private:
+	UPROPERTY(Transient) TObjectPtr<UAnimSequence> HoverAnimation;
+	UPROPERTY(Transient, VisibleInstanceOnly, Category="Fairy|Animation") float PickupElapsed = 0.f;
+	FQuat MeshRestRotation = FQuat::Identity;
+	FQuat VisualTilt = FQuat::Identity;
+	FVector PreviousVisualLocation = FVector::ZeroVector;
+	bool bVisualAnimationsReady = false;
+	bool bPickupPlaying = false;
+	bool bHorizontalFlight = false;
+	void UpdateVisuals(float DeltaSeconds);
+	void PlayVisualAnimation(UAnimSequence* Animation, bool bLooping, float StartTime = 0.f);
+	FVector GetCarryOffset() const;
 	UPROPERTY(Transient) TArray<TObjectPtr<UStaticMeshComponent>> Sparks;
 	TWeakObjectPtr<ACSFairyHouse> House;
 	TWeakObjectPtr<ACSTrashActor> Trash;
