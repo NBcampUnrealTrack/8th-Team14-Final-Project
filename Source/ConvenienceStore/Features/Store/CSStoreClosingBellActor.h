@@ -8,6 +8,7 @@ class ACSStoreGameState;
 class UCSStoreClosingBellConfirmWidget;
 class ACSStorePlayerController;
 class ACSPlayerWakePoint;
+class UCSStoreSleepTransitionWidget;
 // 검은 화면 동안 기존 정산/다음 날 처리를 실행하는 레벨 배치용 종입니다.
 UCLASS()
 class CONVENIENCESTORE_API ACSStoreClosingBellActor : public AActor, public ICSInteractable
@@ -30,6 +31,10 @@ protected:
 	float SleepFadeDuration = 0.75f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Sleep", meta = (ClampMin = "0.01"))
 	float SleepBlackHoldDuration = 0.15f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Sleep")
+	TSubclassOf<UCSStoreSleepTransitionWidget> SleepTransitionWidgetClass;
+	UPROPERTY(Transient)
+	TObjectPtr<UCSStoreSleepTransitionWidget> ActiveSleepTransitionWidget;
 	TWeakObjectPtr<ACSStorePlayerController> SleepingController;
 	FTimerHandle SleepTimer;
 	int32 DayBeforeSleep = INDEX_NONE;
@@ -37,6 +42,9 @@ protected:
 	UFUNCTION() void HandleCancelled();
 	void CloseConfirmWidget();
 	void AdvanceDayWhileBlack();
+	UFUNCTION() void HandleSleepNextDayRequested();
+	UFUNCTION() void HandleSleepSummaryRequested();
+	void CloseSleepTransitionWidget();
 	void WakeAndFadeIn();
 	void FinishSleep();
 };
