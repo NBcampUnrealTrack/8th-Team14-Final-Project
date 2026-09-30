@@ -257,6 +257,8 @@ void UCSJournalDesignedWidget::RefreshArtifactCells()
 	FCSJournalArtifactView Selected;
 	FString Detail = TEXT("칸을 선택하면 아티팩트 정보를 확인할 수 있습니다.");
 	bool bCanUse = false;
+	FText UseLabel = ArtifactUseConfirmation.IsEmpty()
+		? NSLOCTEXT("Journal", "UseArtifact", "아티팩트 사용") : NSLOCTEXT("Artifact", "ConfirmPartialUse", "이대로 사용");
 	if (GetSelectedArtifact(Selected))
 	{
 		Detail = Selected.bCollected
@@ -284,14 +286,22 @@ void UCSJournalDesignedWidget::RefreshArtifactCells()
 				bCanUse = GetSelectedArtifactCount() > 0 &&
 					GetSelectedArtifactNextAvailableDay() <= GetCurrentBusinessDay() &&
 					bHasDefinition &&
-					Definition.Effect != ECSArtifactEffectType::None && Definition.Effect != ECSArtifactEffectType::FairyHouse;
+					Definition.Effect != ECSArtifactEffectType::None;
+				if (bHasDefinition && Definition.Effect == ECSArtifactEffectType::FairyHouse)
+				{
+					const bool bPlaced = Artifacts->IsFairyHousePlaced(this);
+					UseLabel = bPlaced ? NSLOCTEXT("Artifact", "FairyHouseInstalledLabel", "설치됨")
+						: NSLOCTEXT("Artifact", "FairyHousePlaceLabel", "배치하기");
+					Detail += bPlaced ? TEXT("\n설치됨 · 매장에 1개만 설치할 수 있습니다.")
+						: TEXT("\n지정된 자리에 1개를 배치합니다.");
+					bCanUse = bCanUse && !bPlaced;
+				}
 			}
 		}
 	}
 	if (!ArtifactUseConfirmation.IsEmpty()) Detail += TEXT("\n\n") + ArtifactUseConfirmation.ToString();
 	SetLabel(TEXT("ArtifactDetailText"), Detail);
-	SetLabel(TEXT("ArtifactUseLabel"), ArtifactUseConfirmation.IsEmpty()
-		? NSLOCTEXT("Journal", "UseArtifact", "아티팩트 사용") : NSLOCTEXT("Artifact", "ConfirmPartialUse", "이대로 사용"));
+	SetLabel(TEXT("ArtifactUseLabel"), UseLabel);
 	if (ArtifactCancelUseButton) ArtifactCancelUseButton->SetVisibility(ArtifactUseConfirmation.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
 	if (ArtifactUseButton) ArtifactUseButton->SetIsEnabled(bCanUse);
 	if (auto* Empty = GetWidgetFromName(TEXT("ArtifactEmptyText")))
