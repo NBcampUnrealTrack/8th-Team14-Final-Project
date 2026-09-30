@@ -94,6 +94,8 @@ public:
 	bool BeginSleepTransition(AActor* Requester);
 	void EndSleepTransition(AActor* Requester);
 	bool IsSleepTransitionActive() const { return IsValid(SleepTransitionOwner); }
+	void SetSleepTransitionWidget(UUserWidget* Widget);
+	void ShowSleepDailySummary();
 
 	// 진열할 빈 슬롯이 없을 때 HUD에 빨간 배치 불가 안내를 표시합니다.
 	void ShowPlacementUnavailablePrompt();
@@ -267,6 +269,8 @@ protected:
 	TArray<TObjectPtr<UUserWidget>> GameplayUIInputLockWidgets;
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> SleepTransitionOwner;
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> ActiveSleepTransitionWidget;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 	ECStorePhase LastObservedStorePhase = ECStorePhase::Preparation;
