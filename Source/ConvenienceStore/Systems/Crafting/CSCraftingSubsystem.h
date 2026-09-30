@@ -31,11 +31,13 @@ public:
 	bool IsRecipeDiscovered(FName IngredientA, FName IngredientB) const;
 	// 성공, 대성공, 꽝일 때만 부른다. 쓰레기가 나온 건 조합을 알아낸 게 아니다
 	void MarkRecipeDiscovered(FName RecipeRowName);
+	const TSet<FName>& GetDiscoveredRecipeRows() const { return DiscoveredRecipeRows; }
 
 	bool IsJunkResultProduct(FName ProductId) const;
 	bool IsCraftOnlyResultProduct(FName ProductId) const;
 
 	const FCSCraftRecipeRow* FindRecipe(FName IngredientA, FName IngredientB, FName* OutRecipeRowName = nullptr) const;
+	const FCSCraftRecipeRow* FindRecipeByRowName(FName RecipeRowName) const;
 	const FCSCraftFailureRow* GetFailureRow(ECSCraftOutcome Outcome) const;
 	// 행이 없으면 RowName을 그대로 보여 준다. 빈칸보다 어느 행이 빠졌는지 찾기 쉽다
 	FText GetMessageText(FName MessageRowName) const;
