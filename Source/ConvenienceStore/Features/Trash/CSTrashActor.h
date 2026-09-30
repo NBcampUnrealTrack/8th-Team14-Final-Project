@@ -7,6 +7,7 @@
 #include "CSTrashActor.generated.h"
 
 class USceneComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 struct FCSTrashRecord;
 
@@ -41,6 +42,12 @@ public:
 	// 손님이 통로에 쓰레기를 흘렸을 때(런타임 스폰 직후) 호출
 	void PrepareForCustomerDrop();
 
+	// 제조 실패물처럼 이름·모양이 다른 쓰레기용.
+	// 스폰하는 쪽에서 FinishSpawning 전에 넣어 준다
+	FText GetTrashDisplayName() const { return TrashDisplayName; }
+	void SetTrashDisplayName(const FText& InDisplayName) { TrashDisplayName = InDisplayName; }
+	void SetTrashMesh(UStaticMesh* InMesh);
+
 	// 현재 클래스·메시·위치·물리 상태를 세이브 레코드에 기록
 	void CaptureSaveRecord(FCSTrashRecord& OutRecord) const;
 
@@ -49,6 +56,10 @@ public:
 	void RestoreSaveRecord(const FCSTrashRecord& InRecord);
 
 protected:
+	// 줍기·퀵바·버리기 안내에 쓰는 이름. 기본값은 "쓰레기"
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trash")
+	FText TrashDisplayName;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
 
