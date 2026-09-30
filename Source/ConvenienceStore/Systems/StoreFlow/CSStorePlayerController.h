@@ -100,6 +100,8 @@ public:
 	bool BeginSleepTransition(AActor* Requester);
 	void EndSleepTransition(AActor* Requester);
 	bool IsSleepTransitionActive() const { return IsValid(SleepTransitionOwner); }
+	void SetSleepTransitionWidget(UUserWidget* Widget);
+	void ShowSleepDailySummary();
 
 	// 진열할 빈 슬롯이 없을 때 HUD에 빨간 배치 불가 안내를 표시합니다.
 	void ShowPlacementUnavailablePrompt();
@@ -273,6 +275,8 @@ protected:
 	TArray<TObjectPtr<UUserWidget>> GameplayUIInputLockWidgets;
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> SleepTransitionOwner;
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> ActiveSleepTransitionWidget;
 
 	// 설정창 Esc를 Enhanced Input으로 받아야 솥 클로즈업의 Esc가 먼저 가져가서
 	// 클로즈업을 나가면서 설정창까지 열리지 않는다

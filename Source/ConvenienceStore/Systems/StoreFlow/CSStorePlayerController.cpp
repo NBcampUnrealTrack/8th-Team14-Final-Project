@@ -513,6 +513,7 @@ bool ACSStorePlayerController::BeginSleepTransition(AActor* Requester)
 {
 	if (!IsValid(Requester) || IsSleepTransitionActive()) return false;
 	SleepTransitionOwner = Requester;
+	ActiveSleepTransitionWidget = nullptr;
 	CloseJournal();
 	if (IsValid(ActiveDailySummaryWidget) && bDailySummaryReadOnly)
 	{
@@ -528,12 +529,28 @@ bool ACSStorePlayerController::BeginSleepTransition(AActor* Requester)
 void ACSStorePlayerController::EndSleepTransition(AActor* Requester)
 {
 	if (SleepTransitionOwner != Requester) return;
+	ActiveSleepTransitionWidget = nullptr;
 	SleepTransitionOwner = nullptr;
 	SetStoreHUDHidden(Requester, false);
 	SetStoreTopBarHidden(Requester, false);
 	UpdateClosingInputMode();
 	TryShowQueuedDeliveryToast();
 	TryShowPendingClosingAnnouncement();
+}
+
+void ACSStorePlayerController::SetSleepTransitionWidget(UUserWidget* Widget)
+{
+	if (!IsSleepTransitionActive()) return;
+	ActiveSleepTransitionWidget = Widget;
+	UpdateClosingInputMode();
+}
+
+void ACSStorePlayerController::ShowSleepDailySummary()
+{
+	if (!IsSleepTransitionActive() || !IsValid(StoreGameState) ||
+		!StoreGameState->bIsDailySummaryPending) return;
+	// 수면 화면에서 여는 정산은 조회 전용입니다. 닫아도 다음 날로 넘어가지 않습니다.
+	ShowDailySummary(true);
 }
 
 void ACSStorePlayerController::ToggleDailySummary()
@@ -565,7 +582,9 @@ void ACSStorePlayerController::ShowDailySummary(bool bReadOnly)
 	bDailySummaryReadOnly = bReadOnly;
 	if (bReadOnly) ActiveDailySummaryWidget->SetIsFocusable(true);
 	ActiveDailySummaryWidget->OnDailySummaryConfirmed.AddDynamic(this, &ACSStorePlayerController::HandleDailySummaryConfirmed);
-	ActiveDailySummaryWidget->AddToViewport();
+	// 수면 전환 화면은 ZOrder 2200으로 표시되므로, 수면 중 정산 조회는 그보다 위에 띄웁니다.
+	// 그렇지 않으면 정산 창이 생성되어도 수면 화면 뒤에 가려졌다가 다음 날 전환 시 뒤늦게 보입니다.
+	ActiveDailySummaryWidget->AddToViewport(IsSleepTransitionActive() ? 2300 : 0);
 	SetStoreHUDHidden(ActiveDailySummaryWidget, true);
 	SetGameplayUIInputLock(ActiveDailySummaryWidget, true);
 	if (bReadOnly) ActiveDailySummaryWidget->SetKeyboardFocus();
@@ -629,7 +648,8 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 	const bool bHasGameplayUIInputLock = HasGameplayUIInputLock();
 	const bool bShouldUseUIInput = bIsClosingUIOpen || bHasGameplayUIInputLock;
 
-	bShowMouseCursor = bShouldUseUIInput && !IsSleepTransitionActive();
+	bShowMouseCursor = bShouldUseUIInput &&
+		(!IsSleepTransitionActive() || IsValid(ActiveSleepTransitionWidget));
 
 	// 단계와 업무 이벤트가 같은 입력 잠금을 여러 번 요청할 수 있으므로 먼저 초기화합니다.
 	ResetIgnoreMoveInput();
@@ -644,7 +664,12 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 	if (IsSleepTransitionActive())
 	{
 		// 날짜/단계 변경 이벤트가 와도 Fade가 끝날 때까지 모든 게임 입력을 차단합니다.
-		SetInputMode(FInputModeUIOnly());
+		FInputModeUIOnly InputMode;
+		UUserWidget* FocusWidget = IsValid(ActiveDailySummaryWidget)
+			? ActiveDailySummaryWidget.Get()
+			: ActiveSleepTransitionWidget.Get();
+		if (IsValid(FocusWidget)) InputMode.SetWidgetToFocus(FocusWidget->TakeWidget());
+		SetInputMode(InputMode);
 	}
 	else if (bIsClosingUIOpen)
 	{
