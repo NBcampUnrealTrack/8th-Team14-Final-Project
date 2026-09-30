@@ -164,7 +164,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Camera", meta = (ClampMin = "0.0"))
 	float CameraBlendTime = 0.35f;
 
-	// 레시피가 없는 조합일 때 거품 연출에 쓰는 주기
+	// 레시피가 없는 조합일 때 쓰는 거품 주기
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Timing", meta = (ClampMin = "0.1"))
 	float DefaultBubblePeriod = 2.0f;
 

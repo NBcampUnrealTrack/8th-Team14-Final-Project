@@ -97,7 +97,7 @@ struct CONVENIENCESTORE_API FCSCraftRecipeRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Method", meta = (ClampMin = "0", UIMin = "0"))
 	int32 StirCount = 3;
 
-	// 꽝은 판정에 안 쓰지만 젓기 단계 거품 연출이 이 주기를 쓴다
+	// 꽝도 거품을 터트려야 끝나서 채운다
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Method", meta = (ClampMin = "0.1", UIMin = "0.1"))
 	float BubblePeriodSeconds = 2.0f;
 

@@ -66,7 +66,7 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UDataTable> ProductTable;
 
-	// 세이브가 없어서 한 판 동안만 유지된다
+	// 저장하지 않아서 한 판 동안만 유지된다
 	UPROPERTY(Transient)
 	TSet<FName> DiscoveredRecipeRows;
 

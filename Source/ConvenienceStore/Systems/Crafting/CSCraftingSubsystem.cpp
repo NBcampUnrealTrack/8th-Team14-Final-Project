@@ -65,7 +65,7 @@ void UCSCraftingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	const ACSStoreGameMode* GameMode = InWorld.GetAuthGameMode<ACSStoreGameMode>();
 	if (!IsValid(GameMode))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[제조] ===== ACSStoreGameMode가 아니라서 마법 제조를 끕니다 ====="));
+		UE_LOG(LogTemp, Warning, TEXT("[제조] ACSStoreGameMode가 아니라서 마법 제조를 끕니다."));
 		return;
 	}
 
@@ -92,8 +92,7 @@ void UCSCraftingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	if (!IsValid(RecipeTable) || RecipeTable->GetRowMap().Num() == 0 || !IsValid(ProductTable))
 	{
-		UE_LOG(LogTemp, Warning,
-			TEXT("[제조] ===== GameMode의 CraftRecipeTable / ProductMasterTable이 비어 있어 마법 제조를 끕니다 ====="));
+		UE_LOG(LogTemp, Warning, TEXT("[제조] GameMode의 CraftRecipeTable / ProductMasterTable이 비어 있어 마법 제조를 끕니다."));
 		return;
 	}
 

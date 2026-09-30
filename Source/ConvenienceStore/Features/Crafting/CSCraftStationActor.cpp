@@ -73,7 +73,6 @@ ACSCraftStationActor::ACSCraftStationActor()
 	CloseupCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CloseupCamera"));
 	CloseupCamera->SetupAttachment(SceneRoot);
 	CloseupCamera->SetRelativeLocationAndRotation(FVector(-120.0f, 0.0f, 170.0f), FRotator(-50.0f, 0.0f, 0.0f));
-	// 클로즈업에 들어갈 때만 켠다
 	CloseupCamera->SetAutoActivate(false);
 
 	InfoWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("InfoWidgetComponent"));
@@ -103,11 +102,6 @@ void ACSCraftStationActor::BeginPlay()
 		ResultModelBaseTransforms[Index] = GetResultModel(Index)->GetRelativeTransform();
 	}
 
-	if (PopToleranceSeconds >= DefaultBubblePeriod * 0.5f)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 거품 허용폭 %.2f초가 기본 거품 주기 %.2f초의 절반 이상이라 언제 터트려도 맞습니다."),
-			*GetName(), PopToleranceSeconds, DefaultBubblePeriod);
-	}
 	if (!ProductActorClass || !TrashActorClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: ProductActorClass / TrashActorClass를 지정해 주세요. 완성할 수 없습니다."), *GetName());

@@ -15,7 +15,6 @@ class CONVENIENCESTORE_API UCSCraftCloseupWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	// 목록을 비우고 그 단계의 키 안내를 다시 채운다
 	void SetStep(ECSCraftStep Step);
 
 protected:
