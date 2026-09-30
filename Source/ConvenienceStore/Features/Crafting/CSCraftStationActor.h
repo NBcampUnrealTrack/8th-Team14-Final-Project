@@ -7,20 +7,49 @@
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "CSCraftStationActor.generated.h"
 
+class ACSDeliveryCrateActor;
 class ACSProductPickupActor;
 class ACSStorePlayerController;
 class ACSTrashActor;
 class APlayerController;
+class UBoxComponent;
 class UCameraComponent;
+class UCSCraftAutoPanelWidget;
 class UCSCraftCloseupWidget;
 class UCSCraftingSubsystem;
 class UCSCraftStationInfoWidget;
+class UCSCraftSummonListWidget;
 class UCSProductVisualRegistry;
 class UInputAction;
 class UInputMappingContext;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
+class UTexture2D;
 class UWidgetComponent;
+
+// 창고에 있는 상품 한 종류의 합계. 소환 목록 한 줄이 된다
+struct FCSCraftStorageStock
+{
+	FName ProductId;
+	FText DisplayName;
+	TSoftObjectPtr<UTexture2D> Icon;
+	int32 Count = 0;
+};
+
+// 자동 제조 목록 한 줄. MaxSets가 0이면 재료가 모자라 고를 수 없다
+struct FCSCraftAutoOption
+{
+	FName RecipeRowName;
+	FText ResultName;
+	TSoftObjectPtr<UTexture2D> ResultIcon;
+	FText IngredientAName;
+	int32 IngredientANeed = 0;
+	int32 IngredientAOwned = 0;
+	FText IngredientBName;
+	int32 IngredientBNeed = 0;
+	int32 IngredientBOwned = 0;
+	int32 MaxSets = 0;
+};
 
 // 마법 제조대(솥)
 // 재료 상품은 부착하지 않고 숨겨 두고, 솥에는 모형 메시만 보여 준다.
@@ -36,6 +65,10 @@ class CONVENIENCESTORE_API ACSCraftStationActor : public AActor,
 public:
 	static constexpr int32 IngredientSlotCount = 4;
 	static constexpr int32 ResultSlotCount = 2;
+	// 소환과 자동 제조 결과가 포장 상자 하나에 들어가야 한다
+	static constexpr int32 MaxCircleQuantity = 6;
+	// 종류마다 상자 하나씩 놓는다. 마법진 자리(3×2)보다 많으면 상자끼리 겹친다
+	static constexpr int32 MaxSummonKinds = 6;
 
 	ACSCraftStationActor();
 
@@ -64,6 +97,19 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Crafting")
 	bool IsCloseupActive() const { return bCloseupActive; }
+
+	// 소환 목록과 자동 제조 창이 부른다. 반환 문구는 창 안내 칸에 그대로 보여 준다
+	TArray<FCSCraftStorageStock> GetStorageStockList() const;
+	// 고른 종류를 한 번에 소환한다. 하나라도 모자라면 아무것도 꺼내지 않는다
+	FText RequestSummon(const TMap<FName, int32>& Selections, bool& bOutSummoned);
+	void CloseSummonList();
+
+	TArray<FCSCraftAutoOption> GetAutoCraftOptions() const;
+	// 만들었으면 창을 닫고 배너를 띄운 뒤 빈 문구를 돌려준다
+	FText RequestAutoCraft(FName RecipeRowName, int32 Sets);
+	void CloseAutoPanel();
+
+	FText GetMessage(FName MessageRowName) const;
 
 protected:
 	virtual void BeginPlay() override;
@@ -121,6 +167,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UWidgetComponent> InfoWidgetComponent;
 
+	// 솥 옆 바닥 마법진. 조준하고 E를 누르면 창고 재료 목록이 뜬다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UStaticMeshComponent> SummonCircleMesh;
+
+	// 소환물과 자동 제조 결과가 놓이는 자리. 이 안에 상품이나 상자가 있으면 새로 놓지 않는다
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> SummonArea;
+
 	// 모형 메시와 정보 창 아이콘을 찾는 곳. 비어 있으면 상품 액터에 지정된 레지스트리를 쓴다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting")
 	TObjectPtr<UCSProductVisualRegistry> VisualRegistry;
@@ -133,8 +187,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting")
 	TSubclassOf<ACSTrashActor> TrashActorClass;
 
+	// 2개 이상을 마법진에 놓을 때 담는 포장 상자 (BP_DeliveryCrateBase)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting")
+	TSubclassOf<ACSDeliveryCrateActor> PackingCrateClass;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftCloseupWidget> CloseupWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TSubclassOf<UCSCraftSummonListWidget> SummonListWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TSubclassOf<UCSCraftAutoPanelWidget> AutoPanelWidgetClass;
 
 	// 플레이어 IMC(0)보다 높아야 A/D, 클릭, Space, E, Esc를 먼저 가져간다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
@@ -160,6 +224,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
 	TObjectPtr<UInputAction> ExitAction;
+
+	// 클로즈업에서 자동 제조 창을 연다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
+	TObjectPtr<UInputAction> AutoCraftAction;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Camera", meta = (ClampMin = "0.0"))
 	float CameraBlendTime = 0.35f;
@@ -225,6 +293,12 @@ protected:
 	TObjectPtr<UCSCraftCloseupWidget> ActiveCloseupWidget;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UCSCraftSummonListWidget> ActiveSummonListWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCSCraftAutoPanelWidget> ActiveAutoPanelWidget;
+
+	UPROPERTY(Transient)
 	TObjectPtr<APlayerController> CloseupController;
 
 	UPROPERTY(Transient)
@@ -234,7 +308,7 @@ protected:
 	TObjectPtr<APawn> CloseupPawn;
 
 private:
-	enum class EAimTarget : uint8 { None, Body, Ingredient, Result };
+	enum class EAimTarget : uint8 { None, Body, Ingredient, Result, SummonCircle };
 
 	UStaticMeshComponent* GetIngredientModel(int32 SlotIndex) const;
 	UStaticMeshComponent* GetResultModel(int32 SlotIndex) const;
@@ -243,7 +317,6 @@ private:
 	UCSCraftingSubsystem* GetCraftingSubsystem() const;
 	ACSStorePlayerController* GetLocalStoreController() const;
 	UCSProductVisualRegistry* ResolveVisualRegistry(const ACSProductPickupActor* Product) const;
-	FText GetMessage(FName MessageRowName) const;
 	void ShowBanner(FName MessageRowName) const;
 
 	// 받을 수 없으면 안내 문구 RowName, 받을 수 있으면 None
@@ -255,7 +328,27 @@ private:
 	void RestoreProductVisible(ACSProductPickupActor* Product, const USceneComponent* AtModel);
 	void ApplyModelVisual(UStaticMeshComponent* Model, int32 BaseIndex, const ACSProductPickupActor* Product);
 	void RefreshModels();
-	void RetrieveFromSlot(APawn* InteractingPawn, bool bResultSlot, int32 SlotIndex);
+	bool RetrieveFromSlot(APawn* InteractingPawn, bool bResultSlot, int32 SlotIndex);
+
+	// 창고 재료와 마법진
+	TMap<FName, FCSCraftStorageStock> CollectStorageStock() const;
+	int32 CountStorageStock(FName ProductId) const;
+	// 액터를 파괴하지 않고 창고에서 떼어 넘긴다. 모자라면 꺼낸 만큼만 담고 false
+	bool TakeFromStorage(FName ProductId, int32 Count, TArray<ACSProductPickupActor*>& OutProducts);
+	bool IsSummonCircleOccupied() const;
+	FVector GetCircleDropLocation(int32 Index) const;
+	FVector GetCircleSlotLocation(int32 SlotIndex) const;
+	// 1개는 낱개로, 2개 이상은 포장 상자 하나로 놓는다. 상자를 못 만들면 아무것도 옮기지 않고 false
+	bool PlaceProductsOnCircle(const TArray<ACSProductPickupActor*>& Products, const FVector& Location);
+	void ScatterProductsOnCircle(const TArray<ACSProductPickupActor*>& Products);
+	bool SpawnFreshResultsOnCircle(FName ProductId, int32 Count);
+	// 하나라도 실패하면 만든 것을 전부 지우고 false
+	bool SpawnFreshProducts(FName ProductId, const TArray<FTransform>& SpawnTransforms, TArray<ACSProductPickupActor*>& OutProducts);
+	FText GetProductDisplayName(FName ProductId) const;
+	TSoftObjectPtr<UTexture2D> FindProductIcon(FName ProductId) const;
+
+	void OpenSummonList(APlayerController* PlayerController);
+	void HandleAutoCraftOpen();
 
 	void EnterCloseup(APlayerController* PlayerController);
 	void ExitCloseup(bool bImmediate);
