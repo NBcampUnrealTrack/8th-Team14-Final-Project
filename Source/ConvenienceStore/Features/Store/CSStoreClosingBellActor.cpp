@@ -9,6 +9,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSStoreClosingBellConfirmWidget.h"
+#include "UI/Store/CSStoreSleepTransitionWidget.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 ACSStoreClosingBellActor::ACSStoreClosingBellActor()
@@ -22,6 +23,7 @@ void ACSStoreClosingBellActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearTimer(SleepTimer);
 	CloseConfirmWidget();
+	CloseSleepTransitionWidget();
 	FinishSleep();
 	Super::EndPlay(EndPlayReason);
 }
@@ -76,15 +78,66 @@ void ACSStoreClosingBellActor::AdvanceDayWhileBlack()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] Sleep cancelled: closing summary was not accepted."));
 		DayBeforeSleep = INDEX_NONE;
+		GetWorldTimerManager().SetTimer(SleepTimer, this,
+			&ACSStoreClosingBellActor::WakeAndFadeIn, FMath::Max(0.01f, SleepBlackHoldDuration), false);
+		return;
 	}
-	else
+
+	ACSStorePlayerController* Controller = SleepingController.Get();
+	if (SleepTransitionWidgetClass)
 	{
-		// 고객 정리/정산 요청은 정상 수행하며, 수면 중인 Controller만 정산창을 생략합니다.
-		Mode->CompleteDailySummary();
+		ActiveSleepTransitionWidget = CreateWidget<UCSStoreSleepTransitionWidget>(
+			Controller, SleepTransitionWidgetClass);
 	}
-	// 공식 NextDay API와 일일 이벤트들이 끝난 다음 프레임 이후에만 다시 화면을 엽니다.
+	if (!IsValid(ActiveSleepTransitionWidget))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] SleepTransitionWidgetClass가 없어 기존 즉시 전환을 사용합니다."));
+		Mode->CompleteDailySummary();
+		GetWorldTimerManager().SetTimer(SleepTimer, this,
+			&ACSStoreClosingBellActor::WakeAndFadeIn, FMath::Max(0.01f, SleepBlackHoldDuration), false);
+		return;
+	}
+
+	ActiveSleepTransitionWidget->OnNextDayRequested.AddDynamic(
+		this, &ThisClass::HandleSleepNextDayRequested);
+	ActiveSleepTransitionWidget->OnSummaryRequested.AddDynamic(
+		this, &ThisClass::HandleSleepSummaryRequested);
+	ActiveSleepTransitionWidget->AddToViewport(2200);
+	Controller->SetSleepTransitionWidget(ActiveSleepTransitionWidget);
+	ActiveSleepTransitionWidget->SetKeyboardFocus();
+}
+
+void ACSStoreClosingBellActor::HandleSleepNextDayRequested()
+{
+	ACSStoreGameMode* Mode = GetWorld()->GetAuthGameMode<ACSStoreGameMode>();
+	if (!IsValid(Mode) || !IsValid(StoreGameState) || !StoreGameState->bIsDailySummaryPending) return;
+	CloseSleepTransitionWidget();
+	Mode->CompleteDailySummary();
 	GetWorldTimerManager().SetTimer(SleepTimer, this,
 		&ACSStoreClosingBellActor::WakeAndFadeIn, FMath::Max(0.01f, SleepBlackHoldDuration), false);
+}
+
+void ACSStoreClosingBellActor::HandleSleepSummaryRequested()
+{
+	if (ACSStorePlayerController* Controller = SleepingController.Get())
+	{
+		Controller->ShowSleepDailySummary();
+	}
+}
+
+void ACSStoreClosingBellActor::CloseSleepTransitionWidget()
+{
+	if (ACSStorePlayerController* Controller = SleepingController.Get())
+	{
+		Controller->SetSleepTransitionWidget(nullptr);
+	}
+	if (!IsValid(ActiveSleepTransitionWidget)) return;
+	ActiveSleepTransitionWidget->OnNextDayRequested.RemoveDynamic(
+		this, &ThisClass::HandleSleepNextDayRequested);
+	ActiveSleepTransitionWidget->OnSummaryRequested.RemoveDynamic(
+		this, &ThisClass::HandleSleepSummaryRequested);
+	ActiveSleepTransitionWidget->RemoveFromParent();
+	ActiveSleepTransitionWidget = nullptr;
 }
 
 void ACSStoreClosingBellActor::WakeAndFadeIn()
@@ -131,6 +184,7 @@ void ACSStoreClosingBellActor::WakeAndFadeIn()
 
 void ACSStoreClosingBellActor::FinishSleep()
 {
+	CloseSleepTransitionWidget();
 	if (ACSStorePlayerController* Controller = SleepingController.Get())
 	{
 		if (IsValid(Controller->PlayerCameraManager)) Controller->PlayerCameraManager->StopCameraFade();
