@@ -287,14 +287,14 @@ void UCSJournalDesignedWidget::RefreshArtifactCells()
 					GetSelectedArtifactNextAvailableDay() <= GetCurrentBusinessDay() &&
 					bHasDefinition &&
 					Definition.Effect != ECSArtifactEffectType::None;
-				if (bHasDefinition && Definition.Effect == ECSArtifactEffectType::FairyHouse)
+				if (bHasDefinition && Definition.Effect == ECSArtifactEffectType::FairyContract)
 				{
-					const bool bPlaced = Artifacts->IsFairyHousePlaced(this);
-					UseLabel = bPlaced ? NSLOCTEXT("Artifact", "FairyHouseInstalledLabel", "설치됨")
-						: NSLOCTEXT("Artifact", "FairyHousePlaceLabel", "배치하기");
-					Detail += bPlaced ? TEXT("\n설치됨 · 매장에 1개만 설치할 수 있습니다.")
-						: TEXT("\n지정된 자리에 1개를 배치합니다.");
-					bCanUse = bCanUse && !bPlaced;
+					const bool bSigned = Artifacts->IsFairyContractSigned();
+					UseLabel = bSigned ? NSLOCTEXT("Artifact", "FairyContractSignedLabel", "계약 완료")
+						: NSLOCTEXT("Artifact", "FairyContractSignLabel", "계약하기");
+					Detail += bSigned ? TEXT("\n계약 완료 · 미화의 요정이 청소를 도와줍니다.")
+						: TEXT("\n사용하면 요정 등장 연출 후 청소를 시작합니다.");
+					bCanUse = bCanUse && !bSigned && Artifacts->IsFairyHousePlaced(this);
 				}
 			}
 		}
