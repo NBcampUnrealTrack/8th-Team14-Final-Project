@@ -3,6 +3,7 @@
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/DataTable.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
@@ -123,12 +124,36 @@ void UCSStoreLedgerWidget::RebuildProductList()
 		return;
 	}
 
+	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+	if (!IsValid(Crafting))
+	{
+		static bool bWarnedMissingCrafting = false;
+		if (!bWarnedMissingCrafting)
+		{
+			bWarnedMissingCrafting = true;
+			UE_LOG(LogTemp, Warning, TEXT("[장부] 제조 서브시스템이 없어 제조 탭이 비고 꽝 상품도 숨기지 못합니다."));
+		}
+	}
+
 	TArray<FCSLedgerProductViewData> Products;
 	for (const FName ProductId : ProductDataTable->GetRowNames())
 	{
+		// 제조 전용은 판매 상품이라 전체 탭에서도 찾을 수 있어야 하고, 꽝은 장난 상품이라 장부에서 숨긴다
+		const bool bCraftOnly = IsValid(Crafting) && Crafting->IsCraftOnlyResultProduct(ProductId);
+		if (IsValid(Crafting) && Crafting->IsJunkResultProduct(ProductId))
+		{
+			continue;
+		}
+		if (SelectedCategory == ECSLedgerCategoryFilter::Craft ? !bCraftOnly
+			: bCraftOnly && SelectedCategory != ECSLedgerCategoryFilter::All)
+		{
+			continue;
+		}
+
 		FCSLedgerProductViewData ProductData;
 		if (BuildProductViewData(ProductId, ProductData) &&
-			MatchesSelectedCategory(ProductData.Category))
+			(SelectedCategory == ECSLedgerCategoryFilter::Craft || MatchesSelectedCategory(ProductData.Category)))
 		{
 			Products.Add(MoveTemp(ProductData));
 		}

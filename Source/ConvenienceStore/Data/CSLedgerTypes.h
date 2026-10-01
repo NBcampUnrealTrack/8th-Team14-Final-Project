@@ -21,7 +21,9 @@ enum class ECSLedgerCategoryFilter : uint8
 	Snack,
 	Supply,
 	Toiletry,
-	Tool
+	Tool,
+	// 제조 전용 상품만 모아 보는 탭. 기존 값 순서를 밀지 않게 끝에 둔다
+	Craft
 };
 
 // LockedProduct는 기존 Blueprint enum 직렬화 호환용으로만 보존합니다.

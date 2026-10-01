@@ -5,6 +5,9 @@
 #include "Components/SpinBox.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
+#include "Engine/World.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
+#include "UI/Crafting/CSLedgerCraftInfoWidget.h"
 
 namespace
 {
@@ -62,8 +65,29 @@ void UCSLedgerRightPageWidget::ShowUnlocked(
 	int32 PendingSalePrice)
 {
 	if (IsValid(SelectionSwitcher)) SelectionSwitcher->SetActiveWidgetIndex(1);
-	if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(0);
 	RefreshProductHeader(ProductData);
+
+	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+	FCSCraftLedgerInfo CraftInfo;
+	const bool bCraftOnly = IsValid(Crafting) && Crafting->BuildLedgerInfo(ProductData.ProductId, CraftInfo);
+
+	// 재고까지 보는 건 도감이 저장되지 않아 불러오면 발견 기록이 사라져도, 창고에 물건이 있으면 판매가를 바꿀 수 있어야 해서다
+	if (bCraftOnly && !CraftInfo.bDiscovered && ProductData.CurrentStock <= 0)
+	{
+		if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(1);
+		// 옛 해금 칸 텍스트는 WBP 직렬화 때문에 남겨 두고 보이지만 않게 한다
+		for (UTextBlock* OldText : { Txt_LevelReq.Get(), Txt_LevelStatus.Get(), Txt_ReputationReq.Get(), Txt_ReputationStatus.Get() })
+		{
+			if (IsValid(OldText)) OldText->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		if (IsValid(CraftGuideInfo)) CraftGuideInfo->ShowGuide();
+		SetPendingSalePriceValue(PendingSalePrice);
+		return;
+	}
+
+	if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(0);
+	if (IsValid(CraftGuideInfo)) CraftGuideInfo->HideInfo();
 	RefreshUnlockedMetrics(ProductData);
 	ShowUnlockedProductDetail(ProductData);
 	SetPendingSalePriceValue(PendingSalePrice);
