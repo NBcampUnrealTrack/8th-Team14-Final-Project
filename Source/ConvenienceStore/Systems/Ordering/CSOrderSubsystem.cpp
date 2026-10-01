@@ -143,51 +143,6 @@ void DestroySpawnedActors(const TArray<AActor*>& SpawnedActors)
 	}
 }
 
-bool TryParseRequiredStoreLevel(FName StoreLevelCondition, int32& OutRequiredLevel)
-{
-	OutRequiredLevel = 1;
-	if (StoreLevelCondition.IsNone())
-	{
-		return true;
-	}
-
-	const FString ConditionString = StoreLevelCondition.ToString();
-	const FString Prefix = TEXT("StoreLv_");
-	if (!ConditionString.StartsWith(Prefix, ESearchCase::CaseSensitive))
-	{
-		return false;
-	}
-
-	const FString LevelString = ConditionString.RightChop(Prefix.Len());
-	if (LevelString.IsEmpty())
-	{
-		return false;
-	}
-
-	int64 ParsedLevel = 0;
-	for (const TCHAR Character : LevelString)
-	{
-		if (!FChar::IsDigit(Character))
-		{
-			return false;
-		}
-
-		const int32 Digit = Character - TEXT('0');
-		if (ParsedLevel > (MAX_int32 - Digit) / 10)
-		{
-			return false;
-		}
-		ParsedLevel = ParsedLevel * 10 + Digit;
-	}
-
-	if (ParsedLevel < 1)
-	{
-		return false;
-	}
-
-	OutRequiredLevel = static_cast<int32>(ParsedLevel);
-	return true;
-}
 }
 
 void UCSOrderSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -213,22 +168,15 @@ void UCSOrderSubsystem::Deinitialize()
 bool UCSOrderSubsystem::IsProductUnlocked(const FDataTableRowHandle& Row) const
 {
 	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSProductDataRow::StaticStruct()) return false;
-	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
-	const FCSProductDataRow* Data = Row.GetRow<FCSProductDataRow>(TEXT("Order unlock"));
-	return State && Data && Data->bOrderable && State->IsStoreLevelRequirementMet(Data->StoreLevelUnlockCondition)
-		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition);
+	// 기존 Blueprint 호출 이름은 보존하되 발주 가능 여부만 검사합니다.
+	const FCSProductDataRow* Data = Row.GetRow<FCSProductDataRow>(TEXT("Order availability"));
+	return Data && Data->bOrderable;
 }
 
 bool UCSOrderSubsystem::IsFacilityUnlocked(const FDataTableRowHandle& Row) const
 {
 	if (!Row.DataTable || Row.DataTable->GetRowStruct() != FCSFacilityDataRow::StaticStruct()) return false;
-	const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
-	const FCSFacilityDataRow* Data = Row.GetRow<FCSFacilityDataRow>(TEXT("Order unlock"));
-	int32 Level = 1;
-	return State && Data && TryParseRequiredStoreLevel(Data->StoreLevelUnlockCondition, Level)
-		&& State->IsStoreLevelRequirementMet(Level)
-		&& State->IsReputationRequirementMet(Data->ReputationUnlockCondition)
-		&& Data->QuestUnlockCondition.IsNone();
+	return Row.GetRow<FCSFacilityDataRow>(TEXT("Order availability")) != nullptr;
 }
 
 TArray<FName> UCSOrderSubsystem::GetUnlockedFacilityRowNames(UDataTable* Table) const
@@ -287,16 +235,10 @@ FCSCombinedOrderResult UCSOrderSubsystem::EvaluateCombinedOrder(
 		NSLOCTEXT("Order", "Empty", "발주할 항목을 선택해 주세요."));
 	if (HasProducts && !Result.Products.bSuccess && Result.Products.FailureReason != ECOrderFailureReason::InsufficientFunds)
 		return Fail(ECSCombinedOrderFailure::ProductInvalid,
-			NSLOCTEXT("Order", "ProductInvalid", "상품의 수량 또는 가격 정보를 확인해 주세요."));
+			NSLOCTEXT("Order", "ProductUnavailableOrInvalid", "상품의 발주 가능 여부, 수량 또는 가격 정보를 확인해 주세요."));
 	if (HasFacilities && !Result.Facilities.bSuccess && Result.Facilities.FailureReason != ECFacilityOrderFailureReason::InsufficientFunds)
 		return Fail(ECSCombinedOrderFailure::FacilityInvalid,
-			NSLOCTEXT("Order", "FacilityInvalid", "시설의 해금 조건, 수량 또는 가격 정보를 확인해 주세요."));
-	for (const FCSOrderLine& Line : Products)
-	{
-		if (Line.CrateCount > 0 && !IsProductUnlocked(Line.ProductRow))
-			return Fail(ECSCombinedOrderFailure::ProductLocked,
-				NSLOCTEXT("Order", "Locked", "아직 해금되지 않은 상품이 포함되어 있습니다."));
-	}
+			NSLOCTEXT("Order", "FacilityDataInvalid", "시설의 수량 또는 가격 정보를 확인해 주세요."));
 	const int64 Total = int64(Result.Products.TotalCost) + Result.Facilities.TotalCost;
 	if (Total > MAX_int32) return Fail(ECSCombinedOrderFailure::CostOverflow,
 		NSLOCTEXT("Order", "Overflow", "발주 가능한 금액을 초과했습니다."));
@@ -730,36 +672,6 @@ FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrderWithDelivery(
 		if (FacilityData->PurchasePriceGold < 0)
 		{
 			Result.FailureReason = ECFacilityOrderFailureReason::InvalidPurchasePrice;
-			return Result;
-		}
-
-		int32 RequiredStoreLevel = 1;
-		if (!TryParseRequiredStoreLevel(
-			FacilityData->StoreLevelUnlockCondition,
-			RequiredStoreLevel))
-		{
-			Result.FailureReason =
-				ECFacilityOrderFailureReason::InvalidStoreLevelCondition;
-			return Result;
-		}
-
-		if (!StoreGameState->IsStoreLevelRequirementMet(RequiredStoreLevel))
-		{
-			Result.FailureReason = ECFacilityOrderFailureReason::StoreLevelLocked;
-			return Result;
-		}
-
-		if (!StoreGameState->IsReputationRequirementMet(
-			FacilityData->ReputationUnlockCondition))
-		{
-			Result.FailureReason = ECFacilityOrderFailureReason::ReputationLocked;
-			return Result;
-		}
-
-		if (!FacilityData->QuestUnlockCondition.IsNone())
-		{
-			Result.FailureReason =
-				ECFacilityOrderFailureReason::QuestRequirementUnsupported;
 			return Result;
 		}
 

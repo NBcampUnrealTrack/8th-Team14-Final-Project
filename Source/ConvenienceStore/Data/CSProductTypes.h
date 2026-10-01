@@ -256,6 +256,7 @@ struct CONVENIENCESTORE_API FCSProductDataRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product")
 	FText Description;
 
+	// 기존 DT/CSV 및 Blueprint 핀 호환용입니다. 상품 해금/발주 판정에는 사용하지 않습니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Product|Unlock",
 		meta = (ClampMin = "1", ClampMax = "10", UIMin = "1", UIMax = "10"))
 	int32 StoreLevelUnlockCondition = 1;

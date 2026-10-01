@@ -488,7 +488,7 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
 		const FCSProductDataRow* ProductData = OrderSettings->ProductDataTable->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
-		if (ProductData == nullptr || !StoreGameState->IsStoreLevelRequirementMet(ProductData->StoreLevelUnlockCondition) || !StoreGameState->IsReputationRequirementMet(ProductData->ReputationUnlockCondition)) continue;
+		if (ProductData == nullptr) continue;
 		EligibleRowNames.Add(RowName);
 		FDataTableRowHandle ProductRow;
 		ProductRow.DataTable = OrderSettings->ProductDataTable;
