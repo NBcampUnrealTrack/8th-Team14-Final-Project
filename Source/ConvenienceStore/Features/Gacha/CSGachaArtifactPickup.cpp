@@ -24,6 +24,7 @@ ACSGachaArtifactPickup::ACSGachaArtifactPickup()
 	DisplayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	FallbackMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	DisplayMesh->SetStaticMesh(FallbackMesh);
+	DisplayMesh->SetRelativeScale3D(FVector(.3f));
 	DisplayMesh->SetRelativeScale3D(FVector(0.3f));
 }
 
@@ -61,6 +62,12 @@ bool ACSGachaArtifactPickup::ApplyArtifactRow()
 	ArtifactId = ArtifactRow.RowName;
 	ArtifactDisplayName = Definition->DisplayName;
 	if (Definition->WorldMesh) DisplayMesh->SetStaticMesh(Definition->WorldMesh);
+	else if (Definition->Effect == ECSArtifactEffectType::FairyContract || Definition->Effect == ECSArtifactEffectType::FairyHouse)
+	{
+		// 전용 계약서 모델을 지정하기 전에는 얇은 종이 형태로 표시합니다.
+		DisplayMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+		DisplayMesh->SetRelativeScale3D(FVector(.3f, .22f, .015f));
+	}
 	return true;
 }
 
@@ -122,10 +129,13 @@ void ACSGachaArtifactPickup::Interact_Implementation(AActor* Interactor)
 		return;
 	}
 
-	// 도감 등록이 성공한 뒤에만 월드의 보상을 없애 주세요.
+	FCSJournalArtifactDataRow Definition;
+	const bool bDuplicateContract = Artifacts->IsFairyContractSigned() && Artifacts->GetDefinition(ArtifactId, Definition) &&
+		Definition.Effect == ECSArtifactEffectType::FairyContract;
+	// 도감 등록 또는 중복 계약서 교환이 성공한 뒤에만 월드의 보상을 없애 주세요.
 	if (Artifacts->Acquire(ArtifactId, Quantity))
 	{
-		if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()))
+		if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()); Controller && !bDuplicateContract)
 		{
 			Controller->ShowGameplayToast(
 				NSLOCTEXT("Gacha", "ArtifactAcquired", "아티팩트 획득"),
