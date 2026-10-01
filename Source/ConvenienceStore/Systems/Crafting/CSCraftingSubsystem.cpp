@@ -3,11 +3,116 @@
 #include "Data/CSProductTypes.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+#include "Features/Crafting/CSCraftStationActor.h"
 #include "HAL/IConsoleManager.h"
+#include "Systems/Crafting/CSCraftRumorSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 namespace
 {
+	TArray<FName> SortedNames(const TSet<FName>& Names)
+	{
+		TArray<FName> Result = Names.Array();
+		Result.Sort(FNameLexicalLess());
+		return Result;
+	}
+
+	// 같으면 빈 문자열, 다르면 처음 다른 항목 이름
+	FString FindSaveDataDifference(const FCSCraftSaveData& A, const FCSCraftSaveData& B)
+	{
+		if (A.DiscoveredRecipeRows != B.DiscoveredRecipeRows) return TEXT("발견 레시피");
+		if (A.HeatRumorRecipeRows != B.HeatRumorRecipeRows) return TEXT("불 소문");
+		if (A.StirRumorRecipeRows != B.StirRumorRecipeRows) return TEXT("젓기 소문");
+		if (A.RecentAttempts.Num() != B.RecentAttempts.Num()) return TEXT("최근 시도 줄 수");
+		for (int32 Index = 0; Index < A.RecentAttempts.Num(); ++Index)
+		{
+			if (!(A.RecentAttempts[Index] == B.RecentAttempts[Index]))
+			{
+				return FString::Printf(TEXT("최근 시도 %d번째 줄"), Index + 1);
+			}
+		}
+		if (A.Stations.Num() != B.Stations.Num()) return TEXT("제조대 수");
+		auto RowNames = [](const TArray<FCSLooseProductRecord>& Records)
+		{
+			TArray<FName> Names;
+			for (const FCSLooseProductRecord& Record : Records)
+			{
+				Names.Add(Record.ProductRow.RowName);
+			}
+			return Names;
+		};
+		for (int32 Index = 0; Index < A.Stations.Num(); ++Index)
+		{
+			const FCSCraftStationSaveRecord& StationA = A.Stations[Index];
+			const FCSCraftStationSaveRecord& StationB = B.Stations[Index];
+			if (StationA.StationName != StationB.StationName) return TEXT("제조대 이름");
+			if (RowNames(StationA.PotProducts) != RowNames(StationB.PotProducts))
+			{
+				return FString::Printf(TEXT("%s 솥 재료"), *StationA.StationName.ToString());
+			}
+			if (RowNames(StationA.ResultProducts) != RowNames(StationB.ResultProducts))
+			{
+				return FString::Printf(TEXT("%s 결과 슬롯"), *StationA.StationName.ToString());
+			}
+		}
+		if (A.RumorBaseSeed != B.RumorBaseSeed) return TEXT("소문 시드");
+		return FString();
+	}
+}
+
+namespace
+{
+#if !UE_BUILD_SHIPPING
+	FAutoConsoleCommandWithWorldAndArgs CmdCraftSaveTest(
+		TEXT("cs.CraftSaveTest"),
+		TEXT("제조 저장 데이터를 포장했다가 비우고 다시 풀어서 처음과 같은지 확인합니다."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+		{
+			UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+			if (!IsValid(Crafting) || !Crafting->IsCraftingAvailable())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[제조 저장 테스트] 플레이 중인 게임에서 실행하세요."));
+				return;
+			}
+			// 저장 메뉴도 클로즈업 중에는 열리지 않는다. 진행 중인 제조가 비워지면 테스트가 상태를 망친다
+			for (TActorIterator<ACSCraftStationActor> It(World); It; ++It)
+			{
+				if (It->IsCloseupActive())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[제조 저장 테스트] 클로즈업 중에는 실행하지 않습니다."));
+					return;
+				}
+			}
+
+			const FCSCraftSaveData Before = Crafting->CaptureCraftSaveData();
+
+			// 불러오기처럼 기록을 비우고 솥 물건 액터도 지운 뒤 되살린다
+			FCSCraftSaveData Empty;
+			Empty.RumorBaseSeed = Before.RumorBaseSeed;
+			for (const FCSCraftStationSaveRecord& Station : Before.Stations)
+			{
+				FCSCraftStationSaveRecord& EmptyStation = Empty.Stations.AddDefaulted_GetRef();
+				EmptyStation.StationName = Station.StationName;
+			}
+			Crafting->RestoreCraftSaveData(Empty);
+			Crafting->RestoreCraftSaveData(Before);
+
+			const FCSCraftSaveData After = Crafting->CaptureCraftSaveData();
+			const FString Difference = FindSaveDataDifference(Before, After);
+			if (Difference.IsEmpty())
+			{
+				UE_LOG(LogTemp, Display, TEXT("[제조 저장 테스트] 성공 (발견 %d, 불 소문 %d, 젓기 소문 %d, 최근 시도 %d, 제조대 %d)"),
+					Before.DiscoveredRecipeRows.Num(), Before.HeatRumorRecipeRows.Num(), Before.StirRumorRecipeRows.Num(),
+					Before.RecentAttempts.Num(), Before.Stations.Num());
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[제조 저장 테스트] 실패: %s"), *Difference);
+			}
+		}));
+#endif
+
 #if !UE_BUILD_SHIPPING
 FAutoConsoleCommandWithWorldAndArgs CmdCraftTest(
 	TEXT("cs.CraftTest"),
@@ -74,6 +179,7 @@ void UCSCraftingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	MessageTable = GameMode->GetCraftMessageTable();
 	KeyHintTable = GameMode->GetCraftKeyHintTable();
 	ProductTable = GameMode->GetProductMasterTable();
+	RumorTable = GameMode->GetCraftRumorTable();
 
 	// 행 구조체가 다른 표를 그대로 쓰면 행을 잘못 읽는다
 	auto DropIfWrongStruct = [](TObjectPtr<UDataTable>& Table, const UScriptStruct* Expected, const TCHAR* Label)
@@ -89,6 +195,7 @@ void UCSCraftingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	DropIfWrongStruct(MessageTable, FCSCraftMessageRow::StaticStruct(), TEXT("CraftMessageTable"));
 	DropIfWrongStruct(KeyHintTable, FCSCraftKeyHintRow::StaticStruct(), TEXT("CraftKeyHintTable"));
 	DropIfWrongStruct(ProductTable, FCSProductDataRow::StaticStruct(), TEXT("ProductMasterTable"));
+	DropIfWrongStruct(RumorTable, FCSCraftRumorRow::StaticStruct(), TEXT("CraftRumorTable"));
 
 	if (!IsValid(RecipeTable) || RecipeTable->GetRowMap().Num() == 0 || !IsValid(ProductTable))
 	{
@@ -113,6 +220,7 @@ void UCSCraftingSubsystem::BuildRecipeMap()
 	RecipeRowByIngredients.Reset();
 	JunkResultProducts.Reset();
 	CraftOnlyResultProducts.Reset();
+	CraftOnlyRecipeByResult.Reset();
 
 	int32 CraftOnlyCount = 0;
 	int32 ExistingCount = 0;
@@ -140,6 +248,7 @@ void UCSCraftingSubsystem::BuildRecipeMap()
 		case ECSCraftRecipeKind::CraftOnly:
 			++CraftOnlyCount;
 			CraftOnlyResultProducts.Add(Row->ResultProduct);
+			CraftOnlyRecipeByResult.Add(Row->ResultProduct, Pair.Key);
 			break;
 		case ECSCraftRecipeKind::ExistingProduct:
 			++ExistingCount;
@@ -203,17 +312,75 @@ void UCSCraftingSubsystem::ValidateTables() const
 			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] %s의 거품 수 %d, 성공 기준 %d가 맞지 않습니다."),
 				*Pair.Key.ToString(), Row->PopCount, Row->PopSuccessHits);
 		}
+
+		// 도감이 재료·불·젓기 소문을 그대로 보여 준다. 빈칸이면 실패해도 단서가 안 나온다
+		if (Row->RecipeKind == ECSCraftRecipeKind::CraftOnly &&
+			(Row->RumorStage1Text.IsEmpty() || Row->RumorStage2Text.IsEmpty() || Row->RumorStage3Text.IsEmpty()))
+		{
+			++WarningCount;
+			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] %s의 소문 문구(재료·불·젓기)에 빈칸이 있습니다."), *Pair.Key.ToString());
+		}
 	}
 
 	const UEnum* OutcomeEnum = StaticEnum<ECSCraftOutcome>();
 	for (const ECSCraftOutcome Outcome : { ECSCraftOutcome::MismatchedCount, ECSCraftOutcome::Burnt,
 		ECSCraftOutcome::Undermixed, ECSCraftOutcome::Unknown, ECSCraftOutcome::PopFailed })
 	{
-		if (GetFailureRow(Outcome) == nullptr)
+		const FCSCraftFailureRow* FailureRow = GetFailureRow(Outcome);
+		if (FailureRow == nullptr)
 		{
 			++WarningCount;
 			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] DT_CraftFailure에 '%s' 행이 없습니다."),
 				*OutcomeEnum->GetNameStringByValue(static_cast<int64>(Outcome)));
+		}
+		else if (FailureRow->Description.IsEmpty())
+		{
+			++WarningCount;
+			UE_LOG(LogTemp, Warning, TEXT("[제조 검증] DT_CraftFailure '%s'의 설명이 비어 있습니다."),
+				*OutcomeEnum->GetNameStringByValue(static_cast<int64>(Outcome)));
+		}
+	}
+
+	if (!IsValid(RumorTable))
+	{
+		++WarningCount;
+		UE_LOG(LogTemp, Warning, TEXT("[제조 검증] GameMode의 CraftRumorTable이 비어 있어 게시판 소문이 제조 소문만 나옵니다."));
+	}
+	else
+	{
+		TMap<ECSCraftRumorKind, int32> KindCounts;
+		for (const TPair<FName, uint8*>& Pair : RumorTable->GetRowMap())
+		{
+			const FCSCraftRumorRow* Row = reinterpret_cast<const FCSCraftRumorRow*>(Pair.Value);
+			if (Row == nullptr)
+			{
+				continue;
+			}
+			++KindCounts.FindOrAdd(Row->Kind);
+			if (Row->Kind == ECSCraftRumorKind::WeatherVariant &&
+				(Row->TargetProduct.IsNone() || ProductTable->FindRow<FCSProductDataRow>(Row->TargetProduct, TEXT(""), false) == nullptr))
+			{
+				++WarningCount;
+				UE_LOG(LogTemp, Warning, TEXT("[제조 검증] 날씨 소문 %s의 대상 상품 '%s'가 DT_ProductMaster에 없습니다."),
+					*Pair.Key.ToString(), *Row->TargetProduct.ToString());
+			}
+		}
+
+		// 게시판 풀 크기와 날씨 고정 자리 수가 이 개수를 기준으로 맞춰져 있다
+		const UEnum* KindEnum = StaticEnum<ECSCraftRumorKind>();
+		const TPair<ECSCraftRumorKind, int32> ExpectedCounts[] = {
+			{ ECSCraftRumorKind::Combination, 7 }, { ECSCraftRumorKind::Property, 6 },
+			{ ECSCraftRumorKind::BasicMethod, 1 }, { ECSCraftRumorKind::Chatter, 5 },
+			{ ECSCraftRumorKind::WeatherVariant, 3 } };
+		for (const TPair<ECSCraftRumorKind, int32>& Expected : ExpectedCounts)
+		{
+			const int32 Actual = KindCounts.FindRef(Expected.Key);
+			if (Actual != Expected.Value)
+			{
+				++WarningCount;
+				UE_LOG(LogTemp, Warning, TEXT("[제조 검증] DT_CraftRumor의 %s 행이 %d개입니다. %d개여야 합니다."),
+					*KindEnum->GetNameStringByValue(static_cast<int64>(Expected.Key)), Actual, Expected.Value);
+			}
 		}
 	}
 
@@ -322,11 +489,163 @@ bool UCSCraftingSubsystem::IsRecipeDiscovered(FName IngredientA, FName Ingredien
 	return RowName != nullptr && DiscoveredRecipeRows.Contains(*RowName);
 }
 
-void UCSCraftingSubsystem::MarkRecipeDiscovered(FName RecipeRowName)
+void UCSCraftingSubsystem::RecordManualCraft(const FCSCraftAttemptRecord& Attempt)
 {
-	if (!RecipeRowName.IsNone())
+	// 쓰레기가 나온 건 조합을 알아낸 게 아니다
+	const bool bMadeProduct = Attempt.Outcome == ECSCraftOutcome::GreatSuccess ||
+		Attempt.Outcome == ECSCraftOutcome::Success ||
+		Attempt.Outcome == ECSCraftOutcome::Junk;
+	if (bMadeProduct && !Attempt.RecipeRowName.IsNone())
 	{
-		DiscoveredRecipeRows.Add(RecipeRowName);
+		DiscoveredRecipeRows.Add(Attempt.RecipeRowName);
+	}
+
+	// 맞힌 단계의 소문만 연다. 틀린 단계를 바로 알려 주면 추리할 게 없어진다.
+	// 판정이 개수, 불, 젓기, 거품 순이라 덜 섞인 반죽이면 불을, 김빠진 덩어리면 불과 젓기를 맞힌 것이다
+	const FCSCraftRecipeRow* Recipe = FindRecipeByRowName(Attempt.RecipeRowName);
+	if (Recipe != nullptr && Recipe->RecipeKind == ECSCraftRecipeKind::CraftOnly)
+	{
+		if (Attempt.Outcome == ECSCraftOutcome::Undermixed || Attempt.Outcome == ECSCraftOutcome::PopFailed)
+		{
+			HeatRumorRecipeRows.Add(Attempt.RecipeRowName);
+		}
+		if (Attempt.Outcome == ECSCraftOutcome::PopFailed)
+		{
+			StirRumorRecipeRows.Add(Attempt.RecipeRowName);
+		}
+	}
+
+	RecentAttempts.Add(Attempt);
+	if (RecentAttempts.Num() > MaxRecentAttempts)
+	{
+		RecentAttempts.RemoveAt(0, RecentAttempts.Num() - MaxRecentAttempts);
+	}
+}
+
+FText UCSCraftingSubsystem::GetProductDisplayName(FName ProductId) const
+{
+	const FCSProductDataRow* ProductRow = IsValid(ProductTable)
+		? ProductTable->FindRow<FCSProductDataRow>(ProductId, TEXT(""), false)
+		: nullptr;
+	return ProductRow != nullptr && !ProductRow->DisplayName.IsEmpty() ? ProductRow->DisplayName : FText::FromName(ProductId);
+}
+
+bool UCSCraftingSubsystem::BuildLedgerInfo(FName ProductId, FCSCraftLedgerInfo& OutInfo) const
+{
+	OutInfo = FCSCraftLedgerInfo();
+	const FName* RecipeRowName = CraftOnlyRecipeByResult.Find(ProductId);
+	const FCSCraftRecipeRow* Recipe = RecipeRowName ? FindRecipeByRowName(*RecipeRowName) : nullptr;
+	if (Recipe == nullptr)
+	{
+		return false;
+	}
+
+	OutInfo.bCraftOnly = true;
+	OutInfo.RecipeRowName = *RecipeRowName;
+	OutInfo.bDiscovered = DiscoveredRecipeRows.Contains(*RecipeRowName);
+	return true;
+}
+
+TArray<FCSCraftRumorLine> UCSCraftingSubsystem::GetMaterialRumorLines() const
+{
+	TArray<FCSCraftRumorLine> Lines;
+	for (const FName RowName : GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
+	{
+		const FCSCraftRecipeRow* Recipe = FindRecipeByRowName(RowName);
+		if (Recipe != nullptr && !Recipe->RumorStage1Text.IsEmpty())
+		{
+			Lines.Add({ RowName, Recipe->RumorStage1Text });
+		}
+	}
+	Lines.Sort([](const FCSCraftRumorLine& A, const FCSCraftRumorLine& B) { return A.Key.LexicalLess(B.Key); });
+	return Lines;
+}
+
+TArray<FName> UCSCraftingSubsystem::GetRecipeRowNames(ECSCraftRecipeKind Kind) const
+{
+	TArray<FName> RowNames;
+	if (!IsValid(RecipeTable))
+	{
+		return RowNames;
+	}
+	for (const TPair<FName, uint8*>& Pair : RecipeTable->GetRowMap())
+	{
+		const FCSCraftRecipeRow* Row = reinterpret_cast<const FCSCraftRecipeRow*>(Pair.Value);
+		// 재료 쌍이 겹쳐 판정에서 버려진 행은 도감에도 넣지 않는다
+		const FName* UsedRow = Row ? RecipeRowByIngredients.Find(MakeIngredientKey(Row->IngredientA, Row->IngredientB)) : nullptr;
+		if (Row != nullptr && Row->RecipeKind == Kind && UsedRow != nullptr && *UsedRow == Pair.Key)
+		{
+			RowNames.Add(Pair.Key);
+		}
+	}
+	return RowNames;
+}
+
+FCSCraftSaveData UCSCraftingSubsystem::CaptureCraftSaveData() const
+{
+	FCSCraftSaveData Data;
+	// 정렬해 두면 같은 기록은 늘 같은 배열이 되어 비교하기 쉽다
+	Data.DiscoveredRecipeRows = SortedNames(DiscoveredRecipeRows);
+	Data.HeatRumorRecipeRows = SortedNames(HeatRumorRecipeRows);
+	Data.StirRumorRecipeRows = SortedNames(StirRumorRecipeRows);
+	Data.RecentAttempts = RecentAttempts;
+
+	UWorld* World = GetWorld();
+	if (World != nullptr)
+	{
+		for (TActorIterator<ACSCraftStationActor> It(World); It; ++It)
+		{
+			Data.Stations.Add(It->CapturePotRecord());
+		}
+		Data.Stations.Sort([](const FCSCraftStationSaveRecord& A, const FCSCraftStationSaveRecord& B)
+		{
+			return A.StationName.LexicalLess(B.StationName);
+		});
+		if (UCSCraftRumorSubsystem* Rumor = World->GetSubsystem<UCSCraftRumorSubsystem>())
+		{
+			Data.RumorBaseSeed = Rumor->GetRumorBaseSeed();
+		}
+	}
+	return Data;
+}
+
+void UCSCraftingSubsystem::RestoreCraftSaveData(const FCSCraftSaveData& Data)
+{
+	DiscoveredRecipeRows = TSet<FName>(Data.DiscoveredRecipeRows);
+	HeatRumorRecipeRows = TSet<FName>(Data.HeatRumorRecipeRows);
+	StirRumorRecipeRows = TSet<FName>(Data.StirRumorRecipeRows);
+	RecentAttempts = Data.RecentAttempts;
+	if (RecentAttempts.Num() > MaxRecentAttempts)
+	{
+		RecentAttempts.RemoveAt(0, RecentAttempts.Num() - MaxRecentAttempts);
+	}
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	TMap<FName, ACSCraftStationActor*> StationsByName;
+	for (TActorIterator<ACSCraftStationActor> It(World); It; ++It)
+	{
+		StationsByName.Add(It->GetFName(), *It);
+	}
+	for (const FCSCraftStationSaveRecord& Record : Data.Stations)
+	{
+		ACSCraftStationActor** Station = StationsByName.Find(Record.StationName);
+		if (Station == nullptr)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[제조] 저장된 제조대 %s를 레벨에서 찾지 못해 솥 재료 %d개, 결과물 %d개를 되살리지 않습니다."),
+				*Record.StationName.ToString(), Record.PotProducts.Num(), Record.ResultProducts.Num());
+			continue;
+		}
+		(*Station)->RestorePotRecord(Record);
+	}
+
+	if (UCSCraftRumorSubsystem* Rumor = World->GetSubsystem<UCSCraftRumorSubsystem>())
+	{
+		Rumor->SetRumorBaseSeed(Data.RumorBaseSeed);
 	}
 }
 

@@ -80,6 +80,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather|Demand")
 	float GetProductWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const;
 
+	// 날씨를 직접 받는 버전. 게시판 소문이 내일 예보로 수요가 오르는 상품을 고를 때 쓴다
+	// 계산 규칙은 이 함수 하나에만 있고, 위 함수는 오늘 날씨를 넘겨 이 함수를 부른다
+	float GetProductWeatherDemandModifierForWeather(const FDataTableRowHandle& ProductRow, ECSWeatherType Weather) const;
+
 	// -----------------------------------------------------------------------
 	// 알림 (이벤트 브로드캐스트)
 	// -----------------------------------------------------------------------

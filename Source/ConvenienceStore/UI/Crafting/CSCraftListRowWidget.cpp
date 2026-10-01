@@ -32,7 +32,9 @@ void UCSCraftListRowWidget::SetEntry(
 	NameText->SetText(Name);
 	DetailText->SetText(Detail);
 	DetailText->SetVisibility(Detail.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	// 도감처럼 개수가 없는 목록은 음수를 넘겨 칸을 접는다. 0은 "재고 0"이라 그대로 보여 준다
 	CountText->SetText(FText::AsNumber(Count));
+	CountText->SetVisibility(Count < 0 ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 	SelectButton->SetIsEnabled(bSelectable);
 	if (IsValid(Icon))
 	{

@@ -29,9 +29,30 @@ public:
 		int32 PopHits) const;
 
 	bool IsRecipeDiscovered(FName IngredientA, FName IngredientB) const;
-	// 성공, 대성공, 꽝일 때만 부른다. 쓰레기가 나온 건 조합을 알아낸 게 아니다
-	void MarkRecipeDiscovered(FName RecipeRowName);
 	const TSet<FName>& GetDiscoveredRecipeRows() const { return DiscoveredRecipeRows; }
+
+	// 도감 화면에 스크롤 없이 들어가는 양이고, 추리에 쓰이는 건 최근 시도라서 오래된 것은 버린다
+	static constexpr int32 MaxRecentAttempts = 10;
+
+	// 제조대에서 직접 만들었을 때만 부른다. 자동 제조는 발견, 소문, 시도 기록을 건드리지 않는다
+	void RecordManualCraft(const FCSCraftAttemptRecord& Attempt);
+	bool IsHeatRumorOpen(FName RecipeRowName) const { return HeatRumorRecipeRows.Contains(RecipeRowName); }
+	bool IsStirRumorOpen(FName RecipeRowName) const { return StirRumorRecipeRows.Contains(RecipeRowName); }
+	const TArray<FCSCraftAttemptRecord>& GetRecentAttempts() const { return RecentAttempts; }
+
+	// 제조 전용 결과물이 아니면 false
+	bool BuildLedgerInfo(FName ProductId, FCSCraftLedgerInfo& OutInfo) const;
+	// 제조 전용 레시피의 재료 소문. 레시피 RowName 순
+	TArray<FCSCraftRumorLine> GetMaterialRumorLines() const;
+	// 표에 적힌 순서 그대로
+	TArray<FName> GetRecipeRowNames(ECSCraftRecipeKind Kind) const;
+	UDataTable* GetRumorTable() const { return RumorTable; }
+	FText GetProductDisplayName(FName ProductId) const;
+
+	FCSCraftSaveData CaptureCraftSaveData() const;
+	// [백무송님] 저장 연결: 월드 상품을 전부 지우는 단계(CSWorldStateSaveHandler.cpp:333, :371-415)보다 뒤에 불러야 한다.
+	// 먼저 부르면 되살린 솥 재료가 같이 지워진다. 월드 상태 핸들러의 복원 우선순위는 10이다
+	void RestoreCraftSaveData(const FCSCraftSaveData& Data);
 
 	bool IsJunkResultProduct(FName ProductId) const;
 	bool IsCraftOnlyResultProduct(FName ProductId) const;
@@ -68,11 +89,28 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UDataTable> ProductTable;
 
-	// 저장하지 않아서 한 판 동안만 유지된다
+	UPROPERTY(Transient)
+	TObjectPtr<UDataTable> RumorTable;
+
+	// [백무송님] 저장 연결: Transient라 지금은 저장되지 않는다. 불러오면 자동 제조 목록이 빈다.
+	// 발견·소문·시도 기록은 CaptureCraftSaveData에 담겨 있다
 	UPROPERTY(Transient)
 	TSet<FName> DiscoveredRecipeRows;
 
+	// 그 레시피에서 불을 맞힌 적이 있다
+	UPROPERTY(Transient)
+	TSet<FName> HeatRumorRecipeRows;
+
+	// 그 레시피에서 젓기까지 맞힌 적이 있다
+	UPROPERTY(Transient)
+	TSet<FName> StirRumorRecipeRows;
+
+	UPROPERTY(Transient)
+	TArray<FCSCraftAttemptRecord> RecentAttempts;
+
 	TMap<TPair<FName, FName>, FName> RecipeRowByIngredients;
+	// 제조 전용 결과물 → 레시피 RowName. 장부가 상품으로 레시피를 찾는다
+	TMap<FName, FName> CraftOnlyRecipeByResult;
 	TSet<FName> JunkResultProducts;
 	TSet<FName> CraftOnlyResultProducts;
 	bool bCraftingAvailable = false;
