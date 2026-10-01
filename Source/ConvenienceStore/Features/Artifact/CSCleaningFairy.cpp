@@ -21,6 +21,10 @@
 #include "NiagaraComponent.h"
 #include "Features/Customers/CSCustomerAnimInstance.h"
 #include "Misc/ScopeExit.h"
+#include "Components/WidgetComponent.h"
+#include "Features/Player/CSPlayerCharacter.h"
+#include "UI/HUD/CSFairyDialogueWidget.h"
+#include "HAL/PlatformTime.h"
 
 ACSCleaningFairy::ACSCleaningFairy()
 {
@@ -68,6 +72,20 @@ ACSCleaningFairy::ACSCleaningFairy()
 	// 블루프린트 편집 중에는 모델과 운반 위치를 확인하실 수 있도록 표시합니다.
 	FairyMesh->SetVisibility(true);
 	Orb->SetVisibility(false);
+	InteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
+	InteractionBox->SetupAttachment(FairyMesh);
+	InteractionBox->SetBoxExtent(FVector(80, 80, 140));
+	InteractionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	InteractionBox->SetCanEverAffectNavigation(false);
+	SpeechBubble = CreateDefaultSubobject<UWidgetComponent>(TEXT("SpeechBubble"));
+	SpeechBubble->SetupAttachment(RootComponent);
+	SpeechBubble->SetWidgetSpace(EWidgetSpace::Screen);
+	SpeechBubble->SetDrawSize(FVector2D(520, 230));
+	SpeechBubble->SetDrawAtDesiredSize(true);
+	SpeechBubble->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SpeechBubble->SetVisibility(false);
 }
 
 void ACSCleaningFairy::OnConstruction(const FTransform& Transform)
@@ -83,9 +101,98 @@ void ACSCleaningFairy::Initialize(ACSFairyHouse* InHouse)
 	SetActorLocation(InHouse->DoorPoint->GetComponentLocation());
 }
 
+void ACSCleaningFairy::SetIntroductionActive(bool bActive)
+{
+	// 첫 등장 연출 중에는 쓰레기를 예약하지 않고 공중 대기 애니메이션만 재생합니다.
+	bIntroductionActive = bActive;
+	FairyMesh->SetTickableWhenPaused(bActive);
+	OrbEffect->SetTickableWhenPaused(bActive);
+	InteractionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SpeechBubble->SetVisibility(false);
+	if (BubbleWidget) BubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
+	if (bActive)
+	{
+		State = ECSFairyState::Emerging;
+		ShowOrb(true);
+	}
+	else if (House.IsValid())
+	{
+		// 집에서 다시 나오지 않고 연출이 끝난 비행 지점에서 바로 작업을 찾습니다.
+		SetActorLocation(House->FlightPoint->GetComponentLocation());
+		PreviousVisualLocation = GetActorLocation();
+		State = ECSFairyState::ToTrash;
+		ShowOrb(false);
+		if (!FindJob())
+		{
+			State = ECSFairyState::Entering;
+			TransitionStart = GetActorLocation();
+			TransitionTime = 0.f;
+			ShowOrb(true);
+		}
+	}
+}
+
+void ACSCleaningFairy::UpdateIntroductionOrb(float Progress, float DeltaSeconds)
+{
+	if (!bIntroductionActive) return;
+	const bool bEmerging = Progress < 1.f;
+	if (Orb->IsVisible() != bEmerging) ShowOrb(bEmerging);
+	if (bEmerging)
+	{
+		Orb->SetRelativeScale3D(FVector(.12f + .12f * FMath::Square(Progress)));
+		UpdateOrb(DeltaSeconds);
+	}
+}
+
+bool ACSCleaningFairy::CanTalkWhileWorking() const
+{
+	return !bIntroductionActive && !IsAtHome() && FairyMesh->IsVisible();
+}
+
+void ACSCleaningFairy::UpdateInteraction()
+{
+	const bool bCanTalk = CanTalkWhileWorking();
+	InteractionBox->SetCollisionEnabled(bCanTalk ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	if (!bCanTalk || FPlatformTime::Seconds() >= BubbleUntil)
+	{
+		SpeechBubble->SetVisibility(false);
+		if (BubbleWidget) BubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	if (SpeechBubble->IsVisible())
+		SpeechBubble->SetWorldLocation(FairyMesh->Bounds.Origin + FVector(0, 0, FairyMesh->Bounds.BoxExtent.Z + SpeechBubbleHeightOffset));
+}
+
+void ACSCleaningFairy::Interact_Implementation(AActor* Interactor)
+{
+	const ACSPlayerCharacter* Player = Cast<ACSPlayerCharacter>(Interactor);
+	if (!Player || !Player->IsLocallyControlled() || !CanTalkWhileWorking() || !House.IsValid() || !BubbleWidget || FPlatformTime::Seconds() < BubbleUntil) return;
+	FCSFairyDialogueRow Line;
+	if (!House->ChooseRandomDialogue(ECSFairyDialogueGroup::Working, Line)) return;
+	// 청소 동작은 계속 진행하고 요정 위의 말풍선만 표시합니다.
+	BubbleWidget->SetDialogue(Line.Text);
+	BubbleWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	SpeechBubble->SetVisibility(true);
+	BubbleUntil = FPlatformTime::Seconds() + FMath::Max(1.f, Line.DisplayDuration);
+	UpdateInteraction();
+}
+
+FText ACSCleaningFairy::GetInteractionText_Implementation() const
+{
+	return CanTalkWhileWorking() ? NSLOCTEXT("Fairy", "TalkWhileWorking", "일하는 요정과 대화하기") : FText::GetEmpty();
+}
+
 void ACSCleaningFairy::BeginPlay()
 {
 	Super::BeginPlay();
+	BubbleWidget = CreateWidget<UCSFairyDialogueWidget>(GetWorld(), SpeechBubbleWidgetClass ? SpeechBubbleWidgetClass.Get() : UCSFairyDialogueWidget::StaticClass());
+	if (BubbleWidget) BubbleWidget->SetVisibility(ESlateVisibility::Collapsed);
+	SpeechBubble->SetWidget(BubbleWidget);
+	if (const USkeletalMesh* Mesh = FairyMesh->GetSkeletalMeshAsset())
+	{
+		const FBoxSphereBounds Bounds = Mesh->GetBounds();
+		InteractionBox->SetRelativeLocation(Bounds.Origin);
+		InteractionBox->SetBoxExtent(Bounds.BoxExtent + FVector(10.f));
+	}
 	MeshRestRotation = FairyMesh->GetRelativeRotation().Quaternion();
 	PreviousVisualLocation = GetActorLocation();
 	HoverAnimation = Cast<UAnimSequence>(FairyMesh->AnimationData.AnimToPlay);
@@ -427,6 +534,7 @@ void ACSCleaningFairy::LeaveBin(bool bFailed)
 void ACSCleaningFairy::BeginReturn()
 {
 	if (!House.IsValid()) { Destroy(); return; }
+	if (bIntroductionActive) return;
 	TArray<FVector> HomePath;
 	if (BuildPath(GetActorLocation(), House->FlightPoint->GetComponentLocation(), HomePath)) SetPath(MoveTemp(HomePath), ECSFairyState::Returning);
 	else { State = ECSFairyState::Returning; Path.Reset(); Deadline = GetWorld()->GetTimeSeconds() + 8; }
@@ -435,8 +543,9 @@ void ACSCleaningFairy::BeginReturn()
 void ACSCleaningFairy::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	ON_SCOPE_EXIT { UpdateVisuals(DeltaSeconds); };
+	ON_SCOPE_EXIT { UpdateVisuals(DeltaSeconds); UpdateInteraction(); };
 	if (!House.IsValid()) { Destroy(); return; }
+	if (bIntroductionActive) return;
 	const double Now = GetWorld()->GetTimeSeconds();
 	if (State == ECSFairyState::Waiting)
 	{

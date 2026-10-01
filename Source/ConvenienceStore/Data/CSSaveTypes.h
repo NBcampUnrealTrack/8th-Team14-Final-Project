@@ -610,6 +610,17 @@ struct CONVENIENCESTORE_API FCSJournalEventRecord
 	bool bRead = false;
 };
 
+// 계약 해금과 아티팩트 보유 상태를 함께 복원합니다.
+USTRUCT()
+struct CONVENIENCESTORE_API FCSArtifactSaveRecord
+{
+	GENERATED_BODY()
+	UPROPERTY() TMap<FName, int32> Counts;
+	UPROPERTY() TMap<FName, int32> AppliedStacks;
+	UPROPERTY() TMap<FName, int32> NextAvailableDays;
+	UPROPERTY() bool bFairyContractSigned = false;
+};
+
 // 수첩 서브시스템 레코드
 USTRUCT()
 struct CONVENIENCESTORE_API FCSJournalSaveRecord

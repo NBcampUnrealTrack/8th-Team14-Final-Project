@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Data/CSJournalTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSArtifactSubsystem.generated.h"
 
 class UDataTable;
@@ -12,10 +13,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSArtifactChanged);
 
 // 보유량과 사용 결과를 플레이 중에 유지하며 도감의 최초 획득 기록과 구분합니다.
 UCLASS()
-class CONVENIENCESTORE_API UCSArtifactSubsystem : public UGameInstanceSubsystem
+class CONVENIENCESTORE_API UCSArtifactSubsystem : public UGameInstanceSubsystem, public ICSSaveParticipant
 {
 	GENERATED_BODY()
 public:
+	virtual int32 GetSaveRestorePriority() const override { return 6; }
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+	UFUNCTION(BlueprintPure, Category="Artifact") bool IsFairyContractSigned() const { return bFairyContractSigned; }
+	UFUNCTION(BlueprintPure, Category="Artifact") bool HasFairyContract() const;
 	void RegisterTable(UDataTable* InTable);
 	bool GetDefinition(FName Id, FCSJournalArtifactDataRow& OutRow) const;
 	UFUNCTION(BlueprintCallable, Category="Artifact") bool Acquire(FName Id, int32 Quantity = 1);
@@ -31,6 +37,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Artifact") FCSArtifactChanged OnArtifactsChanged;
 
 private:
+	UPROPERTY(Transient) bool bFairyContractSigned = false;
 	bool bUsingArtifact = false;
 	// 배치 액터가 다른 테이블을 등록해도 기존 아티팩트의 사용 정보를 유지합니다.
 	UPROPERTY(Transient) TArray<TObjectPtr<UDataTable>> ArtifactTables;
