@@ -167,6 +167,8 @@ void ACSCustomerCharacter::InitializeFallbackAnimations(
 	FallbackPickAnimation = Visual->FallbackPickAnimation;
 	ActionMeshWorldZOffset = Visual->ActionMeshWorldZOffset;
 	ShoppingBagScaleMultiplier = FMath::Max(0.001f, Visual->ShoppingBagScaleMultiplier);
+	ShoppingBagLocationOffset = Visual->ShoppingBagLocationOffset;
+	ShoppingBagRotationOffset = Visual->ShoppingBagRotationOffset;
 	bFallbackAnimationsInitialized = true;
 	if (USkeletalMeshComponent* MeshComponent = GetMesh())
 	{
@@ -564,6 +566,7 @@ void ACSCustomerCharacter::ShowShoppingBag()
 		ShoppingBagActor->GetRootComponent()->SetAbsolute(false, false, true);
 		// 신규 모델만 Visual에서 단위 차이를 보정합니다. 기존 종족은 기본값 1로 동작이 같습니다.
 		ShoppingBagActor->SetActorScale3D(ShoppingBagActor->GetActorScale3D() * ShoppingBagScaleMultiplier);
+		ShoppingBagActor->GetRootComponent()->SetRelativeLocationAndRotation(ShoppingBagLocationOffset, ShoppingBagRotationOffset);
 	}
 }
 

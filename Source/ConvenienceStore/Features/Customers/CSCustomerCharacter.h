@@ -197,6 +197,8 @@ private:
 	FTimerHandle HeadIconHideTimerHandle;
 	bool bFallbackAnimationsInitialized = false;
 	float ShoppingBagScaleMultiplier = 1.0f;
+	FVector ShoppingBagLocationOffset = FVector::ZeroVector;
+	FRotator ShoppingBagRotationOffset = FRotator::ZeroRotator;
 	bool bFallbackWalking = false;
 	bool bActionAnimationPlaying = false;
 	bool bHoldActionTransformOnFinish = false;

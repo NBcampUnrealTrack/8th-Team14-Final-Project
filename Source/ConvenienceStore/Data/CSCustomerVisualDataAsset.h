@@ -50,4 +50,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Visual|Attachments",
 		meta = (ClampMin = "0.001"))
 	float ShoppingBagScaleMultiplier = 1.0f;
+
+	// ShoppingBagAnchor 기준 종족별 봉투 위치/회전입니다. 기본값은 기존 부착 자세를 유지합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Visual|Attachments")
+	FVector ShoppingBagLocationOffset = FVector::ZeroVector;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Visual|Attachments")
+	FRotator ShoppingBagRotationOffset = FRotator::ZeroRotator;
 };
