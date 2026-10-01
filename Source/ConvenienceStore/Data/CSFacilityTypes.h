@@ -39,7 +39,7 @@ struct CONVENIENCESTORE_API FCSFacilityDataRow : public FTableRowBase
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 InitialOwnedQuantity = 0;
 
-	// CSV의 StoreLv_1 같은 값을 그대로 보존해 이후 해금 시스템에서 해석할 수 있게 합니다.
+	// 기존 DT/CSV 및 Blueprint 핀 호환용입니다. 아래 세 조건은 런타임에서 무시합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facility|Unlock")
 	FName StoreLevelUnlockCondition;
 

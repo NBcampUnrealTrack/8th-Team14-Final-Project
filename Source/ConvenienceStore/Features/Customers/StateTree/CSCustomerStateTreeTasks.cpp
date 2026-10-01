@@ -120,11 +120,10 @@ namespace
 	}
 
 	// 계획 상품을 못 찾았을 때의 Severity. DT_PurchaseRejectionDisplay가 이 값으로 문구를 가른다
-	// 1.0 = 매장에 없고 해금 레벨도 안 돼서 발주조차 못 하는 상품 -> "레벨을 올려야겠다"
+	// 1.0 = 매장에 없고 일반 발주도 불가능한 상품
 	// 0.5 = 지금 이 손님이 못 찾았을 뿐 -> "지금 채워 넣어라"
 	// 두 문구가 같으면 플레이어가 발주하러 갔다가 목록에 없어서 버그로 오해한다
 	float CS_PlannedMissingSeverity(
-		const UWorld* World,
 		const UCSCustomerRuntimeSubsystem& Subsystem,
 		const UCSPurchaseDecisionComponent& Decision,
 		FName ProductId)
@@ -135,32 +134,26 @@ namespace
 		const bool bInStore = HasExactProductAnywhere(Subsystem, ProductId);
 
 		// 지금은 품절이지만 한 번이라도 진열했던 상품이면 "안 판다"가 아니라 "떨어졌다"이다.
-		// 해금 레벨만 보면 팔던 횃불이 다 팔린 순간 "아직 안 파는구나"로 바뀐다(실측됨)
 		const bool bEverStocked = Subsystem.WasProductEverStocked(ProductId);
 
 		const FCSProductDataRow* Row = IsValid(Decision.ProductMasterDataTable)
 			? Decision.ProductMasterDataTable->FindRow<FCSProductDataRow>(ProductId, TEXT("CS_PlannedMissingSeverity"), false)
 			: nullptr;
 
-		// 행이 없거나 게임스테이트를 못 잡으면 해금 여부를 알 수 없다.
-		// 미해금 쪽으로 몰아야 "발주 목록에 있을 텐데" 하고 헛되이 뒤지는 일이 없다
-		const ACSStoreGameState* StoreState = World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
-		const int32 UnlockLevel = Row != nullptr ? Row->StoreLevelUnlockCondition : 0;
-		const int32 StoreLevel = StoreState != nullptr ? StoreState->GetStoreLevel() : 0;
-		const bool bUnlocked = Row != nullptr && StoreState != nullptr && UnlockLevel <= StoreLevel;
+		// 구매 판단은 바꾸지 않고, 품절 안내에서 폐지된 레벨 조건만 제거합니다.
+		const bool bOrderable = Row != nullptr && Row->bOrderable;
 
 		// 셋 중 하나라도 맞으면 플레이어가 지금 손쓸 수 있는 상황이라 "채워 넣어라" 쪽이다.
-		// 셋 다 아닐 때만 "레벨을 올려라"가 된다
-		const float Severity = (bInStore || bEverStocked || bUnlocked) ? 0.5f : 1.0f;
+		const float Severity = (bInStore || bEverStocked || bOrderable) ? 0.5f : 1.0f;
 
-		// 같은 문구가 왜 이 손님한테만 다르게 떴는지는 조건이 셋(진열·이력·해금)이라
+		// 같은 문구가 왜 이 손님한테만 다르게 떴는지는 조건이 셋(진열·이력·발주)이라
 		// 화면만 봐서는 역추적이 안 된다. 판정에 쓴 값을 그대로 남긴다
 		UE_LOG(LogTemp, Log,
-			TEXT("[계획미발견] 시드=%d 상품=%s 매장진열=%s 진열이력=%s 해금=%s(필요%d/현재%d) 문구=%s"),
+			TEXT("[계획미발견] 시드=%d 상품=%s 매장진열=%s 진열이력=%s 발주가능=%s 문구=%s"),
 			Decision.GetCustomerSeed(), *ProductId.ToString(),
 			bInStore ? TEXT("있음") : TEXT("없음"),
 			bEverStocked ? TEXT("있음") : TEXT("없음"),
-			bUnlocked ? TEXT("됨") : TEXT("안됨"), UnlockLevel, StoreLevel,
+			bOrderable ? TEXT("됨") : TEXT("안됨"),
 			Severity >= 1.0f ? TEXT("안파는구나") : TEXT("없네"));
 
 		return Severity;
@@ -1400,7 +1393,7 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 				FCSPurchaseRejectionInfo PlannedMissingInfo;
 				PlannedMissingInfo.Reason = ECSPurchaseRejectReason::PlannedProductMissing;
 				PlannedMissingInfo.ProductId = PlannedId;
-				PlannedMissingInfo.Severity = CS_PlannedMissingSeverity(Context.GetWorld(), *Subsystem, *Decision, PlannedId);
+				PlannedMissingInfo.Severity = CS_PlannedMissingSeverity(*Subsystem, *Decision, PlannedId);
 
 				State->LastRejectionInfo = PlannedMissingInfo;
 				State->LastRejectionTime = Context.GetWorld()->GetTimeSeconds();

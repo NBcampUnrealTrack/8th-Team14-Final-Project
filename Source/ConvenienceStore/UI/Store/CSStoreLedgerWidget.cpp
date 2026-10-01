@@ -80,21 +80,12 @@ void UCSStoreLedgerWidget::SelectProduct(const FDataTableRowHandle& ProductRow)
 
 	SelectedProduct = ProductData;
 	PendingSalePrice = ProductData.CurrentSalePrice;
-	DetailState = ProductData.bUnlocked
-		? ECSLedgerDetailState::UnlockedProduct
-		: ECSLedgerDetailState::LockedProduct;
+	DetailState = ECSLedgerDetailState::UnlockedProduct;
 	bPriceLockedNoticeShown = false;
 
 	// 목록을 다시 그려 현재 선택 행 하나에만 선택 연출이 적용되도록 합니다.
 	RebuildProductList();
-	if (ProductData.bUnlocked)
-	{
-		if (IsValid(RightPage)) RightPage->ShowUnlocked(SelectedProduct, PendingSalePrice);
-	}
-	else
-	{
-		if (IsValid(RightPage)) RightPage->ShowLocked(SelectedProduct);
-	}
+	if (IsValid(RightPage)) RightPage->ShowUnlocked(SelectedProduct, PendingSalePrice);
 }
 
 void UCSStoreLedgerWidget::ChangePendingSalePrice(int32 Delta)
@@ -143,13 +134,9 @@ void UCSStoreLedgerWidget::RebuildProductList()
 		}
 	}
 
-	// 카테고리 안에서도 해금 상품을 먼저 보여주고 미해금 상품은 목록 아래에 모읍니다.
+	// 모든 상품을 이름순으로 표시합니다.
 	Products.StableSort([](const FCSLedgerProductViewData& Left, const FCSLedgerProductViewData& Right)
 	{
-		if (Left.bUnlocked != Right.bUnlocked)
-		{
-			return Left.bUnlocked;
-		}
 		return Left.ProductName.ToString() < Right.ProductName.ToString();
 	});
 
@@ -183,8 +170,12 @@ bool UCSStoreLedgerWidget::BuildProductViewData(
 	OutData.PurchasePrice = ProductData->PurchasePrice;
 	OutData.ShelfLifeDays = ProductData->ShelfLifeDays;
 	OutData.bPerishable = ProductData->bPerishable;
-	OutData.RequiredStoreLevel = ProductData->StoreLevelUnlockCondition;
-	OutData.RequiredReputationGrade = ProductData->ReputationUnlockCondition;
+	// 기존 WBP 데이터 핀은 유지하되 장부에 잠금 상태를 전달하지 않습니다.
+	OutData.bUnlocked = true;
+	OutData.RequiredStoreLevel = 1;
+	OutData.RequiredReputationGrade = ECSReputationGrade::VeryBad;
+	OutData.bStoreLevelRequirementMet = true;
+	OutData.bReputationRequirementMet = true;
 
 	if (IsValid(ProductVisualRegistry))
 	{
@@ -195,19 +186,6 @@ bool UCSStoreLedgerWidget::BuildProductViewData(
 	}
 
 	const UWorld* World = GetWorld();
-	const ACSStoreGameState* StoreGameState =
-		World ? World->GetGameState<ACSStoreGameState>() : nullptr;
-	if (IsValid(StoreGameState))
-	{
-		OutData.bStoreLevelRequirementMet =
-			StoreGameState->IsStoreLevelRequirementMet(OutData.RequiredStoreLevel);
-		OutData.bReputationRequirementMet =
-			StoreGameState->IsReputationRequirementMet(OutData.RequiredReputationGrade);
-	}
-	// 상품은 상점 레벨과 평판 요구 조건을 모두 만족해야 해금된 것으로 판정합니다.
-	OutData.bUnlocked =
-		OutData.bStoreLevelRequirementMet && OutData.bReputationRequirementMet;
-
 	if (const UCSStoreStockSubsystem* StockSubsystem =
 		World ? World->GetSubsystem<UCSStoreStockSubsystem>() : nullptr)
 	{
