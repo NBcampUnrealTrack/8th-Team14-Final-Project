@@ -17,6 +17,7 @@ class UCameraComponent;
 class UCSCraftAutoPanelWidget;
 class UCSCraftCloseupWidget;
 class UCSCraftingSubsystem;
+class UCSCraftRecipeBookWidget;
 class UCSCraftStationInfoWidget;
 class UCSCraftSummonListWidget;
 class UCSProductVisualRegistry;
@@ -109,7 +110,17 @@ public:
 	FText RequestAutoCraft(FName RecipeRowName, int32 Sets);
 	void CloseAutoPanel();
 
+	void CloseRecipeBook();
+
 	FText GetMessage(FName MessageRowName) const;
+	FText GetProductDisplayName(FName ProductId) const;
+	TSoftObjectPtr<UTexture2D> FindProductIcon(FName ProductId) const;
+
+	// [백무송님] 저장 연결: 솥 재료와 결과 슬롯 물건은 재고 집계 제외 표시 때문에 낱개 상품 저장
+	// (CSWorldStateSaveHandler.cpp:98-102)에서 빠진다. 그래서 제조 저장 데이터에 따로 담는다
+	FCSCraftStationSaveRecord CapturePotRecord() const;
+	// 지금 솥과 결과 슬롯 물건을 지우고 기록대로 다시 만든다. 진행 중이던 제조는 버리고 대기 상태로 돌린다
+	void RestorePotRecord(const FCSCraftStationSaveRecord& Record);
 
 protected:
 	virtual void BeginPlay() override;
@@ -200,6 +211,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftAutoPanelWidget> AutoPanelWidgetClass;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TSubclassOf<UCSCraftRecipeBookWidget> RecipeBookWidgetClass;
+
 	// 플레이어 IMC(0)보다 높아야 A/D, 클릭, Space, E, Esc를 먼저 가져간다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
 	TObjectPtr<UInputMappingContext> CloseupMappingContext;
@@ -228,6 +242,10 @@ protected:
 	// 클로즈업에서 자동 제조 창을 연다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
 	TObjectPtr<UInputAction> AutoCraftAction;
+
+	// 클로즈업에서 레시피 도감을 연다. 클로즈업 중에는 수첩 Tab이 막혀 있어 같은 키를 쓴다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
+	TObjectPtr<UInputAction> RecipeBookAction;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Crafting|Camera", meta = (ClampMin = "0.0"))
 	float CameraBlendTime = 0.35f;
@@ -299,6 +317,9 @@ protected:
 	TObjectPtr<UCSCraftAutoPanelWidget> ActiveAutoPanelWidget;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UCSCraftRecipeBookWidget> ActiveRecipeBookWidget;
+
+	UPROPERTY(Transient)
 	TObjectPtr<APlayerController> CloseupController;
 
 	UPROPERTY(Transient)
@@ -344,11 +365,11 @@ private:
 	bool SpawnFreshResultsOnCircle(FName ProductId, int32 Count);
 	// 하나라도 실패하면 만든 것을 전부 지우고 false
 	bool SpawnFreshProducts(FName ProductId, const TArray<FTransform>& SpawnTransforms, TArray<ACSProductPickupActor*>& OutProducts);
-	FText GetProductDisplayName(FName ProductId) const;
-	TSoftObjectPtr<UTexture2D> FindProductIcon(FName ProductId) const;
-
 	void OpenSummonList(APlayerController* PlayerController);
 	void HandleAutoCraftOpen();
+	void HandleRecipeBookOpen();
+	// 솥 슬롯에 스폰한 상품을 숨겨 넣는다. 실패하면 nullptr
+	ACSProductPickupActor* SpawnProductFromRecord(const FCSLooseProductRecord& Record, const USceneComponent* AtModel);
 
 	void EnterCloseup(APlayerController* PlayerController);
 	void ExitCloseup(bool bImmediate);

@@ -57,6 +57,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> SupplyCategoryButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> ToiletryCategoryButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> ToolCategoryButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> CraftCategoryButton;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_All;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_Alcohol;
@@ -69,6 +70,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_Supply;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_Toiletry;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_Tool;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UWidget> SelBg_Craft;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_All;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_Alcohol;
@@ -81,6 +83,7 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_Supply;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_Toiletry;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_Tool;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_Craft;
 
 	// 디자이너가 WBP 기본값에서 장부 시안에 맞는 두 글자색을 지정할 수 있게 합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Ledger|Style")
@@ -104,5 +107,6 @@ private:
 	UFUNCTION() void HandleSupplyCategoryClicked();
 	UFUNCTION() void HandleToiletryCategoryClicked();
 	UFUNCTION() void HandleToolCategoryClicked();
+	UFUNCTION() void HandleCraftCategoryClicked();
 	UFUNCTION() void HandleProductRowSelected(FDataTableRowHandle ProductRow);
 };

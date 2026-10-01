@@ -6,6 +6,7 @@
 #include "CSLedgerRightPageWidget.generated.h"
 
 class UButton;
+class UCSLedgerCraftInfoWidget;
 class UImage;
 class USpinBox;
 class UTextBlock;
@@ -54,6 +55,9 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_ReputationReq;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_ReputationStatus;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> Img_Product;
+
+	// 아직 만든 적 없는 제조 상품 안내. LockedState(옛 해금 칸) 자리에 둔다
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCSLedgerCraftInfoWidget> CraftGuideInfo;
 
 	// 아래 잠금 관련 바인딩/이벤트/색상은 기존 WBP 직렬화 호환용으로만 보존합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Ledger|Locked")

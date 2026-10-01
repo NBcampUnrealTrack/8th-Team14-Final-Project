@@ -500,7 +500,10 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
 		const FCSProductDataRow* ProductData = OrderSettings->ProductDataTable->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
-		if (ProductData == nullptr || !ProductData->bOrderable) continue;
+		if (ProductData == nullptr) continue;
+		// 발주 불가 조건은 뽑기 상품을 막으려는 것이다. 제조 전용은 발주는 막혀도 만들어서 납품할 수 있어 후보에 둔다
+		const bool bCraftOnly = IsValid(Crafting) && Crafting->IsCraftOnlyResultProduct(RowName);
+		if (!ProductData->bOrderable && !bCraftOnly) continue;
 		// 꽝은 발주·장부에서도 숨기는 상품이라 주문으로 이름이 드러나면 안 된다.
 		if (IsValid(Crafting) && Crafting->IsJunkResultProduct(RowName)) continue;
 		EligibleRowNames.Add(RowName);
