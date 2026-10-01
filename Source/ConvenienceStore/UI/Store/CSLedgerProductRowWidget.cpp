@@ -49,6 +49,7 @@ void UCSLedgerProductRowWidget::SetProductData(
 	bool bInSelected)
 {
 	DisplayedProduct = InProductData;
+	DisplayedProduct.bUnlocked = true;
 	bSelected = bInSelected;
 	RefreshRowView();
 }
@@ -73,9 +74,7 @@ void UCSLedgerProductRowWidget::RefreshRowView()
 			NSLOCTEXT("StoreLedger", "ProductRowStock", "{0}개"),
 			FText::AsNumber(DisplayedProduct.CurrentStock)));
 		Txt_Stock->SetColorAndOpacity(bSelected ? SelectedStockColor : DefaultStockColor);
-		Txt_Stock->SetVisibility(DisplayedProduct.bUnlocked
-			? ESlateVisibility::HitTestInvisible
-			: ESlateVisibility::Collapsed);
+		Txt_Stock->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 	if (IsValid(Img_Product))
 	{
@@ -85,12 +84,9 @@ void UCSLedgerProductRowWidget::RefreshRowView()
 			: ESlateVisibility::Hidden);
 	}
 
-	// 잠금 연출을 이미지와 수량 영역에 각각 두어 시안의 위치를 WBP에서 자유롭게 조절할 수 있게 합니다.
-	const ESlateVisibility LockedVisibility = DisplayedProduct.bUnlocked
-		? ESlateVisibility::Collapsed
-		: ESlateVisibility::HitTestInvisible;
-	if (IsValid(LockOnImage)) LockOnImage->SetVisibility(LockedVisibility);
-	if (IsValid(LockedStatus)) LockedStatus->SetVisibility(LockedVisibility);
+	// 기존 WBP 바인딩은 유지하지만 상품 잠금 연출은 표시하지 않습니다.
+	if (IsValid(LockOnImage)) LockOnImage->SetVisibility(ESlateVisibility::Collapsed);
+	if (IsValid(LockedStatus)) LockedStatus->SetVisibility(ESlateVisibility::Collapsed);
 	if (IsValid(SelBg_Row))
 	{
 		SelBg_Row->SetVisibility(bSelected

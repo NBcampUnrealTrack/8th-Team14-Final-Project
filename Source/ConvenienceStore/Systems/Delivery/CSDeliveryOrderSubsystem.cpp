@@ -500,7 +500,7 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
 		const FCSProductDataRow* ProductData = OrderSettings->ProductDataTable->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
-		if (ProductData == nullptr || !ProductData->bOrderable || !StoreGameState->IsStoreLevelRequirementMet(ProductData->StoreLevelUnlockCondition) || !StoreGameState->IsReputationRequirementMet(ProductData->ReputationUnlockCondition)) continue;
+		if (ProductData == nullptr || !ProductData->bOrderable) continue;
 		// 꽝은 발주·장부에서도 숨기는 상품이라 주문으로 이름이 드러나면 안 된다.
 		if (IsValid(Crafting) && Crafting->IsJunkResultProduct(RowName)) continue;
 		EligibleRowNames.Add(RowName);
