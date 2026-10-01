@@ -47,14 +47,15 @@ enum class ECSArtifactEffectType : uint8
 {
 	None,
 	SummonCart,
-	FairyHouse,
+	FairyHouse UMETA(Hidden),
 	EmployeeSpeed,
 	CustomerSpeed,
 	PlayerSpeed,
 	ChangeWeather,
 	Reputation,
 	Experience,
-	Gold
+	Gold,
+	FairyContract
 };
 
 // 아티팩트 데이터 테이블에서는 행 이름을 ArtifactId로 사용합니다.

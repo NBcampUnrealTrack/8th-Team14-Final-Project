@@ -59,6 +59,8 @@ public:
 	// 게임 인스턴스 서브시스템인 UCSJournalSubsystem이 기록하고 복원
 	UPROPERTY()
 	FCSJournalSaveRecord Journal;
+	UPROPERTY()
+	FCSArtifactSaveRecord Artifacts;
 
 	// 확정 날씨와 기간제 날씨 확률
 	// UCSWeatherSubsystem이 기록하고 복원

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Features/Interaction/CSInteractable.h"
 #include "CSCleaningFairy.generated.h"
 
 class ACSFairyHouse;
@@ -12,6 +13,9 @@ class UStaticMeshComponent;
 class USceneComponent;
 class UNiagaraComponent;
 class UAnimSequence;
+class UBoxComponent;
+class UWidgetComponent;
+class UCSFairyDialogueWidget;
 
 UENUM(BlueprintType)
 enum class ECSFairyState : uint8
@@ -20,13 +24,25 @@ enum class ECSFairyState : uint8
 };
 
 UCLASS(Blueprintable)
-class CONVENIENCESTORE_API ACSCleaningFairy : public AActor
+class CONVENIENCESTORE_API ACSCleaningFairy : public AActor, public ICSInteractable
 {
 	GENERATED_BODY()
 public:
 	ACSCleaningFairy();
 	virtual void OnConstruction(const FTransform& Transform) override;
 	void Initialize(ACSFairyHouse* InHouse);
+	void SetIntroductionActive(bool bActive);
+	void UpdateIntroductionOrb(float Progress, float DeltaSeconds);
+	bool IsAtHome() const { return !bIntroductionActive && State == ECSFairyState::Waiting; }
+	bool CanTalkWhileWorking() const;
+	virtual void Interact_Implementation(AActor* Interactor) override;
+	virtual FText GetInteractionText_Implementation() const override;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy|Interaction") TObjectPtr<UBoxComponent> InteractionBox;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Fairy|Dialogue") TObjectPtr<UWidgetComponent> SpeechBubble;
+	// CSFairyDialogueWidget을 부모로 만든 작업 중 대화용 WBP를 지정해 주세요.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fairy|Dialogue") TSubclassOf<UCSFairyDialogueWidget> SpeechBubbleWidgetClass;
+	// 요정 메시의 가장 높은 지점에서 말풍선까지의 월드 높이(cm)를 조절해 주세요.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Fairy|Dialogue") float SpeechBubbleHeightOffset = 15.f;
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
@@ -55,6 +71,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="Fairy|Animation") bool IsCarryingTrash() const { return bCarrying; }
 
 private:
+	bool bIntroductionActive = false;
+	UPROPERTY(Transient) TObjectPtr<UCSFairyDialogueWidget> BubbleWidget;
+	double BubbleUntil = 0.;
+	void UpdateInteraction();
 	UPROPERTY(Transient) TObjectPtr<UAnimSequence> HoverAnimation;
 	UPROPERTY(Transient, VisibleInstanceOnly, Category="Fairy|Animation") float PickupElapsed = 0.f;
 	FQuat MeshRestRotation = FQuat::Identity;

@@ -58,6 +58,13 @@ public:
 	void ToggleJournal();
 	UFUNCTION(BlueprintCallable, Category = "Journal")
 	void CloseJournal();
+	// 일시정지된 요정 연출에서도 카메라를 갱신하고, 반환값으로 이전 설정을 복원해 주세요.
+	bool SetFairyIntroductionTickWhenPaused(bool bEnabled)
+	{
+		const bool bPrevious = bShouldPerformFullTickWhenPaused;
+		bShouldPerformFullTickWhenPaused = bEnabled;
+		return bPrevious;
+	}
 
 	UFUNCTION(BlueprintCallable, Category = "UI|Settings")
 	void ToggleSettings();
