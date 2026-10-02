@@ -51,6 +51,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather")
 	int32 GetCurrentBusinessDay() const { return CurrentBusinessDay; }
 
+	// 현재 날씨의 이펙트 액터를 반환하고 맑음처럼 이펙트가 없으면 nullptr을 반환
+	// 날씨 변경 알림은 이펙트 액터 스폰 뒤에 방송되므로 알림 시점에는 새 날씨의 액터를 반환
+	ACSWeatherEffectActor* GetActiveEffectActor() const { return ActiveEffectActor; }
+
 	// 실제 날씨 제한과 사용 안내가 같은 설정을 참조하도록 고정 맑음 기간을 반환합니다.
 	UFUNCTION(BlueprintPure, Category = "Weather")
 	int32 GetFixedClearBusinessDays() const;
@@ -329,7 +333,9 @@ private:
 	int32 GetActiveDemandRuleCount() const;
 
 	// 날씨에 맞춰 파티클(이펙트) 액터를 스폰하거나 파괴하고, 문 연출 영역 에셋도 교체
-	void ApplyWeatherEffect(ECSWeatherType NewWeather);
+	// bFadePostProcess가 true면 날씨 색감을 서서히 적용하고 false면 즉시 적용
+	// 영업 중 날씨 변경은 true, 영업일 시작과 세이브 로드는 기본값 false를 사용
+	void ApplyWeatherEffect(ECSWeatherType NewWeather, bool bFadePostProcess = false);
 
 	// 날씨 행의 이펙트 액터 클래스를 로드해 생성하고 연출 시작
 	void SpawnEffectActor(const FCSWeatherRow* Row);

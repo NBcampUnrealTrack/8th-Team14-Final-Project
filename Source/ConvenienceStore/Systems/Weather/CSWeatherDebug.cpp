@@ -86,7 +86,9 @@ void UCSWeatherSubsystem::DebugSetTodayWeather(ECSWeatherType NewWeather)
 
 	if (CurrentWeather != Previous)
 	{
-		ApplyWeatherEffect(CurrentWeather);
+		// 영업 중 오늘 날씨가 바뀌는 SetForecastWeather와 같은 방식으로 색감을 서서히 적용
+		// cs.WeatherSet으로 날씨의 돌 전환 연출을 확인할 때 사용
+		ApplyWeatherEffect(CurrentWeather, true);
 	}
 
 	OnWeatherChanged.Broadcast(CurrentWeather, Previous);
