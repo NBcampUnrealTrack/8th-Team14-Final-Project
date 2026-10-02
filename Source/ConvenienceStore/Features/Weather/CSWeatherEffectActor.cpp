@@ -1,14 +1,91 @@
 ﻿#include "Features/Weather/CSWeatherEffectActor.h"
 
+#include "Components/PostProcessComponent.h"
 #include "Components/SceneComponent.h"
 #include "NiagaraComponent.h"
 
 ACSWeatherEffectActor::ACSWeatherEffectActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 색감 페이드 중에만 Tick을 활성화하도록 시작 시 비활성화
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
+
+	WeatherPostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("WeatherPostProcess"));
+	WeatherPostProcess->SetupAttachment(SceneRoot);
+	// 액터 위치와 관계없이 화면 전체에 색감을 적용
+	WeatherPostProcess->bUnbound = true;
+	// Priority 0인 레벨 PostProcessVolume보다 겹치는 항목을 우선 적용
+	WeatherPostProcess->Priority = 1.0f;
+	// ActivatePostProcess 호출 전에는 화면에 영향을 주지 않도록 0으로 설정
+	WeatherPostProcess->BlendWeight = 0.0f;
+}
+
+void ACSWeatherEffectActor::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	// 컴포넌트가 없거나 페이드 시간이 0이면 Tick을 중지
+	if (!IsValid(WeatherPostProcess) || PostProcessFadeSeconds <= KINDA_SMALL_NUMBER)
+	{
+		SetActorTickEnabled(false);
+		return;
+	}
+
+	// 초당 1 / PostProcessFadeSeconds만큼 목표 가중치로 이동
+	// 페이드 중 실내외가 바뀌면 현재 값에서 새 목표로 이어서 이동
+	const float Target = GetTargetPostProcessWeight();
+	const float MaxStep = DeltaSeconds / PostProcessFadeSeconds;
+	const float Current = WeatherPostProcess->BlendWeight;
+	WeatherPostProcess->BlendWeight = Current + FMath::Clamp(Target - Current, -MaxStep, MaxStep);
+
+	// 목표 가중치에 도달하면 값을 고정하고 Tick을 중지
+	if (FMath::IsNearlyEqual(WeatherPostProcess->BlendWeight, Target))
+	{
+		WeatherPostProcess->BlendWeight = Target;
+		SetActorTickEnabled(false);
+	}
+}
+
+void ACSWeatherEffectActor::ActivatePostProcess(bool bFade)
+{
+	// 색감 활성화 상태를 기록하고 현재 실내외 상태의 가중치를 적용
+	bPostProcessActivated = true;
+	RefreshPostProcessWeight(bFade);
+}
+
+float ACSWeatherEffectActor::GetTargetPostProcessWeight() const
+{
+	// 활성화 전이거나 종료 중이면 색감을 적용하지 않음
+	if (!bPostProcessActivated || bStopRequested)
+	{
+		return 0.0f;
+	}
+
+	// 파티클 표시 상태를 실외 여부로 사용해 가중치를 반환
+	return bLocalEffectActive ? OutdoorPostProcessWeight : IndoorPostProcessWeight;
+}
+
+void ACSWeatherEffectActor::RefreshPostProcessWeight(bool bFade)
+{
+	if (!IsValid(WeatherPostProcess))
+	{
+		return;
+	}
+
+	// 페이드를 요청하지 않았거나 페이드 시간이 0이면 목표 가중치를 즉시 적용
+	const float Target = GetTargetPostProcessWeight();
+	if (!bFade || PostProcessFadeSeconds <= KINDA_SMALL_NUMBER)
+	{
+		WeatherPostProcess->BlendWeight = Target;
+		SetActorTickEnabled(false);
+		return;
+	}
+
+	// 현재 값이 목표와 다를 때만 Tick을 활성화해 페이드를 처리
+	SetActorTickEnabled(!FMath::IsNearlyEqual(WeatherPostProcess->BlendWeight, Target));
 }
 
 void ACSWeatherEffectActor::StartEffect_Implementation()
@@ -54,4 +131,8 @@ void ACSWeatherEffectActor::SetLocalEffectActive_Implementation(bool bActive)
 		// 파티클 재생을 다시 시작하지 않고 표시 여부만 변경
 		NiagaraComponent->SetVisibility(bActive);
 	}
+
+	// 색감은 끄지 않고 실외/실내 가중치로 전환
+	// 문을 드나들 때 색이 한 번에 바뀌지 않도록 항상 페이드로 처리
+	RefreshPostProcessWeight(true);
 }

@@ -17,6 +17,10 @@ class CONVENIENCESTORE_API ACSTimeOfDayLightingController : public AActor
 public:
 	ACSTimeOfDayLightingController();
 
+	// 날씨 등 외부 연출이 달빛 밝기에 곱할 배수를 설정하고 현재 시각에 즉시 반영
+	UFUNCTION(BlueprintCallable, Category = "Lighting|Moon")
+	void SetMoonIntensityScale(float NewScale);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -67,4 +71,8 @@ private:
 	float GetMoonBrightness(float GameMinutes) const;
 
 	TObjectPtr<ACSStoreGameState> StoreGameState;
+
+	// 외부 연출이 지정한 달빛 밝기 배수
+	// 게임 시각마다 달빛을 다시 계산해도 날씨 배수가 유지되도록 보관
+	float MoonIntensityScale = 1.0f;
 };
