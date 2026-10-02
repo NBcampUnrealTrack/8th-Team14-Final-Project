@@ -20,6 +20,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Engine/Font.h"
 #include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "NavigationSystem.h"
@@ -52,12 +53,24 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 	PrimaryActorTick.bCanEverTick = true;
 	AIControllerClass = ACSStoreEmployeeAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+	HatAnchor = CreateDefaultSubobject<USceneComponent>(TEXT("HatAnchor"));
+	HatAnchor->SetupAttachment(GetMesh(), HatSocketName);
+	HatMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HatMesh"));
+	HatMesh->SetupAttachment(HatAnchor);
+	HatMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HatMesh->SetGenerateOverlapEvents(false);
+	HatMesh->SetCanEverAffectNavigation(false);
+	// 에디터에서는 위치를 맞출 수 있도록 보이고, 게임에서는 고용 상태에 따라 표시합니다.
+	HatMesh->SetHiddenInGame(true);
 	HiringNameplate = CreateDefaultSubobject<UTextRenderComponent>(TEXT("HiringNameplate"));
 	HiringNameplate->SetupAttachment(GetRootComponent());
 	HiringNameplate->SetRelativeLocation(FVector(0.0f, 0.0f, 125.0f));
 	HiringNameplate->SetHorizontalAlignment(EHTA_Center);
 	HiringNameplate->SetWorldSize(20.0f);
 	HiringNameplate->SetHiddenInGame(true);
+	static ConstructorHelpers::FObjectFinder<UFont> NameplateFont(TEXT("/Game/ConvenienceStore/UI/Font/F_EmployeeNameplate.F_EmployeeNameplate"));
+	HiringNameplateFont = NameplateFont.Object;
+	if (HiringNameplateFont) HiringNameplate->SetFont(HiringNameplateFont);
 	MagicBoostNameplate = CreateDefaultSubobject<UTextRenderComponent>(TEXT("MagicBoostNameplate"));
 	MagicBoostNameplate->SetupAttachment(GetRootComponent());
 	MagicBoostNameplate->SetRelativeLocation(FVector(0.0f, 0.0f, 150.0f));
@@ -107,6 +120,15 @@ ACSStoreEmployeeCharacter::ACSStoreEmployeeCharacter()
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 }
 
+void ACSStoreEmployeeCharacter::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	// BP에서 지정한 본/소켓으로 변경해도 직접 조절한 앵커의 상대 트랜스폼은 유지합니다.
+	HatAnchor->AttachToComponent(GetMesh(), FAttachmentTransformRules::KeepRelativeTransform, HatSocketName);
+	if (HiringNameplateFont) HiringNameplate->SetFont(HiringNameplateFont);
+	HiringNameplate->SetText(GetHiringRoleName());
+}
+
 void ACSStoreEmployeeCharacter::ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength)
 {
 	if (!HasAuthority() || !CanWork() || !CanHandleTask(ECSStoreEmployeeTaskType::RestockShelf)) return;
@@ -147,6 +169,7 @@ void ACSStoreEmployeeCharacter::RefreshArtifactMoveSpeed()
 void ACSStoreEmployeeCharacter::BeginPlay()
 {
 	Super::BeginPlay();
+	HatAnchor->AttachToComponent(GetMesh(), FAttachmentTransformRules::KeepRelativeTransform, HatSocketName);
 	RefreshArtifactMoveSpeed();
 	// 블루프린트의 Pawn 통과 설정과 별개로 마법 투사체를 감지합니다.
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
@@ -199,6 +222,8 @@ void ACSStoreEmployeeCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason
 void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	// 다음 날 근무가 가능해진 시점에 출근 대기 표시를 한 번만 갱신합니다.
+	if (bAwaitingEmploymentStart && CanWork()) RefreshEmploymentPresentation();
 	AActor* CarriedInventory = GetCarriedInventoryForPlayer();
 	InventoryInteractionBox->SetCollisionEnabled(CarriedInventory ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 	if (CarriedInventory) InventoryInteractionBox->SetWorldLocation(CarriedInventory->GetActorLocation());
