@@ -61,6 +61,7 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Gacha") void OnRewardDispensed(ECSGachaRewardType Type, FName RewardId);
 
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gacha") TObjectPtr<USceneComponent> SceneRoot;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gacha") TObjectPtr<UBoxComponent> InteractionBox;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gacha") TObjectPtr<UStaticMeshComponent> DisplayMesh;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gacha") TObjectPtr<USceneComponent> RewardSpawnPoint;
@@ -85,6 +86,7 @@ private:
 	bool bBeamActive = false;
 	float EffectElapsed = 0.f;
 	float DispensePulseRemaining = 0.f;
+	FVector MagicCircleBaseScale = FVector::OneVector;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> CircleMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BeamMaterial;
 };

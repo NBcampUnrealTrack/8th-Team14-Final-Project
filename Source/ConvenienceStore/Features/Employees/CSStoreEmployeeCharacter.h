@@ -17,6 +17,8 @@ class ACSCheckoutCounterActor;
 class UCSEmployeeHiringWidget;
 class UTextRenderComponent;
 class UBoxComponent;
+class UStaticMeshComponent;
+class UFont;
 
 // 진열 업무를 재고 위치부터 진열 완료까지 세분화한 내부 작업 단계입니다.
 enum class ECSStoreEmployeeRestockPhase : uint8
@@ -47,6 +49,7 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Magic") void OnMagicBoostChanged(bool bActive);
 
 	virtual void BeginPlay() override;
+	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void Interact_Implementation(AActor* Interactor) override;
@@ -89,6 +92,15 @@ public:
 	void SetIgnoreEmployeeMovement(ACSStoreEmployeeCharacter* OtherEmployee, bool bIgnore);
 
 protected:
+	// 종족마다 다른 머리 본/소켓 이름을 직원 BP의 기본값에서 지정합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hat")
+	FName HatSocketName = TEXT("head");
+	// 직원 BP에서 머리에 맞게 위치·회전·크기를 조절하는 모자 부착 지점입니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Hat")
+	TObjectPtr<USceneComponent> HatAnchor;
+	// 계산·진열 직원 BP에 같은 모자 메시와 머티리얼을 지정할 수 있습니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Hat")
+	TObjectPtr<UStaticMeshComponent> HatMesh;
 	// 운반 중인 재고는 이동 충돌 없이 플레이어의 E 조준만 받을 수 있게 합니다.
 	UPROPERTY(VisibleAnywhere, Category = "Employee|Carry") TObjectPtr<UBoxComponent> InventoryInteractionBox;
 	// 재피격 시 배율을 중첩하지 않고 남은 시간만 갱신합니다.
@@ -108,6 +120,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring", meta = (EditCondition = "bRequiresHiring"))
 	ECSEmployeeHireSlot HiringSlot = ECSEmployeeHireSlot::FirstRestock;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") TObjectPtr<UTextRenderComponent> HiringNameplate;
+	// TextRender에 사용할 한글 글리프가 포함된 오프라인 폰트입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") TObjectPtr<UFont> HiringNameplateFont;
 	UPROPERTY(Transient) TObjectPtr<UCSEmployeeHiringWidget> ActiveHiringWidget;
 	// 역할별 처리 가능 업무와 작업 시간을 지정하는 데이터 에셋입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Role")
@@ -194,6 +208,7 @@ protected:
 	TObjectPtr<USceneComponent> CrateRightHandIKTarget;
 
 private:
+	bool bAwaitingEmploymentStart = false;
 	const TArray<ECSStoreEmployeeTaskType>& GetSupportedTaskTypes() const;
 	void TryAcquireTask();
 	void UpdateIdleBehavior(float DeltaSeconds);
