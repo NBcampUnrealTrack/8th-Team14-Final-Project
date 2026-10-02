@@ -35,6 +35,18 @@ void ACSTimeOfDayLightingController::EndPlay(const EEndPlayReason::Type EndPlayR
 	Super::EndPlay(EndPlayReason);
 }
 
+void ACSTimeOfDayLightingController::SetMoonIntensityScale(float NewScale)
+{
+	MoonIntensityScale = FMath::Max(0.0f, NewScale);
+
+	// 다음 게임 분을 기다리지 않고 현재 시각의 달빛에 반영
+	// BeginPlay 전이면 값만 저장하고 BeginPlay의 첫 계산에서 반영
+	if (StoreGameState != nullptr)
+	{
+		HandleGameTimeChanged(StoreGameState->CurrentGameMinutes);
+	}
+}
+
 void ACSTimeOfDayLightingController::HandleGameTimeChanged(float NewGameMinutes)
 {
 	// 다음 날 새벽 시간은 24시간 주기로 다시 계산하여 02:00 조명도 자연스럽게 적용합니다.
@@ -59,7 +71,7 @@ void ACSTimeOfDayLightingController::HandleGameTimeChanged(float NewGameMinutes)
 		// 달은 태양보다 12시간 뒤의 높이를 사용하되, 해가 뜨는 쪽과 같은 수평 방향에서 떠오르게 합니다.
 		MoonLight->SetActorRotation(FRotator(SunPitch + 180.0f, SunYaw, 0.0f));
 		MoonLight->SetLightColor(MoonLightColor);
-		MoonLight->GetLightComponent()->SetIntensity(MoonLightIntensity * MoonBrightness);
+		MoonLight->GetLightComponent()->SetIntensity(MoonLightIntensity * MoonBrightness * MoonIntensityScale);
 		MoonLight->SetActorHiddenInGame(MoonBrightness <= KINDA_SMALL_NUMBER);
 	}
 
