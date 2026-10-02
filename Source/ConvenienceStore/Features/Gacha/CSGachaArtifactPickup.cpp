@@ -3,6 +3,7 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSJournalTypes.h"
+#include "Data/CSArtifactVisualRegistry.h"
 #include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -55,12 +56,16 @@ bool ACSGachaArtifactPickup::ApplyArtifactRow()
 	ArtifactDisplayName = FText::GetEmpty();
 	DisplayMesh->SetStaticMesh(FallbackMesh);
 	Quantity = FMath::Max(1, Quantity);
+	// Reinitialization must not keep a previous artifact's registry scale/rotation on fallback.
+	DisplayMesh->SetRelativeTransform(GetClass()->GetDefaultObject<ACSGachaArtifactPickup>()->DisplayMesh->GetRelativeTransform());
 	if (!ArtifactRow.DataTable || ArtifactRow.RowName.IsNone() || !ArtifactRow.DataTable->GetRowStruct() ||
 		!ArtifactRow.DataTable->GetRowStruct()->IsChildOf(FCSJournalArtifactDataRow::StaticStruct())) return false;
 	const FCSJournalArtifactDataRow* Definition = ArtifactRow.GetRow<FCSJournalArtifactDataRow>(TEXT("Artifact pickup"));
 	if (!Definition) return false;
 	ArtifactId = ArtifactRow.RowName;
 	ArtifactDisplayName = Definition->DisplayName;
+	const UCSArtifactVisualRegistry* Registry = UCSArtifactSubsystem::ResolveVisualRegistry(this);
+	if (Registry && Registry->ApplyToMesh(ArtifactId, DisplayMesh)) return true;
 	if (Definition->WorldMesh) DisplayMesh->SetStaticMesh(Definition->WorldMesh);
 	else if (Definition->Effect == ECSArtifactEffectType::FairyContract || Definition->Effect == ECSArtifactEffectType::FairyHouse)
 	{

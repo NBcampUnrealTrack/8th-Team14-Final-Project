@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Data/CSFairyDialogueTypes.h"
+#include "Engine/DataTable.h"
 #include "Components/SlateWrapperTypes.h"
 #include "CSFairyHouse.generated.h"
 
