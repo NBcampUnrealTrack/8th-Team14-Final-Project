@@ -8,6 +8,7 @@
 
 class UDataTable;
 class ACSPlayerCharacter;
+class UCSArtifactVisualRegistry;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSArtifactChanged);
 
@@ -17,6 +18,10 @@ class CONVENIENCESTORE_API UCSArtifactSubsystem : public UGameInstanceSubsystem,
 {
 	GENERATED_BODY()
 public:
+	UCSArtifactSubsystem();
+	// One shared visual source, also available to construction scripts without a game instance.
+	UFUNCTION(BlueprintPure, Category="Artifact|Visual", meta=(WorldContext="WorldContextObject"))
+	static UCSArtifactVisualRegistry* ResolveVisualRegistry(const UObject* WorldContextObject);
 	virtual int32 GetSaveRestorePriority() const override { return 6; }
 	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
 	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
@@ -37,6 +42,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Artifact") FCSArtifactChanged OnArtifactsChanged;
 
 private:
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category="Artifact|Visual", meta=(AllowPrivateAccess="true"))
+	TObjectPtr<UCSArtifactVisualRegistry> VisualRegistry;
 	UPROPERTY(Transient) bool bFairyContractSigned = false;
 	bool bUsingArtifact = false;
 	// 배치 액터가 다른 테이블을 등록해도 기존 아티팩트의 사용 정보를 유지합니다.
