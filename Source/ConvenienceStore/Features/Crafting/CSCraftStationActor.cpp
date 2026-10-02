@@ -25,10 +25,12 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/Crafting/CSCraftingSubsystem.h"
+#include "Systems/SaveLoad/CSSaveRecordUtils.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "TimerManager.h"
 #include "UI/Crafting/CSCraftAutoPanelWidget.h"
 #include "UI/Crafting/CSCraftCloseupWidget.h"
+#include "UI/Crafting/CSCraftRecipeBookWidget.h"
 #include "UI/Crafting/CSCraftStationInfoWidget.h"
 #include "UI/Crafting/CSCraftSummonListWidget.h"
 
@@ -138,6 +140,7 @@ void ACSCraftStationActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// 열린 창을 안 닫으면 입력 잠금 목록에 죽은 위젯이 남아 입력이 계속 막힌다
 	CloseSummonList();
 	CloseAutoPanel();
+	CloseRecipeBook();
 	// 클로즈업 중에 끝나면 플레이어 입력, 시점, HUD가 잠긴 채 남는다
 	if (bCloseupActive)
 	{
@@ -446,6 +449,133 @@ void ACSCraftStationActor::RestoreProductVisible(ACSProductPickupActor* Product,
 	Product->SetExcludedFromStockCount(false);
 	Product->SetActorEnableCollision(true);
 	Product->SetActorHiddenInGame(false);
+}
+
+FCSCraftStationSaveRecord ACSCraftStationActor::CapturePotRecord() const
+{
+	FCSCraftStationSaveRecord Record;
+	Record.StationName = GetFName();
+	auto ToRecord = [](const ACSProductPickupActor* Product)
+	{
+		FCSLooseProductRecord ProductRecord;
+		ProductRecord.ActorClass = FSoftClassPath(Product->GetClass());
+		ProductRecord.ProductRow = FCSSaveRowRef::FromHandle(Product->GetProductRow());
+		ProductRecord.Transform = Product->GetActorTransform();
+		ProductRecord.StorageShelfType = Product->GetStorageShelfType();
+		ProductRecord.ProductState = CSSaveRecordUtils::ToRecord(
+			Product->GetProductRuntimeState(), Product->GetCurrentFreshness());
+		return ProductRecord;
+	};
+	for (const ACSProductPickupActor* Product : IngredientSlots)
+	{
+		if (IsValid(Product))
+		{
+			Record.PotProducts.Add(ToRecord(Product));
+		}
+	}
+	for (const ACSProductPickupActor* Product : ResultSlots)
+	{
+		if (IsValid(Product))
+		{
+			Record.ResultProducts.Add(ToRecord(Product));
+		}
+	}
+	return Record;
+}
+
+void ACSCraftStationActor::RestorePotRecord(const FCSCraftStationSaveRecord& Record)
+{
+	// 지켜야 하는 건 플레이어가 산 물건이지 진행 상태가 아니라서 진행은 버리고 재료만 대기 상태로 되돌린다
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BubbleTimerHandle);
+	}
+	for (TObjectPtr<ACSProductPickupActor>& Product : IngredientSlots)
+	{
+		if (IsValid(Product))
+		{
+			Product->Destroy();
+		}
+		Product = nullptr;
+	}
+	for (TObjectPtr<ACSProductPickupActor>& Product : ResultSlots)
+	{
+		if (IsValid(Product))
+		{
+			Product->Destroy();
+		}
+		Product = nullptr;
+	}
+	bIngredientsLocked = false;
+	StirCount = 0;
+	CurrentPopCount = 0;
+	PopsUsed = 0;
+	PopHits = 0;
+	LastPoppedPeakIndex = 0;
+	bFinishRetryPending = false;
+	CurrentBubblePeriod = 0.0f;
+	SetHeat(ECSCraftHeat::None);
+	SetStep(ECSCraftStep::Idle);
+
+	for (int32 Index = 0; Index < Record.PotProducts.Num(); ++Index)
+	{
+		if (Index >= IngredientSlotCount)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 저장된 솥 재료가 슬롯보다 많아 %d개를 버립니다."),
+				*GetName(), Record.PotProducts.Num() - IngredientSlotCount);
+			break;
+		}
+		IngredientSlots[Index] = SpawnProductFromRecord(Record.PotProducts[Index], GetIngredientModel(Index));
+	}
+	for (int32 Index = 0; Index < Record.ResultProducts.Num(); ++Index)
+	{
+		if (Index >= ResultSlotCount)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 저장된 결과물이 슬롯보다 많아 %d개를 버립니다."),
+				*GetName(), Record.ResultProducts.Num() - ResultSlotCount);
+			break;
+		}
+		ResultSlots[Index] = SpawnProductFromRecord(Record.ResultProducts[Index], GetResultModel(Index));
+	}
+	RefreshModels();
+	RefreshInfoWidget();
+}
+
+ACSProductPickupActor* ACSCraftStationActor::SpawnProductFromRecord(const FCSLooseProductRecord& Record, const USceneComponent* AtModel)
+{
+	UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = GetCraftingSubsystem();
+	UClass* ProductClass = Record.ActorClass.TryLoadClass<ACSProductPickupActor>();
+	const FDataTableRowHandle ProductRow = Record.ProductRow.ToHandle(IsValid(Crafting) ? Crafting->GetProductTable() : nullptr);
+	if (World == nullptr || ProductClass == nullptr || ProductRow.DataTable == nullptr || ProductRow.RowName.IsNone())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 저장된 솥 물건 '%s'를 되살리지 못했습니다."),
+			*GetName(), *Record.ProductRow.RowName.ToString());
+		return nullptr;
+	}
+
+	const FTransform SpawnTransform = IsValid(AtModel) ? LocationAndRotationOnly(AtModel) : GetActorTransform();
+	ACSProductPickupActor* Product = World->SpawnActorDeferred<ACSProductPickupActor>(
+		ProductClass, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(Product) || !Product->InitializeProduct(ProductRow))
+	{
+		if (IsValid(Product))
+		{
+			Product->Destroy();
+		}
+		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: 저장된 솥 물건 '%s'를 되살리지 못했습니다."),
+			*GetName(), *Record.ProductRow.RowName.ToString());
+		return nullptr;
+	}
+	Product->FinishSpawning(SpawnTransform);
+	if (!IsValid(Product))
+	{
+		return nullptr;
+	}
+	Product->SetStorageShelfType(Record.StorageShelfType);
+	Product->ApplyProductRuntimeState(CSSaveRecordUtils::ToRuntime(Record.ProductState, World->GetTimeSeconds()));
+	StoreProductHidden(Product);
+	return Product;
 }
 
 void ACSCraftStationActor::ApplyModelVisual(UStaticMeshComponent* Model, int32 BaseIndex, const ACSProductPickupActor* Product)
@@ -1136,7 +1266,7 @@ TArray<FCSCraftAutoOption> ACSCraftStationActor::GetAutoCraftOptions() const
 
 void ACSCraftStationActor::HandleAutoCraftOpen()
 {
-	if (!bCloseupActive || IsValid(ActiveAutoPanelWidget))
+	if (!bCloseupActive || IsValid(ActiveAutoPanelWidget) || IsValid(ActiveRecipeBookWidget))
 	{
 		return;
 	}
@@ -1178,6 +1308,57 @@ void ACSCraftStationActor::CloseAutoPanel()
 {
 	UCSCraftAutoPanelWidget* Widget = ActiveAutoPanelWidget;
 	ActiveAutoPanelWidget = nullptr;
+	if (!IsValid(Widget))
+	{
+		return;
+	}
+	if (ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(Widget->GetOwningPlayer()))
+	{
+		StoreController->SetGameplayUIInputLock(Widget, false);
+	}
+	Widget->RemoveFromParent();
+}
+
+void ACSCraftStationActor::HandleRecipeBookOpen()
+{
+	if (!bCloseupActive || IsValid(ActiveRecipeBookWidget) || IsValid(ActiveAutoPanelWidget))
+	{
+		return;
+	}
+	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다.
+	// 도감은 재료를 쓰지 않으니 솥에 재료가 있어도 연다
+	const bool bBeforeCraftStart = CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat;
+	if (!bBeforeCraftStart || bIngredientsLocked)
+	{
+		ShowBanner(TEXT("RecipeBookLocked"));
+		return;
+	}
+
+	ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(CloseupController);
+	if (!IsValid(StoreController))
+	{
+		return;
+	}
+	if (!RecipeBookWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: RecipeBookWidgetClass를 지정해 주세요. 도감을 열지 않습니다."), *GetName());
+		return;
+	}
+
+	ActiveRecipeBookWidget = CreateWidget<UCSCraftRecipeBookWidget>(StoreController, RecipeBookWidgetClass);
+	if (!IsValid(ActiveRecipeBookWidget))
+	{
+		return;
+	}
+	ActiveRecipeBookWidget->AddToViewport(20);
+	StoreController->SetGameplayUIInputLock(ActiveRecipeBookWidget, true);
+	ActiveRecipeBookWidget->SetStation(this);
+}
+
+void ACSCraftStationActor::CloseRecipeBook()
+{
+	UCSCraftRecipeBookWidget* Widget = ActiveRecipeBookWidget;
+	ActiveRecipeBookWidget = nullptr;
 	if (!IsValid(Widget))
 	{
 		return;
@@ -1330,6 +1511,7 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 	}
 	bCloseupActive = false;
 	CloseAutoPanel();
+	CloseRecipeBook();
 
 	// 제조 상태와 거품 타이머는 그대로 둔다. 다시 들어오면 이어서 한다
 	APlayerController* PlayerController = CloseupController;
@@ -1438,6 +1620,7 @@ void ACSCraftStationActor::BindCloseupInput()
 	Bind(FinishAction, &ACSCraftStationActor::HandleFinish, TEXT("FinishAction"));
 	Bind(ExitAction, &ACSCraftStationActor::HandleExit, TEXT("ExitAction"));
 	Bind(AutoCraftAction, &ACSCraftStationActor::HandleAutoCraftOpen, TEXT("AutoCraftAction"));
+	Bind(RecipeBookAction, &ACSCraftStationActor::HandleRecipeBookOpen, TEXT("RecipeBookAction"));
 	bCloseupInputBound = true;
 }
 
@@ -1600,7 +1783,8 @@ void ACSCraftStationActor::FinishCraft()
 		return;
 	}
 
-	const FCSCraftEvaluation Evaluation = Crafting->EvaluateCraft(CountIngredients(), CurrentHeat, StirCount, PopHits);
+	const TMap<FName, int32> IngredientCounts = CountIngredients();
+	const FCSCraftEvaluation Evaluation = Crafting->EvaluateCraft(IngredientCounts, CurrentHeat, StirCount, PopHits);
 	const bool bMadeProduct = Evaluation.Outcome == ECSCraftOutcome::GreatSuccess ||
 		Evaluation.Outcome == ECSCraftOutcome::Success ||
 		Evaluation.Outcome == ECSCraftOutcome::Junk;
@@ -1632,6 +1816,35 @@ void ACSCraftStationActor::FinishCraft()
 		return;
 	}
 
+	// 결과물 스폰이 성공한 뒤에 기록한다. 앞에서 하면 재시도할 때 한 번 더 쌓인다
+	FCSCraftAttemptRecord Attempt;
+	TArray<FName> IngredientNames;
+	IngredientCounts.GetKeys(IngredientNames);
+	if (const FCSCraftRecipeRow* Recipe = Crafting->FindRecipeByRowName(Evaluation.RecipeRowName))
+	{
+		// 레시피 표의 재료 순서로 적어야 도감에서 조리법 줄과 같은 순서로 읽힌다
+		IngredientNames = { Recipe->IngredientA, Recipe->IngredientB };
+	}
+	else
+	{
+		IngredientNames.Sort(FNameLexicalLess());
+	}
+	if (IngredientNames.Num() == 2)
+	{
+		Attempt.IngredientA = IngredientNames[0];
+		Attempt.IngredientACount = IngredientCounts.FindRef(IngredientNames[0]);
+		Attempt.IngredientB = IngredientNames[1];
+		Attempt.IngredientBCount = IngredientCounts.FindRef(IngredientNames[1]);
+	}
+	Attempt.Heat = CurrentHeat;
+	Attempt.StirCount = StirCount;
+	Attempt.PopHits = PopHits;
+	Attempt.PopCount = CurrentPopCount;
+	Attempt.Outcome = Evaluation.Outcome;
+	Attempt.RecipeRowName = Evaluation.RecipeRowName;
+	Attempt.ResultProduct = bMadeProduct ? Evaluation.ResultProduct : NAME_None;
+	Crafting->RecordManualCraft(Attempt);
+
 	GetWorld()->GetTimerManager().ClearTimer(BubbleTimerHandle);
 
 	// 결과가 생긴 뒤에 재료를 지운다. 쓰레기통을 거치지 않아서 폐기 손실에 잡히지 않는다
@@ -1642,11 +1855,6 @@ void ACSCraftStationActor::FinishCraft()
 			Ingredient->Destroy();
 		}
 		Ingredient = nullptr;
-	}
-
-	if (bMadeProduct)
-	{
-		Crafting->MarkRecipeDiscovered(Evaluation.RecipeRowName);
 	}
 
 	FName MessageRow = TEXT("ResultFailure");
@@ -1714,6 +1922,8 @@ bool ACSCraftStationActor::SpawnFailureTrash(ECSCraftOutcome Outcome, FText& Out
 		UE_LOG(LogTemp, Warning, TEXT("[제조] DT_CraftFailure에 이 결과의 행이 없어 기본 쓰레기로 만듭니다."));
 	}
 
+	// [백무송님] 저장 연결: 제조 쓰레기 이름은 저장되지 않는다. 쓰레기 저장 레코드(FCSTrashRecord, CSSaveTypes.h:926-956)에
+	// 이름 칸이 없고 복원(CSTrashActor.cpp:150-209)이 메시만 되돌려서, 불러오면 "쓰레기"로 보인다. 이름 칸 추가가 필요하다
 	const FTransform SpawnTransform = LocationAndRotationOnly(ResultModel1);
 	ACSTrashActor* Trash = GetWorld()->SpawnActorDeferred<ACSTrashActor>(
 		TrashActorClass, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);

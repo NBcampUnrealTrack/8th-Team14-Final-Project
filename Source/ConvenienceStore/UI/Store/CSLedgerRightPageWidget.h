@@ -6,6 +6,7 @@
 #include "CSLedgerRightPageWidget.generated.h"
 
 class UButton;
+class UCSLedgerCraftInfoWidget;
 class UImage;
 class USpinBox;
 class UTextBlock;
@@ -55,7 +56,10 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> Txt_ReputationStatus;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UImage> Img_Product;
 
-	// 조건 충족 여부의 의미 색상은 WBP마다 디자인에 맞춰 조정할 수 있습니다.
+	// 아직 만든 적 없는 제조 상품 안내. LockedState(옛 해금 칸) 자리에 둔다
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCSLedgerCraftInfoWidget> CraftGuideInfo;
+
+	// 아래 잠금 관련 바인딩/이벤트/색상은 기존 WBP 직렬화 호환용으로만 보존합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Ledger|Locked")
 	FLinearColor MetConditionColor = FLinearColor(0.25f, 0.45f, 0.12f, 1.0f);
 
@@ -79,5 +83,4 @@ private:
 	UFUNCTION() void HandleSalePriceCommitted(float Value, ETextCommit::Type CommitMethod);
 	void RefreshProductHeader(const FCSLedgerProductViewData& ProductData);
 	void RefreshUnlockedMetrics(const FCSLedgerProductViewData& ProductData);
-	void RefreshLockedConditions(const FCSLedgerProductViewData& ProductData);
 };

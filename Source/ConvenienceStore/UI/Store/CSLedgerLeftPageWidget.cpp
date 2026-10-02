@@ -42,6 +42,7 @@ void UCSLedgerLeftPageWidget::NativeConstruct()
 	if (IsValid(SupplyCategoryButton)) SupplyCategoryButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleSupplyCategoryClicked);
 	if (IsValid(ToiletryCategoryButton)) ToiletryCategoryButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleToiletryCategoryClicked);
 	if (IsValid(ToolCategoryButton)) ToolCategoryButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleToolCategoryClicked);
+	if (IsValid(CraftCategoryButton)) CraftCategoryButton->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleCraftCategoryClicked);
 }
 
 void UCSLedgerLeftPageWidget::NativeDestruct()
@@ -57,6 +58,7 @@ void UCSLedgerLeftPageWidget::NativeDestruct()
 	if (IsValid(SupplyCategoryButton)) SupplyCategoryButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleSupplyCategoryClicked);
 	if (IsValid(ToiletryCategoryButton)) ToiletryCategoryButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleToiletryCategoryClicked);
 	if (IsValid(ToolCategoryButton)) ToolCategoryButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleToolCategoryClicked);
+	if (IsValid(CraftCategoryButton)) CraftCategoryButton->OnClicked.RemoveDynamic(this, &ThisClass::HandleCraftCategoryClicked);
 
 	if (IsValid(ProductListScrollBox)) ProductListScrollBox->ClearChildren();
 	Super::NativeDestruct();
@@ -107,6 +109,7 @@ void UCSLedgerLeftPageWidget::RefreshCategoryPresentation(ECSLedgerCategoryFilte
 	SetCategoryPresentation(SelBg_Supply, Txt_Supply, CurrentCategory == ECSLedgerCategoryFilter::Supply, DefaultCategoryTextColor, SelectedCategoryTextColor);
 	SetCategoryPresentation(SelBg_Toiletry, Txt_Toiletry, CurrentCategory == ECSLedgerCategoryFilter::Toiletry, DefaultCategoryTextColor, SelectedCategoryTextColor);
 	SetCategoryPresentation(SelBg_Tool, Txt_Tool, CurrentCategory == ECSLedgerCategoryFilter::Tool, DefaultCategoryTextColor, SelectedCategoryTextColor);
+	SetCategoryPresentation(SelBg_Craft, Txt_Craft, CurrentCategory == ECSLedgerCategoryFilter::Craft, DefaultCategoryTextColor, SelectedCategoryTextColor);
 }
 
 void UCSLedgerLeftPageWidget::HandleAllCategoryClicked() { BroadcastCategory(ECSLedgerCategoryFilter::All); }
@@ -120,6 +123,7 @@ void UCSLedgerLeftPageWidget::HandleSnackCategoryClicked() { BroadcastCategory(E
 void UCSLedgerLeftPageWidget::HandleSupplyCategoryClicked() { BroadcastCategory(ECSLedgerCategoryFilter::Supply); }
 void UCSLedgerLeftPageWidget::HandleToiletryCategoryClicked() { BroadcastCategory(ECSLedgerCategoryFilter::Toiletry); }
 void UCSLedgerLeftPageWidget::HandleToolCategoryClicked() { BroadcastCategory(ECSLedgerCategoryFilter::Tool); }
+void UCSLedgerLeftPageWidget::HandleCraftCategoryClicked() { BroadcastCategory(ECSLedgerCategoryFilter::Craft); }
 
 void UCSLedgerLeftPageWidget::HandleProductRowSelected(FDataTableRowHandle ProductRow)
 {

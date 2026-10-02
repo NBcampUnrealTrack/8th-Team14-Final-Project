@@ -21,6 +21,11 @@ class CONVENIENCESTORE_API ACSTrashActor : public AActor,
 
 public:
 	ACSTrashActor();
+	FVector GetCleaningLocation() const;
+	bool ReserveForCleaning(AActor* Cleaner);
+	void ReleaseCleaningReservation(AActor* Cleaner);
+	bool IsCarriedByCleaner() const;
+	bool CanBeCleanedBy(AActor* Cleaner) const;
 
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
@@ -56,6 +61,7 @@ public:
 	void RestoreSaveRecord(const FCSTrashRecord& InRecord);
 
 protected:
+	TWeakObjectPtr<AActor> CleaningReservation;
 	// 줍기·퀵바·버리기 안내에 쓰는 이름. 기본값은 "쓰레기"
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trash")
 	FText TrashDisplayName;

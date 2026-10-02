@@ -8,6 +8,7 @@
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Features/Items/CSProductPickupActor.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
@@ -484,11 +485,27 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 		OutMessage = NSLOCTEXT("Delivery", "OutsideOrderHours", "현재는 배달 주문이 도착할 수 있는 시간이 아닙니다.");
 		return false;
 	}
+	const UCSCraftingSubsystem* Crafting = GetWorld()->GetSubsystem<UCSCraftingSubsystem>();
+	if (!IsValid(Crafting))
+	{
+		// 없어도 배달 주문은 만들지만 꽝이 주문 상품으로 뽑힐 수 있다
+		static bool bWarnedMissingCrafting = false;
+		if (!bWarnedMissingCrafting)
+		{
+			bWarnedMissingCrafting = true;
+			UE_LOG(LogTemp, Warning, TEXT("[배달 주문] 제조 서브시스템이 없어 꽝 상품을 배달 주문 후보에서 빼지 못합니다."));
+		}
+	}
 	TArray<FName> InStockRowNames;
 	for (const FName RowName : OrderSettings->ProductDataTable->GetRowNames())
 	{
 		const FCSProductDataRow* ProductData = OrderSettings->ProductDataTable->FindRow<FCSProductDataRow>(RowName, TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"));
-		if (ProductData == nullptr || !StoreGameState->IsStoreLevelRequirementMet(ProductData->StoreLevelUnlockCondition) || !StoreGameState->IsReputationRequirementMet(ProductData->ReputationUnlockCondition)) continue;
+		if (ProductData == nullptr) continue;
+		// 발주 불가 조건은 뽑기 상품을 막으려는 것이다. 제조 전용은 발주는 막혀도 만들어서 납품할 수 있어 후보에 둔다
+		const bool bCraftOnly = IsValid(Crafting) && Crafting->IsCraftOnlyResultProduct(RowName);
+		if (!ProductData->bOrderable && !bCraftOnly) continue;
+		// 꽝은 발주·장부에서도 숨기는 상품이라 주문으로 이름이 드러나면 안 된다.
+		if (IsValid(Crafting) && Crafting->IsJunkResultProduct(RowName)) continue;
 		EligibleRowNames.Add(RowName);
 		FDataTableRowHandle ProductRow;
 		ProductRow.DataTable = OrderSettings->ProductDataTable;

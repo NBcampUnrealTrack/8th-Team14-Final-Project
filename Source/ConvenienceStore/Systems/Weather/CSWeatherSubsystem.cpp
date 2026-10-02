@@ -924,6 +924,17 @@ void UCSWeatherSubsystem::LogWeatherStartupSummary() const
 
 float UCSWeatherSubsystem::GetProductWeatherDemandModifier(const FDataTableRowHandle& ProductRow) const
 {
+	// 오늘 날씨는 반드시 여기서 읽습니다. 캐싱하면 cs.WeatherSet으로 강제한 뒤에도
+	// 이전 날씨 기준으로 계산됩니다(강제 커맨드는 CurrentWeather만 덮어씁니다).
+	// GetCurrentWeatherEntry/GetForecastWeather처럼 EnsureDecidedThrough를 타는 함수를 부르면
+	// 채점 한 번마다 날씨 추첨이 앞당겨질 수 있으므로 인라인 게터만 씁니다.
+	return GetProductWeatherDemandModifierForWeather(ProductRow, GetCurrentWeather());
+}
+
+float UCSWeatherSubsystem::GetProductWeatherDemandModifierForWeather(
+	const FDataTableRowHandle& ProductRow,
+	ECSWeatherType Weather) const
+{
 	if (!IsValid(Settings) ||
 		!IsValid(Settings->WeatherDemandRuleTable) ||
 		!IsValid(ProductRow.DataTable) ||
@@ -932,11 +943,6 @@ float UCSWeatherSubsystem::GetProductWeatherDemandModifier(const FDataTableRowHa
 		return 0.0f;
 	}
 
-	// 오늘 날씨는 반드시 여기서 읽습니다. 캐싱하면 cs.WeatherSet으로 강제한 뒤에도
-	// 이전 날씨 기준으로 계산됩니다(강제 커맨드는 CurrentWeather만 덮어씁니다).
-	// GetCurrentWeatherEntry/GetForecastWeather처럼 EnsureDecidedThrough를 타는 함수를 부르면
-	// 채점 한 번마다 날씨 추첨이 앞당겨질 수 있으므로 인라인 게터만 씁니다.
-	const ECSWeatherType Weather = GetCurrentWeather();
 	if (Weather == ECSWeatherType::None)
 	{
 		return 0.0f;

@@ -1,6 +1,7 @@
 #include "Features/Trash/CSTrashCanActor.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/ArrowComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/GameInstance.h"
 #include "Features/Facilities/CSSaveIdComponent.h"
@@ -40,6 +41,32 @@ ACSTrashCanActor::ACSTrashCanActor()
 	TrashCanMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
 	SaveIdComponent = CreateDefaultSubobject<UCSSaveIdComponent>(TEXT("SaveIdComponent"));
+	FairyApproachPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("FairyApproachPoint"));
+	FairyApproachPoint->SetupAttachment(SceneRoot);
+	FairyApproachPoint->SetRelativeLocation(FVector(100, 0, 0));
+	// 기존 앞면 지점은 유지하고 나머지 세 면의 지점을 추가합니다. 각 위치를 블루프린트에서 조절해 주세요.
+	FairyApproachBack = CreateDefaultSubobject<UArrowComponent>(TEXT("FairyApproachBack"));
+	FairyApproachBack->SetupAttachment(SceneRoot);
+	FairyApproachBack->SetRelativeLocation(FVector(-200, 0, 0));
+	FairyApproachLeft = CreateDefaultSubobject<UArrowComponent>(TEXT("FairyApproachLeft"));
+	FairyApproachLeft->SetupAttachment(SceneRoot);
+	FairyApproachLeft->SetRelativeLocation(FVector(0, -200, 0));
+	FairyApproachRight = CreateDefaultSubobject<UArrowComponent>(TEXT("FairyApproachRight"));
+	FairyApproachRight->SetupAttachment(SceneRoot);
+	FairyApproachRight->SetRelativeLocation(FVector(0, 200, 0));
+	FairyDropPoint = CreateDefaultSubobject<UArrowComponent>(TEXT("FairyDropPoint"));
+	FairyDropPoint->SetupAttachment(SceneRoot);
+	FairyDropPoint->SetRelativeLocation(FVector(0, 0, 150));
+}
+
+bool ACSTrashCanActor::IsAvailableForFairy() const
+{
+	return bIsInstalled && GetActorEnableCollision() && !GetAttachParentActor() && !IsActorBeingDestroyed();
+}
+
+TArray<UArrowComponent*> ACSTrashCanActor::GetFairyApproachPoints() const
+{
+	return {FairyApproachPoint.Get(), FairyApproachBack.Get(), FairyApproachLeft.Get(), FairyApproachRight.Get()};
 }
 
 FName ACSTrashCanActor::GetFacilityId_Implementation() const

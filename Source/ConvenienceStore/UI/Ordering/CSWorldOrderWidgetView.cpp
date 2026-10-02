@@ -178,7 +178,8 @@ void UCSWorldOrderWidget::RefreshNativeOrderScreen()
 			FDataTableRowHandle Handle;
 			Handle.DataTable = Table;
 			Handle.RowName = Name;
-			if (!(bNativeFacilityTab ? Orders->IsFacilityUnlocked(Handle) : Orders->IsProductUnlocked(Handle))) continue;
+			// 시설은 모두 표시하고, 상품은 가챠 전용 등 발주 불가 항목만 제외합니다.
+			if (!bNativeFacilityTab && !Orders->IsProductUnlocked(Handle)) continue;
 			UUserWidget* Row = CreateWidget<UUserWidget>(GetOwningPlayer(), RowClass);
 			if (!Row) continue;
 			if (!ConfigureRow(Row, bNativeFacilityTab ? TEXT("FacilityRow") : TEXT("ProductRow"), Handle) ||

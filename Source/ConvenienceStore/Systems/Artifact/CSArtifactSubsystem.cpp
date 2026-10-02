@@ -5,7 +5,6 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Cart/CSCartActor.h"
 #include "Features/Artifact/CSFairyHouse.h"
-#include "Components/ArrowComponent.h"
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -14,6 +13,48 @@
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/Weather/CSWeatherSubsystem.h"
 #include "Data/CSWeatherTypes.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
+
+void UCSArtifactSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	OutSave.Artifacts.Counts = Counts;
+	OutSave.Artifacts.AppliedStacks = AppliedStacks;
+	OutSave.Artifacts.NextAvailableDays = NextAvailableDays;
+	OutSave.Artifacts.bFairyContractSigned = bFairyContractSigned;
+}
+
+void UCSArtifactSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	Counts = InSave.Artifacts.Counts;
+	AppliedStacks = InSave.Artifacts.AppliedStacks;
+	NextAvailableDays = InSave.Artifacts.NextAvailableDays;
+	bFairyContractSigned = InSave.Artifacts.bFairyContractSigned;
+	bUsingArtifact = false;
+	// 저장된 계약은 등장 연출을 반복하지 않고 즉시 청소 기능을 복원합니다.
+	if (UWorld* World = GetGameInstance()->GetWorld())
+	{
+		for (TActorIterator<ACSFairyHouse> It(World); It; ++It)
+		{
+			It->FinishIntroduction();
+			It->RefreshContractState();
+		}
+		for (TActorIterator<ACSPlayerCharacter> It(World); It; ++It) It->RefreshArtifactMoveSpeed();
+		for (TActorIterator<ACSStoreEmployeeCharacter> It(World); It; ++It) It->RefreshArtifactMoveSpeed();
+		for (TActorIterator<ACSCustomerCharacter> It(World); It; ++It) It->RefreshArtifactMoveSpeed();
+	}
+	OnArtifactsChanged.Broadcast();
+}
+
+bool UCSArtifactSubsystem::HasFairyContract() const
+{
+	for (const auto& Pair : Counts)
+	{
+		FCSJournalArtifactDataRow Row;
+		if (Pair.Value > 0 && GetDefinition(Pair.Key, Row) &&
+			(Row.Effect == ECSArtifactEffectType::FairyContract || Row.Effect == ECSArtifactEffectType::FairyHouse)) return true;
+	}
+	return false;
+}
 
 void UCSArtifactSubsystem::RegisterTable(UDataTable* InTable)
 {
@@ -35,6 +76,13 @@ bool UCSArtifactSubsystem::GetDefinition(FName Id, FCSJournalArtifactDataRow& Ou
 		if (const auto* Row = Table->FindRow<FCSJournalArtifactDataRow>(Id, TEXT("Artifact definition"), false))
 		{
 			OutRow = *Row;
+			// 기존 집 아티팩트의 행 식별자는 유지하여 뽑기와 수집 기록의 연결을 보존합니다.
+			if (OutRow.Effect == ECSArtifactEffectType::FairyHouse)
+			{
+				OutRow.Effect = ECSArtifactEffectType::FairyContract;
+				OutRow.DisplayName = NSLOCTEXT("Artifact", "FairyContract", "요정 고용 계약서");
+				OutRow.Description = NSLOCTEXT("Artifact", "FairyContractDescription", "수첩에서 사용하면 미화의 요정과 영구 계약합니다. 계약 이후 중복 획득한 계약서는 500골드로 교환됩니다.");
+			}
 			return true;
 		}
 	}
@@ -75,6 +123,17 @@ bool UCSArtifactSubsystem::Acquire(FName Id, int32 Quantity)
 {
 	FCSJournalArtifactDataRow Definition;
 	if (Quantity <= 0 || !GetDefinition(Id, Definition) || Counts.FindRef(Id) > MAX_int32 - Quantity) return false;
+	if (Definition.Effect == ECSArtifactEffectType::FairyContract && bFairyContractSigned)
+	{
+		// 계약 완료 후 중복 보상은 보유량을 늘리지 않고 골드로 교환합니다.
+		ACSStoreGameState* State = GetGameInstance()->GetWorld() ? GetGameInstance()->GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
+		if (!State || Quantity > MAX_int32 / 500 || !State->AddFunds(Quantity * 500)) return false;
+		if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(GetGameInstance()->GetFirstLocalPlayerController()))
+			Controller->ShowGameplayToast(NSLOCTEXT("Artifact", "DuplicateContract", "중복 계약서 교환"),
+				FText::Format(NSLOCTEXT("Artifact", "DuplicateContractGold", "이미 계약한 요정의 계약서를 {0}골드로 교환했습니다."), FText::AsNumber(Quantity * 500)));
+		OnArtifactsChanged.Broadcast();
+		return true;
+	}
 	Counts.FindOrAdd(Id) += Quantity;
 	if (UCSJournalSubsystem* Journal = GetGameInstance()->GetSubsystem<UCSJournalSubsystem>())
 	{
@@ -247,49 +306,32 @@ bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player, int32 Co
 		break;
 	}
 	case ECSArtifactEffectType::FairyHouse:
+	case ECSArtifactEffectType::FairyContract:
 	{
 		FText Failure;
-		ACSFairyHousePlacementPoint* Target = nullptr;
-		if (IsFairyHousePlaced(Player))
+		ACSFairyHouse* Target = nullptr;
+		int32 HouseCount = 0;
+		for (TActorIterator<ACSFairyHouse> It(World); It; ++It)
 		{
-			Failure = NSLOCTEXT("Artifact", "FairyHouseAlreadyPlaced", "요정의 집은 이미 설치되어 있습니다. 남은 요정의 집은 보유 수량으로 유지됩니다.");
+			if (IsValid(*It)) { Target = *It; ++HouseCount; }
+		}
+		if (bFairyContractSigned)
+		{
+			Failure = NSLOCTEXT("Artifact", "FairyAlreadyContracted", "미화의 요정과 이미 계약했습니다.");
+		}
+		else if (HouseCount != 1)
+		{
+			Failure = NSLOCTEXT("Artifact", "FairyHouseMissing", "레벨에 요정의 집을 하나 배치해 주세요. 계약서는 유지됩니다.");
 		}
 		else
 		{
-			int32 PointCount = 0;
-			for (TActorIterator<ACSFairyHousePlacementPoint> It(World); It; ++It)
-			{
-				if (!IsValid(*It)) continue;
-				Target = *It;
-				++PointCount;
-			}
-			if (PointCount != 1)
-			{
-				Failure = NSLOCTEXT("Artifact", "FairyHousePointMissing", "요정의 집 배치 지점을 매장에 하나 지정해 주세요.");
-			}
-			else
-			{
-				UClass* HouseClass = Definition.SpawnActorClass.LoadSynchronous();
-				if (!HouseClass || !HouseClass->IsChildOf(ACSFairyHouse::StaticClass()))
-				{
-					Failure = NSLOCTEXT("Artifact", "FairyHouseClassMissing", "요정의 집 설치 클래스가 올바르게 설정되지 않았습니다.");
-				}
-				else
-				{
-					FActorSpawnParameters Params;
-					// 직접 지정한 자리의 변환을 유지하므로 카운터와 겹쳐도 위치를 이동시키지 않습니다.
-					Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-					bSucceeded = IsValid(World->SpawnActor<ACSFairyHouse>(HouseClass,
-						Target->PlacementPoint->GetComponentTransform(), Params));
-					if (!bSucceeded) Failure = NSLOCTEXT("Artifact", "FairyHouseSpawnFailed", "요정의 집을 배치하지 못했습니다. 보유 수량은 유지됩니다.");
-				}
-			}
+			bSucceeded = Target->BeginContractIntroduction(Cast<ACSStorePlayerController>(Player->GetController()));
+			if (bSucceeded) bFairyContractSigned = true;
+			else Failure = NSLOCTEXT("Artifact", "FairyIntroductionFailed", "요정 등장 연출을 시작할 수 없습니다. 계약서는 유지됩니다.");
 		}
-		if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()))
-		{
-			Controller->ShowGameplayToast(NSLOCTEXT("Artifact", "FairyHousePlacement", "요정의 집 배치"), bSucceeded
-				? NSLOCTEXT("Artifact", "FairyHousePlaced", "지정된 자리에 요정의 집을 설치했습니다.") : Failure);
-		}
+		if (!bSucceeded)
+			if (ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController()))
+				Controller->ShowGameplayToast(NSLOCTEXT("Artifact", "FairyContractUse", "요정 계약"), Failure);
 		break;
 	}
 	case ECSArtifactEffectType::None:
@@ -297,6 +339,13 @@ bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player, int32 Co
 	}
 	if (!bSucceeded) return false;
 	if (bConsume) --Counts.FindOrAdd(Id);
+	if (Definition.Effect == ECSArtifactEffectType::FairyContract && bFairyContractSigned)
+	{
+		// 계약 전에 여러 장을 모으셨다면 사용한 한 장을 제외한 나머지도 교환합니다.
+		const int32 DuplicateCount = GetCount(Id);
+		if (DuplicateCount > 0 && DuplicateCount <= MAX_int32 / 500 && State->AddFunds(DuplicateCount * 500))
+			Counts.Add(Id, 0);
+	}
 	if (Definition.CooldownDays > 0) NextAvailableDays.Add(Id, Day + Definition.CooldownDays);
 	OnArtifactsChanged.Broadcast();
 	return true;
@@ -307,6 +356,7 @@ void UCSArtifactSubsystem::ResetArtifacts()
 	Counts.Reset();
 	AppliedStacks.Reset();
 	NextAvailableDays.Reset();
+	bFairyContractSigned = false;
 	if (UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr)
 	{
 		for (TActorIterator<ACSPlayerCharacter> It(World); It; ++It) It->RefreshArtifactMoveSpeed();

@@ -5,6 +5,9 @@
 #include "Components/SpinBox.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
+#include "Engine/World.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
+#include "UI/Crafting/CSLedgerCraftInfoWidget.h"
 
 namespace
 {
@@ -26,19 +29,7 @@ FText GetLedgerCategoryText(ECSProductCategory Category)
 	}
 }
 
-FText GetLedgerReputationText(ECSReputationGrade Grade)
-{
-	switch (Grade)
-	{
-	case ECSReputationGrade::VeryBad: return NSLOCTEXT("StoreLedger", "ReputationVeryBad", "매우 나쁨");
-	case ECSReputationGrade::Bad: return NSLOCTEXT("StoreLedger", "ReputationBad", "나쁨");
-	case ECSReputationGrade::Normal: return NSLOCTEXT("StoreLedger", "ReputationNormal", "보통");
-	case ECSReputationGrade::Good: return NSLOCTEXT("StoreLedger", "ReputationGood", "좋음");
-	case ECSReputationGrade::Excellent: return NSLOCTEXT("StoreLedger", "ReputationExcellent", "매우 좋음");
-	case ECSReputationGrade::None:
-	default: return NSLOCTEXT("StoreLedger", "NoReputationRequirement", "조건 없음");
-	}
-}
+
 }
 
 void UCSLedgerRightPageWidget::NativeConstruct()
@@ -74,8 +65,29 @@ void UCSLedgerRightPageWidget::ShowUnlocked(
 	int32 PendingSalePrice)
 {
 	if (IsValid(SelectionSwitcher)) SelectionSwitcher->SetActiveWidgetIndex(1);
-	if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(0);
 	RefreshProductHeader(ProductData);
+
+	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+	FCSCraftLedgerInfo CraftInfo;
+	const bool bCraftOnly = IsValid(Crafting) && Crafting->BuildLedgerInfo(ProductData.ProductId, CraftInfo);
+
+	// 재고까지 보는 건 도감이 저장되지 않아 불러오면 발견 기록이 사라져도, 창고에 물건이 있으면 판매가를 바꿀 수 있어야 해서다
+	if (bCraftOnly && !CraftInfo.bDiscovered && ProductData.CurrentStock <= 0)
+	{
+		if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(1);
+		// 옛 해금 칸 텍스트는 WBP 직렬화 때문에 남겨 두고 보이지만 않게 한다
+		for (UTextBlock* OldText : { Txt_LevelReq.Get(), Txt_LevelStatus.Get(), Txt_ReputationReq.Get(), Txt_ReputationStatus.Get() })
+		{
+			if (IsValid(OldText)) OldText->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		if (IsValid(CraftGuideInfo)) CraftGuideInfo->ShowGuide();
+		SetPendingSalePriceValue(PendingSalePrice);
+		return;
+	}
+
+	if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(0);
+	if (IsValid(CraftGuideInfo)) CraftGuideInfo->HideInfo();
 	RefreshUnlockedMetrics(ProductData);
 	ShowUnlockedProductDetail(ProductData);
 	SetPendingSalePriceValue(PendingSalePrice);
@@ -83,11 +95,8 @@ void UCSLedgerRightPageWidget::ShowUnlocked(
 
 void UCSLedgerRightPageWidget::ShowLocked(const FCSLedgerProductViewData& ProductData)
 {
-	if (IsValid(SelectionSwitcher)) SelectionSwitcher->SetActiveWidgetIndex(1);
-	if (IsValid(ProductStatusSwitcher)) ProductStatusSwitcher->SetActiveWidgetIndex(1);
-	RefreshProductHeader(ProductData);
-	RefreshLockedConditions(ProductData);
-	ShowLockedProductDetail(ProductData);
+	// 기존 진입점도 잠금 화면 대신 일반 상품 상세를 표시합니다.
+	ShowUnlocked(ProductData, ProductData.CurrentSalePrice);
 }
 
 void UCSLedgerRightPageWidget::SetPendingSalePriceValue(int32 NewSalePrice)
@@ -163,51 +172,4 @@ void UCSLedgerRightPageWidget::RefreshUnlockedMetrics(const FCSLedgerProductView
 				FText::AsNumber(ProductData.ShelfLifeDays))
 			: NSLOCTEXT("StoreLedger", "NoShelfLife", "없음"));
 	}
-}
-
-void UCSLedgerRightPageWidget::RefreshLockedConditions(const FCSLedgerProductViewData& ProductData)
-{
-	if (IsValid(Txt_LevelReq))
-	{
-		Txt_LevelReq->SetText(FText::Format(
-			NSLOCTEXT("StoreLedger", "RequiredStoreLevel", "상점 레벨 {0}"),
-			FText::AsNumber(ProductData.RequiredStoreLevel)));
-	}
-	if (IsValid(Txt_ReputationReq))
-	{
-		Txt_ReputationReq->SetText(FText::Format(
-			NSLOCTEXT("StoreLedger", "RequiredReputation", "평판 {0}"),
-			GetLedgerReputationText(ProductData.RequiredReputationGrade)));
-	}
-
-	// 요구 조건과 달성 상태를 분리해 디자이너가 행 배치를 바꿔도 데이터 연결은 유지됩니다.
-	auto SetConditionStatus = [this](
-		UTextBlock* RequirementText,
-		UTextBlock* StatusText,
-		bool bRequirementMet)
-	{
-		const FSlateColor ConditionColor = bRequirementMet
-			? FSlateColor(MetConditionColor)
-			: FSlateColor(UnmetConditionColor);
-		if (IsValid(RequirementText))
-		{
-			RequirementText->SetColorAndOpacity(ConditionColor);
-		}
-		if (IsValid(StatusText))
-		{
-			StatusText->SetText(bRequirementMet
-				? NSLOCTEXT("StoreLedger", "RequirementMet", "달성")
-				: NSLOCTEXT("StoreLedger", "RequirementUnmet", "미달성"));
-			StatusText->SetColorAndOpacity(ConditionColor);
-		}
-	};
-
-	SetConditionStatus(
-		Txt_LevelReq,
-		Txt_LevelStatus,
-		ProductData.bStoreLevelRequirementMet);
-	SetConditionStatus(
-		Txt_ReputationReq,
-		Txt_ReputationStatus,
-		ProductData.bReputationRequirementMet);
 }

@@ -72,9 +72,11 @@ public:
 	FCSCombinedOrderResult PlaceCombinedOrder(const TArray<FCSOrderLine>& Products,
 		const TArray<FCSFacilityOrderLine>& Facilities, ECSOrderDeliveryType DeliveryType);
 
+	// 호환용 이름: 진행도와 무관하게 유효한 시설 행이면 true입니다.
 	UFUNCTION(BlueprintPure, Category="Store|Order|Unlock")
 	bool IsFacilityUnlocked(const FDataTableRowHandle& Row) const;
 
+	// 호환용 이름: 유효한 상품 행의 bOrderable만 검사합니다.
 	UFUNCTION(BlueprintPure, Category="Store|Order|Unlock")
 	bool IsProductUnlocked(const FDataTableRowHandle& Row) const;
 

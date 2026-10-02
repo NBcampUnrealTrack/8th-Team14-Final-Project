@@ -33,6 +33,34 @@ void ACSTrashActor::SetTrashMesh(UStaticMesh* InMesh)
 	}
 }
 
+FVector ACSTrashActor::GetCleaningLocation() const
+{
+	return IsValid(TrashMesh) ? TrashMesh->GetComponentLocation() : GetActorLocation();
+}
+
+bool ACSTrashActor::CanBeCleanedBy(AActor* Cleaner) const
+{
+	return !IsActorBeingDestroyed() && GetActorEnableCollision() && !GetAttachParentActor() &&
+		(!CleaningReservation.IsValid() || CleaningReservation.Get() == Cleaner);
+}
+
+bool ACSTrashActor::ReserveForCleaning(AActor* Cleaner)
+{
+	if (!IsValid(Cleaner) || !CanBeCleanedBy(Cleaner)) return false;
+	CleaningReservation = Cleaner;
+	return true;
+}
+
+void ACSTrashActor::ReleaseCleaningReservation(AActor* Cleaner)
+{
+	if (CleaningReservation.Get() == Cleaner) CleaningReservation.Reset();
+}
+
+bool ACSTrashActor::IsCarriedByCleaner() const
+{
+	return CleaningReservation.IsValid() && GetAttachParentActor() == CleaningReservation.Get();
+}
+
 void ACSTrashActor::Interact_Implementation(AActor* Interactor)
 {
 	if (ACSPlayerCharacter* PlayerCharacter = Cast<ACSPlayerCharacter>(Interactor))

@@ -21,10 +21,12 @@ enum class ECSLedgerCategoryFilter : uint8
 	Snack,
 	Supply,
 	Toiletry,
-	Tool
+	Tool,
+	// 제조 전용 상품만 모아 보는 탭. 기존 값 순서를 밀지 않게 끝에 둔다
+	Craft
 };
 
-// 오른쪽 페이지에서 동시에 하나만 보여야 하는 세 가지 화면 상태입니다.
+// LockedProduct는 기존 Blueprint enum 직렬화 호환용으로만 보존합니다.
 UENUM(BlueprintType)
 enum class ECSLedgerDetailState : uint8
 {
@@ -72,9 +74,9 @@ struct CONVENIENCESTORE_API FCSLedgerProductViewData
 	UPROPERTY(BlueprintReadOnly, Category = "Ledger")
 	int32 CurrentSalePrice = 0;
 
-	// 잠금 여부와 각 조건의 충족 여부를 함께 전달하여 WBP가 조건별 상태를 표시할 수 있게 합니다.
+	// 기존 WBP 핀 호환용입니다. 모든 상품은 항상 해금된 상태로 표시합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Ledger|Unlock")
-	bool bUnlocked = false;
+	bool bUnlocked = true;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Ledger|Unlock")
 	int32 RequiredStoreLevel = 1;
@@ -83,8 +85,8 @@ struct CONVENIENCESTORE_API FCSLedgerProductViewData
 	ECSReputationGrade RequiredReputationGrade = ECSReputationGrade::VeryBad;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Ledger|Unlock")
-	bool bStoreLevelRequirementMet = false;
+	bool bStoreLevelRequirementMet = true;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Ledger|Unlock")
-	bool bReputationRequirementMet = false;
+	bool bReputationRequirementMet = true;
 };

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "Data/CSSaveTypes.h"
 #include "Data/CSTutorialTypes.h"
 #include "CSCraftTypes.generated.h"
 
@@ -198,4 +199,116 @@ struct CONVENIENCESTORE_API FCSCraftEvaluation
 
 	UPROPERTY(BlueprintReadOnly, Category = "Craft")
 	int32 Quantity = 1;
+};
+
+// 직접 제조 한 번의 기록. 도감 최근 시도 한 줄이 된다
+USTRUCT()
+struct CONVENIENCESTORE_API FCSCraftAttemptRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FName IngredientA;
+
+	UPROPERTY()
+	int32 IngredientACount = 0;
+
+	UPROPERTY()
+	FName IngredientB;
+
+	UPROPERTY()
+	int32 IngredientBCount = 0;
+
+	UPROPERTY()
+	ECSCraftHeat Heat = ECSCraftHeat::None;
+
+	UPROPERTY()
+	int32 StirCount = 0;
+
+	UPROPERTY()
+	int32 PopHits = 0;
+
+	// 그 시도에서 터트릴 수 있던 거품 수
+	UPROPERTY()
+	int32 PopCount = 0;
+
+	UPROPERTY()
+	ECSCraftOutcome Outcome = ECSCraftOutcome::Unknown;
+
+	// 재료 쌍에 맞는 레시피가 없으면 None
+	UPROPERTY()
+	FName RecipeRowName;
+
+	// 성공, 대성공, 꽝일 때만 채운다
+	UPROPERTY()
+	FName ResultProduct;
+
+	bool operator==(const FCSCraftAttemptRecord& Other) const
+	{
+		return IngredientA == Other.IngredientA && IngredientACount == Other.IngredientACount &&
+			IngredientB == Other.IngredientB && IngredientBCount == Other.IngredientBCount &&
+			Heat == Other.Heat && StirCount == Other.StirCount &&
+			PopHits == Other.PopHits && PopCount == Other.PopCount &&
+			Outcome == Other.Outcome && RecipeRowName == Other.RecipeRowName &&
+			ResultProduct == Other.ResultProduct;
+	}
+};
+
+// 제조대 하나의 솥 재료와 결과 슬롯 물건. 상품 하나당 한 줄
+USTRUCT()
+struct CONVENIENCESTORE_API FCSCraftStationSaveRecord
+{
+	GENERATED_BODY()
+
+	// 레벨에 배치된 제조대 액터 이름. 불러올 때 이 이름으로 제조대를 찾는다
+	UPROPERTY()
+	FName StationName;
+
+	UPROPERTY()
+	TArray<FCSLooseProductRecord> PotProducts;
+
+	UPROPERTY()
+	TArray<FCSLooseProductRecord> ResultProducts;
+};
+
+// [백무송님] 저장 연결: 이 구조체 하나를 UCSSaveGame에 칸으로 넣고,
+// 저장할 때 UCSCraftingSubsystem::CaptureCraftSaveData, 불러올 때 RestoreCraftSaveData를 부르면 된다.
+// 도감 기록, 솥 재료, 결과 슬롯 물건, 게시판 소문 시드가 전부 여기 들어 있다
+USTRUCT()
+struct CONVENIENCESTORE_API FCSCraftSaveData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FName> DiscoveredRecipeRows;
+
+	UPROPERTY()
+	TArray<FName> HeatRumorRecipeRows;
+
+	UPROPERTY()
+	TArray<FName> StirRumorRecipeRows;
+
+	UPROPERTY()
+	TArray<FCSCraftAttemptRecord> RecentAttempts;
+
+	UPROPERTY()
+	TArray<FCSCraftStationSaveRecord> Stations;
+
+	UPROPERTY()
+	int32 RumorBaseSeed = 0;
+};
+
+// 장부가 제조 전용 상품의 안내 칸을 띄울지 정할 때 쓴다
+struct FCSCraftLedgerInfo
+{
+	bool bCraftOnly = false;
+	bool bDiscovered = false;
+	FName RecipeRowName;
+};
+
+// 게시판 소문 풀 한 줄. Key로 정렬해서 추첨 순서가 표 순서에 흔들리지 않게 한다
+struct FCSCraftRumorLine
+{
+	FName Key;
+	FText Text;
 };
