@@ -1,11 +1,13 @@
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 
 #include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSEmployeeHiringWidget.h"
 #include "Engine/World.h"
+#include "Engine/Font.h"
 
 void ACSStoreEmployeeCharacter::ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSubclassOf<UCSEmployeeHiringWidget> WidgetClass)
 {
@@ -37,12 +39,14 @@ void ACSStoreEmployeeCharacter::RefreshEmploymentPresentation()
 {
 	const UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
 	const bool bApplicant = bRequiresHiring && !(Hiring && Hiring->IsSlotHired(HiringSlot));
+	bAwaitingEmploymentStart = bRequiresHiring && !bApplicant && !CanWork();
+	// 고용 전 지원자는 모자를 숨기고, 고용 완료/저장 복원 시 즉시 표시합니다.
+	HatMesh->SetHiddenInGame(bApplicant);
 	if (bRequiresHiring) GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, bApplicant ? ECR_Block : ECR_Ignore);
-	// TextRender 기본 폰트가 지원하는 문자로 역할을 표시하며, 상세 역할명은 한국어 고용 창에서 제공합니다.
-	const TCHAR* Label = HiringSlot == ECSEmployeeHireSlot::Checkout ? TEXT("CASHIER")
-		: HiringSlot == ECSEmployeeHireSlot::FirstRestock ? TEXT("STOCKER 1") : TEXT("STOCKER 2");
-	HiringNameplate->SetText(FText::FromString(Label));
-	HiringNameplate->SetHiddenInGame(!bApplicant);
+	if (HiringNameplateFont) HiringNameplate->SetFont(HiringNameplateFont);
+	HiringNameplate->SetText(bAwaitingEmploymentStart
+		? NSLOCTEXT("EmployeeHiring", "StartsTomorrowNameplate", "내일부터 근무") : GetHiringRoleName());
+	HiringNameplate->SetHiddenInGame(!bApplicant && !bAwaitingEmploymentStart);
 }
 
 void ACSStoreEmployeeCharacter::Interact_Implementation(AActor* Interactor)
