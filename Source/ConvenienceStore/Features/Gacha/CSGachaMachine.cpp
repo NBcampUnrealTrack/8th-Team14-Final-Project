@@ -23,19 +23,22 @@
 ACSGachaMachine::ACSGachaMachine()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	// 상호작용 영역을 옮겨도 외형과 보상 생성 지점은 함께 움직이지 않도록 분리합니다.
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
 	InteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
-	SetRootComponent(InteractionBox);
+	InteractionBox->SetupAttachment(SceneRoot);
 	InteractionBox->SetBoxExtent(FVector(60, 60, 100));
 	InteractionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
 	InteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	DisplayMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DisplayMesh"));
-	DisplayMesh->SetupAttachment(InteractionBox);
+	DisplayMesh->SetupAttachment(SceneRoot);
 	DisplayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	DisplayMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
 	DisplayMesh->SetRelativeScale3D(FVector(1.2f, 1.2f, 2.0f));
 	RewardSpawnPoint = CreateDefaultSubobject<USceneComponent>(TEXT("RewardSpawnPoint"));
-	RewardSpawnPoint->SetupAttachment(InteractionBox);
+	RewardSpawnPoint->SetupAttachment(SceneRoot);
 	RewardSpawnPoint->SetRelativeLocation(FVector(0.0f, 0.0f, 110.0f));
 	MagicCircle = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("MagicCircle"));
 	MagicCircle->SetupAttachment(RewardSpawnPoint);
@@ -102,6 +105,8 @@ void ACSGachaMachine::OnConstruction(const FTransform& Transform)
 void ACSGachaMachine::BeginPlay()
 {
 	Super::BeginPlay();
+	// 에디터에서 설정한 크기를 기준으로 배출 시 확대 연출을 적용합니다.
+	MagicCircleBaseScale = MagicCircle->GetRelativeScale3D();
 	CircleMaterial = CircleMesh ? CustomMagicCircle->CreateDynamicMaterialInstance(0) : MagicCircle->CreateDynamicMaterialInstance(0);
 	BeamMaterial = Beam->CreateDynamicMaterialInstance(0);
 	if (RewardPool && RewardPool->ArtifactTable && GetWorld() && GetWorld()->GetGameInstance())
@@ -121,7 +126,8 @@ void ACSGachaMachine::Tick(float DeltaSeconds)
 	if (CircleMaterial && !GlowParameter.IsNone()) CircleMaterial->SetScalarParameterValue(GlowParameter, bDrawing ? 4.f : 0.65f + Pulse * 0.3f);
 	DispensePulseRemaining = FMath::Max(0.f, DispensePulseRemaining - DeltaSeconds);
 	const float DispenseAlpha = DispensePulseRemaining / 0.4f;
-	MagicCircle->SetRelativeScale3D(FVector(DispenseAlpha > 0.f ? 1.f + (1.f - DispenseAlpha) * 0.25f : 1.f));
+	const float DispenseScale = DispenseAlpha > 0.f ? 1.f + (1.f - DispenseAlpha) * 0.25f : 1.f;
+	MagicCircle->SetRelativeScale3D(MagicCircleBaseScale * DispenseScale);
 	if (DispenseAlpha > 0.f && CircleMaterial && !GlowParameter.IsNone()) CircleMaterial->SetScalarParameterValue(GlowParameter, 1.f + DispenseAlpha * 5.f);
 	if (bDrawing) MagicCircle->AddLocalRotation(FRotator(0, DeltaSeconds * 70.f, 0));
 	Beam->SetVisibility(bUseDemoEffects && bShowBeam && bBeamActive);

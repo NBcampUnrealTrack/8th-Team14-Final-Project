@@ -712,7 +712,8 @@ bool UCSWeatherSubsystem::SetForecastWeather(int32 DayOffset, ECSWeatherType New
 	{
 		const ECSWeatherType Previous = CurrentWeather;
 		CurrentWeather = NewWeather;
-		ApplyWeatherEffect(CurrentWeather);
+		// 영업 중에 바뀌므로 색감을 서서히 적용
+		ApplyWeatherEffect(CurrentWeather, true);
 		OnWeatherChanged.Broadcast(CurrentWeather, Previous);
 	}
 
@@ -995,7 +996,7 @@ float UCSWeatherSubsystem::GetProductWeatherDemandModifierForWeather(
 // 이펙트 교체
 // ---------------------------------------------------------------------------
 
-void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather)
+void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather, bool bFadePostProcess)
 {
 	if (IsValid(ActiveEffectActor))
 	{
@@ -1011,6 +1012,13 @@ void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather)
 	// 새 이펙트에 현재 보호 상태를 즉시 적용
 	// 판정 결과가 이전과 같아도 표시 여부를 다시 설정
 	UpdateShelterState(true);
+
+	// 실내외 판정이 끝난 뒤 색감을 활성화
+	// 실내에서 실외 가중치가 한 프레임 적용되는 상황을 방지
+	if (IsValid(ActiveEffectActor))
+	{
+		ActiveEffectActor->ActivatePostProcess(bFadePostProcess);
+	}
 }
 
 void UCSWeatherSubsystem::SpawnEffectActor(const FCSWeatherRow* Row)
