@@ -1,4 +1,7 @@
 #include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Data/CSArtifactVisualRegistry.h"
+#include "Engine/GameInstance.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -14,6 +17,22 @@
 #include "Systems/Weather/CSWeatherSubsystem.h"
 #include "Data/CSWeatherTypes.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
+
+UCSArtifactSubsystem::UCSArtifactSubsystem()
+{
+	// A reflected hard reference keeps the registry reachable for cooking as well as runtime.
+	static ConstructorHelpers::FObjectFinderOptional<UCSArtifactVisualRegistry> Registry(
+		TEXT("/Game/ConvenienceStore/Data/DataAsset/Artifact_Visual/DA_ArtifactVisualRegistry.DA_ArtifactVisualRegistry"));
+	VisualRegistry = Registry.Get();
+}
+
+UCSArtifactVisualRegistry* UCSArtifactSubsystem::ResolveVisualRegistry(const UObject* WorldContextObject)
+{
+	const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	const UGameInstance* Instance = World ? World->GetGameInstance() : nullptr;
+	const UCSArtifactSubsystem* Owner = Instance ? Instance->GetSubsystem<UCSArtifactSubsystem>() : GetDefault<UCSArtifactSubsystem>();
+	return Owner ? Owner->VisualRegistry.Get() : nullptr;
+}
 
 void UCSArtifactSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
 {
