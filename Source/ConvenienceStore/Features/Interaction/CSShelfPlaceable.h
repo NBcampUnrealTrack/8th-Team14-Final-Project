@@ -63,4 +63,10 @@ public:
 	// 지정한 상품이 놓여 있는 슬롯의 높이 정보를 반환합니다.
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Shelf")
 	bool GetItemSlotLevel(AActor* ItemActor, ECSShelfSlotLevel& OutSlotLevel) const;
+
+	// 배치할 수 있을 때 띄우는 Q 안내. 진열대가 아닌 대상은 덮어써서 바꾼다
+	virtual FText GetPlacementPromptText() const
+	{
+		return NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기");
+	}
 };

@@ -3164,8 +3164,9 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		PlacementPreviewActor->SetPlacementPreviewState(PreviewState);
 		if (IsValid(StorePlayerController))
 		{
+			const ICSShelfPlaceable* Placeable = Cast<ICSShelfPlaceable>(TargetActor);
 			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"),
+				Placeable ? Placeable->GetPlacementPromptText() : NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"),
 				FLinearColor::White);
 		}
 

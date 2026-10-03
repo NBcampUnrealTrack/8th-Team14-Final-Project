@@ -415,6 +415,11 @@ bool ACSCraftStationActor::GetItemSlotLevel_Implementation(AActor* ItemActor, EC
 	return false;
 }
 
+FText ACSCraftStationActor::GetPlacementPromptText() const
+{
+	return GetMessage(TEXT("PlacePrompt"));
+}
+
 void ACSCraftStationActor::StoreProductHidden(ACSProductPickupActor* Product)
 {
 	// 손에 붙은 채 숨기면 플레이어를 따라다닌다

@@ -92,6 +92,7 @@ public:
 	virtual bool TryPlaceItem_Implementation(AActor* ItemActor, FVector PlacementHint) override;
 	virtual void RemovePlacedItem_Implementation(AActor* ItemActor) override;
 	virtual bool GetItemSlotLevel_Implementation(AActor* ItemActor, ECSShelfSlotLevel& OutSlotLevel) const override;
+	virtual FText GetPlacementPromptText() const override;
 
 	// Interact에는 조준한 컴포넌트가 안 넘어와서 제조대가 직접 다시 트레이스한다
 	virtual void Interact_Implementation(AActor* Interactor) override;
