@@ -16,6 +16,7 @@ class UBoxComponent;
 class UCameraComponent;
 class UCSCraftAutoPanelWidget;
 class UCSCraftCloseupWidget;
+class UCSCraftIngredientPanelWidget;
 class UCSCraftingSubsystem;
 class UCSCraftRecipeBookWidget;
 class UCSCraftStationInfoWidget;
@@ -52,8 +53,17 @@ struct FCSCraftAutoOption
 	int32 MaxSets = 0;
 };
 
+// 재료 창 한 줄. 솥에 넣은 순서대로 최대 두 종류
+struct FCSCraftIngredientEntry
+{
+	FName ProductId;
+	FText DisplayName;
+	TSoftObjectPtr<UTexture2D> Icon;
+	int32 Count = 0;
+};
+
 // 마법 제조대(솥)
-// 재료 상품은 부착하지 않고 숨겨 두고, 솥에는 모형 메시만 보여 준다.
+// 재료 상품은 부착하지 않고 숨겨 둔다. 넣으면 솥에 빠지고 클로즈업의 재료 창에서 꺼낸다.
 // 제조대에 부착된 상품은 CanPackProduct에 걸려 E로 다시 꺼낼 수 없다.
 // ACSShelfActor를 상속하면 손님 진열대 목록에 들어가 손님이 솥을 둘러보고 진열대 추첨 순서도 밀린다
 UCLASS()
@@ -112,6 +122,11 @@ public:
 
 	void CloseRecipeBook();
 
+	TArray<FCSCraftIngredientEntry> GetIngredientEntries() const;
+	// 꺼냈으면 빈 문구, 못 꺼냈으면 창 안내 칸에 보여 줄 문구
+	FText RequestRemoveIngredient(FName ProductId);
+	void CloseIngredientPanel();
+
 	FText GetMessage(FName MessageRowName) const;
 	FText GetProductDisplayName(FName ProductId) const;
 	TSoftObjectPtr<UTexture2D> FindProductIcon(FName ProductId) const;
@@ -144,6 +159,10 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
 	void OnCraftFinished(ECSCraftOutcome Outcome, int32 Quantity);
 
+	// Q로 재료가 솥에 들어갔을 때만 부른다. 세이브 복원으로 다시 채울 때는 부르지 않는다
+	UFUNCTION(BlueprintImplementableEvent, Category = "Crafting|Presentation")
+	void OnIngredientAdded(FName ProductRow);
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> SceneRoot;
 
@@ -151,18 +170,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BodyMesh;
 
-	// 솥 가장자리 재료 모형. 빈 슬롯은 숨기고 충돌도 꺼서 몸통이 조준되게 한다
+	// 물약 면 바로 위. Q 미리보기, 꺼낼 때, 세이브 복원 때 재료가 이 자리에 놓인다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> IngredientModel1;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> IngredientModel2;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> IngredientModel3;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	TObjectPtr<UStaticMeshComponent> IngredientModel4;
+	TObjectPtr<USceneComponent> IngredientDropPoint;
 
 	// 솥 옆 결과 모형. 실패 쓰레기는 첫 번째 자리에 놓인다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -213,6 +223,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftRecipeBookWidget> RecipeBookWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TSubclassOf<UCSCraftIngredientPanelWidget> IngredientPanelWidgetClass;
 
 	// 플레이어 IMC(0)보다 높아야 A/D, 클릭, Space, E, Esc를 먼저 가져간다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|Input")
@@ -303,7 +316,7 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
 	int32 LastPoppedPeakIndex = 0;
 
-	// 결과물 스폰에 실패했을 때만 켜진다. 이때만 E로 완성을 다시 시도한다
+	// 결과물 스폰에 실패했을 때만 켜진다. 이때만 E가 재료 창 대신 완성을 다시 시도한다
 	UPROPERTY(VisibleInstanceOnly, Transient, Category = "Crafting|Runtime")
 	bool bFinishRetryPending = false;
 
@@ -320,6 +333,9 @@ protected:
 	TObjectPtr<UCSCraftRecipeBookWidget> ActiveRecipeBookWidget;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UCSCraftIngredientPanelWidget> ActiveIngredientPanelWidget;
+
+	UPROPERTY(Transient)
 	TObjectPtr<APlayerController> CloseupController;
 
 	UPROPERTY(Transient)
@@ -329,16 +345,20 @@ protected:
 	TObjectPtr<APawn> CloseupPawn;
 
 private:
-	enum class EAimTarget : uint8 { None, Body, Ingredient, Result, SummonCircle };
+	enum class EAimTarget : uint8 { None, Body, Result, SummonCircle };
 
-	UStaticMeshComponent* GetIngredientModel(int32 SlotIndex) const;
 	UStaticMeshComponent* GetResultModel(int32 SlotIndex) const;
 	EAimTarget TraceAimTarget(const APlayerController* PlayerController, int32& OutSlotIndex) const;
 
 	UCSCraftingSubsystem* GetCraftingSubsystem() const;
 	ACSStorePlayerController* GetLocalStoreController() const;
 	UCSProductVisualRegistry* ResolveVisualRegistry(const ACSProductPickupActor* Product) const;
-	void ShowBanner(FName MessageRowName) const;
+	// 클로즈업 중이면 클로즈업 화면의 메시지 칸에, 아니면 공용 배너에 띄운다
+	void ShowMessage(const FText& Message, bool bWarning) const;
+	void ShowBanner(FName MessageRowName, bool bWarning = true) const;
+	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다
+	bool IsBeforeCraftStart() const;
+	bool IsAnyCloseupPanelOpen() const;
 
 	// 받을 수 없으면 안내 문구 RowName, 받을 수 있으면 None
 	FName GetPlacementRejectReason(const ACSProductPickupActor* Product) const;
@@ -347,7 +367,7 @@ private:
 
 	void StoreProductHidden(ACSProductPickupActor* Product);
 	void RestoreProductVisible(ACSProductPickupActor* Product, const USceneComponent* AtModel);
-	void ApplyModelVisual(UStaticMeshComponent* Model, int32 BaseIndex, const ACSProductPickupActor* Product);
+	void ApplyModelVisual(UStaticMeshComponent* Model, int32 ResultIndex, const ACSProductPickupActor* Product);
 	void RefreshModels();
 	bool RetrieveFromSlot(APawn* InteractingPawn, bool bResultSlot, int32 SlotIndex);
 
@@ -368,6 +388,7 @@ private:
 	void OpenSummonList(APlayerController* PlayerController);
 	void HandleAutoCraftOpen();
 	void HandleRecipeBookOpen();
+	void HandleIngredientPanelOpen();
 	// 솥 슬롯에 스폰한 상품을 숨겨 넣는다. 실패하면 nullptr
 	ACSProductPickupActor* SpawnProductFromRecord(const FCSLooseProductRecord& Record, const USceneComponent* AtModel);
 
@@ -392,8 +413,7 @@ private:
 	void SetStep(ECSCraftStep NewStep);
 	void RefreshInfoWidget();
 
-	// BP에 배치한 모형 위치. 레지스트리 변환을 이 위에 곱한다
-	TArray<FTransform> IngredientModelBaseTransforms;
+	// BP에 배치한 결과 모형 위치. 레지스트리 변환을 이 위에 곱한다
 	TArray<FTransform> ResultModelBaseTransforms;
 
 	FTimerHandle BubbleTimerHandle;
