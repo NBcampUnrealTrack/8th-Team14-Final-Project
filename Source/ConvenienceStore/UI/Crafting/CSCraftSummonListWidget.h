@@ -64,6 +64,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftListRowWidget> RowClass;
 
+	// 선택 요약 칸은 고르기 전 안내 문장과 고른 재료 이름을 번갈아 보여 줘서 서체를 바꿔 끼운다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	FName PlaceholderTypeface = TEXT("Info");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	FName SelectedTypeface = TEXT("Title");
+
 private:
 	UFUNCTION()
 	void HandleCountUp();

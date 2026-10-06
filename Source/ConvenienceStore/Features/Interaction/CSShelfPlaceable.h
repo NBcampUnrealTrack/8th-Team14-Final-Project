@@ -69,4 +69,10 @@ public:
 	{
 		return NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기");
 	}
+
+	// 배치할 수 없을 때 띄우는 안내. 비어 있으면 공용 "빈 슬롯 없음" 안내가 뜬다
+	virtual FText GetPlacementFailurePromptText(const AActor* ItemActor) const
+	{
+		return FText::GetEmpty();
+	}
 };

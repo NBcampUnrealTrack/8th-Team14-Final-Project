@@ -125,6 +125,12 @@ void ACSCraftStationActor::BeginPlay()
 		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: ProductActorClass / TrashActorClass를 지정해 주세요. 완성할 수 없습니다."), *GetName());
 	}
 
+	// 솥 위 월드 정보 창은 쓰지 않는다. 같은 정보는 클로즈업 화면 위쪽에 나온다
+	if (IsValid(InfoWidgetComponent))
+	{
+		InfoWidgetComponent->SetVisibility(false);
+	}
+
 	RefreshModels();
 	RefreshInfoWidget();
 }
@@ -418,6 +424,17 @@ bool ACSCraftStationActor::GetItemSlotLevel_Implementation(AActor* ItemActor, EC
 FText ACSCraftStationActor::GetPlacementPromptText() const
 {
 	return GetMessage(TEXT("PlacePrompt"));
+}
+
+FText ACSCraftStationActor::GetPlacementFailurePromptText(const AActor* ItemActor) const
+{
+	const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ItemActor);
+	if (!IsValid(Product))
+	{
+		return FText::GetEmpty();
+	}
+	const FName RejectReason = GetPlacementRejectReason(Product);
+	return RejectReason.IsNone() ? FText::GetEmpty() : GetMessage(RejectReason);
 }
 
 void ACSCraftStationActor::StoreProductHidden(ACSProductPickupActor* Product)
@@ -1555,11 +1572,6 @@ void ACSCraftStationActor::EnterCloseup(APlayerController* PlayerController)
 			ActiveCloseupWidget->SetStep(CraftStep);
 		}
 	}
-	// 클로즈업 화면 안의 정보 창과 겹치지 않게 월드 정보 창은 숨긴다
-	if (IsValid(InfoWidgetComponent))
-	{
-		InfoWidgetComponent->SetVisibility(false);
-	}
 
 	bCloseupActive = true;
 	RefreshInfoWidget();
@@ -1617,10 +1629,6 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 		ActiveCloseupWidget->RemoveFromParent();
 	}
 	ActiveCloseupWidget = nullptr;
-	if (IsValid(InfoWidgetComponent))
-	{
-		InfoWidgetComponent->SetVisibility(true);
-	}
 	CloseupController = nullptr;
 	PreviousViewTarget = nullptr;
 

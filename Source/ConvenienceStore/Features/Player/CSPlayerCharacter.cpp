@@ -3124,7 +3124,16 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 			}
 			else
 			{
-				StorePlayerController->ShowPlacementUnavailablePrompt();
+				const ICSShelfPlaceable* Placeable = Cast<ICSShelfPlaceable>(TargetActor);
+				const FText FailureText = Placeable ? Placeable->GetPlacementFailurePromptText(PlacementItem) : FText::GetEmpty();
+				if (FailureText.IsEmpty())
+				{
+					StorePlayerController->ShowPlacementUnavailablePrompt();
+				}
+				else
+				{
+					StorePlayerController->SetInteractionPrompt(FailureText, FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+				}
 			}
 		}
 

@@ -5,6 +5,7 @@
 #include "Data/CSCraftTypes.h"
 #include "CSCraftCloseupWidget.generated.h"
 
+class UBorder;
 class UPanelWidget;
 class UTextBlock;
 class UCSCraftKeyHintRowWidget;
@@ -16,6 +17,8 @@ class CONVENIENCESTORE_API UCSCraftCloseupWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	UCSCraftCloseupWidget(const FObjectInitializer& ObjectInitializer);
+
 	void SetStep(ECSCraftStep Step);
 	// 한 칸이라 새 메시지가 이전 것을 덮고 표시 시간도 다시 센다
 	void ShowMessage(const FText& Message, bool bWarning);
@@ -29,6 +32,17 @@ protected:
 
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> MessageText;
+
+	// 알림 배경 판. 있으면 경고·일반에 따라 아래 두 브러시로 바꿔 낀다
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> MessageFrame;
+
+	// 비워 두면 WBP의 MessageFrame에 그려 둔 판을 그대로 쓴다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	FSlateBrush WarningFrameBrush;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	FSlateBrush InfoFrameBrush;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftKeyHintRowWidget> KeyHintRowClass;
@@ -46,6 +60,8 @@ protected:
 
 private:
 	void HideMessage();
+
+	FSlateBrush DesignedFrameBrush;
 
 	FTimerHandle MessageHideTimerHandle;
 };

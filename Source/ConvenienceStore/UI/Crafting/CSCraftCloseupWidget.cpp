@@ -1,10 +1,19 @@
 ﻿#include "UI/Crafting/CSCraftCloseupWidget.h"
 
+#include "Components/Border.h"
 #include "Components/PanelWidget.h"
 #include "Components/TextBlock.h"
 #include "TimerManager.h"
 #include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "UI/Crafting/CSCraftKeyHintRowWidget.h"
+
+UCSCraftCloseupWidget::UCSCraftCloseupWidget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// 브러시 기본값은 흰 사각형이라, 그리지 않음으로 두어 "비워 둠"을 구분한다
+	WarningFrameBrush.DrawAs = ESlateBrushDrawType::NoDrawType;
+	InfoFrameBrush.DrawAs = ESlateBrushDrawType::NoDrawType;
+}
 
 void UCSCraftCloseupWidget::NativeConstruct()
 {
@@ -13,6 +22,10 @@ void UCSCraftCloseupWidget::NativeConstruct()
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	SetIsFocusable(false);
 	MessageText->SetVisibility(ESlateVisibility::Collapsed);
+	if (IsValid(MessageFrame))
+	{
+		DesignedFrameBrush = MessageFrame->Background;
+	}
 }
 
 void UCSCraftCloseupWidget::NativeDestruct()
@@ -29,6 +42,11 @@ void UCSCraftCloseupWidget::ShowMessage(const FText& Message, bool bWarning)
 {
 	MessageText->SetText(Message);
 	MessageText->SetColorAndOpacity(bWarning ? WarningMessageColor : InfoMessageColor);
+	if (IsValid(MessageFrame))
+	{
+		const FSlateBrush& ToneBrush = bWarning ? WarningFrameBrush : InfoFrameBrush;
+		MessageFrame->SetBrush(ToneBrush.DrawAs == ESlateBrushDrawType::NoDrawType ? DesignedFrameBrush : ToneBrush);
+	}
 	MessageText->SetVisibility(ESlateVisibility::HitTestInvisible);
 
 	if (const UWorld* World = GetWorld())
