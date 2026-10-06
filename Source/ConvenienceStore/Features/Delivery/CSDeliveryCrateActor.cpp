@@ -500,10 +500,7 @@ TSoftObjectPtr<UTexture2D> ACSDeliveryCrateActor::GetProductIcon() const
 		return TSoftObjectPtr<UTexture2D>();
 	}
 
-	const FCSProductVisualData* VisualData = VisualRegistry->FindVisualData(ProductId);
-	return VisualData != nullptr
-		? VisualData->ProductIcon
-		: TSoftObjectPtr<UTexture2D>();
+	return VisualRegistry->GetProductIcon(ProductId);
 }
 
 bool ACSDeliveryCrateActor::ConsumeOne()
