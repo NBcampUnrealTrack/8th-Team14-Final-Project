@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
 #include "Data/CSSaveTypes.h"
-// [백무송]
 // 제조 저장 블록의 구조체 정의를 조회
 #include "Data/CSCraftTypes.h"
 #include "CSSaveGame.generated.h"
@@ -75,7 +74,6 @@ public:
 	UPROPERTY()
 	FCSNoticeEventSaveRecord NoticeEvent;
 
-	// [백무송]
 	// 제조 도감 기록·솥 재료·결과 슬롯 물건·게시판 소문 시드
 	// UCSCraftingSubsystem이 기록하고 월드 액터 복원 후에 복원
 	UPROPERTY()

@@ -1185,6 +1185,14 @@ void ACSPlayerCharacter::CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) con
 			SlotRecord.bHasCrate = true;
 			Crate->CaptureSaveRecord(SlotRecord.Crate);
 		}
+		// 퀵바에 보관하거나 손에 든 쓰레기의 이름·메시를 기록
+		// 복원 시 퀵바에 다시 보관하므로 바닥 물리 상태는 기록하지 않음
+		else if (const ACSTrashActor* Trash = Cast<ACSTrashActor>(Item))
+		{
+			SlotRecord.bHasTrash = true;
+			Trash->CaptureSaveRecord(SlotRecord.Trash);
+			SlotRecord.Trash.bWorldDropPhysics = false;
+		}
 	}
 }
 
@@ -1222,6 +1230,15 @@ void ACSPlayerCharacter::RestoreQuickbarRecord(
 				SlotRecord.Crate,
 				GetActorTransform(),
 				FallbackProductTable);
+			bSpawned = true;
+		}
+		// 쓰레기 레코드로 플레이어 위치에 쓰레기를 생성하고 아래 공통 처리로 퀵바에 다시 보관
+		else if (SlotRecord.bHasTrash)
+		{
+			RestoredItem = UCSWorldStateSaveHandler::SpawnTrashFromRecord(
+				*World,
+				SlotRecord.Trash,
+				GetActorTransform());
 			bSpawned = true;
 		}
 

@@ -948,6 +948,11 @@ struct CONVENIENCESTORE_API FCSTrashRecord
 	UPROPERTY()
 	FSoftObjectPath StaticMesh;
 
+	// 상호작용 안내와 퀵바에 표시할 쓰레기 이름
+	// 제조 실패물처럼 생성 후 이름을 바꾼 쓰레기가 기본 이름으로 돌아가지 않도록 기록
+	UPROPERTY()
+	FText DisplayName;
+
 	// 쓰레기의 월드 트랜스폼
 	UPROPERTY()
 	FTransform Transform = FTransform::Identity;
@@ -968,7 +973,7 @@ struct CONVENIENCESTORE_API FCSTrashRecord
 };
 
 // 퀵바 슬롯 한 칸의 레코드
-// 도구는 클래스 경로, 상자는 상자 레코드로 저장
+// 도구는 클래스 경로, 상자는 상자 레코드, 쓰레기는 쓰레기 레코드로 저장
 USTRUCT()
 struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 {
@@ -986,6 +991,16 @@ struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 	// 보관 중인 배송 상자 상태
 	UPROPERTY()
 	FCSCrateRecord Crate;
+
+	// 쓰레기 보관 여부
+	// 이전 세이브는 false로 읽혀 월드 쓰레기 레코드의 바닥 복원을 유지
+	UPROPERTY()
+	bool bHasTrash = false;
+
+	// 보관 중인 쓰레기 상태
+	// 표시 이름과 메시를 함께 기록해 퀵바 복원 후에도 유지
+	UPROPERTY()
+	FCSTrashRecord Trash;
 };
 
 // 퀵바 전체 레코드
@@ -994,8 +1009,8 @@ struct CONVENIENCESTORE_API FCSQuickbarRecord
 {
 	GENERATED_BODY()
 
-	// 슬롯 순서대로 기록하며 빈 칸과 쓰레기는 비어 있는 레코드로 유지
-	// 퀵바의 쓰레기는 월드 쓰레기 레코드가 플레이어 위치의 바닥 쓰레기로 기록
+	// 슬롯 순서대로 기록하며 빈 칸은 비어 있는 레코드로 유지
+	// 퀵바의 쓰레기는 월드 쓰레기 레코드에서 제외하고 이 레코드에 기록
 	UPROPERTY()
 	TArray<FCSQuickbarSlotRecord> Slots;
 

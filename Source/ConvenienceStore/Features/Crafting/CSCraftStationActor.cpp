@@ -1924,6 +1924,10 @@ bool ACSCraftStationActor::SpawnFailureTrash(ECSCraftOutcome Outcome, FText& Out
 
 	// [백무송님] 저장 연결: 제조 쓰레기 이름은 저장되지 않는다. 쓰레기 저장 레코드(FCSTrashRecord, CSSaveTypes.h:926-956)에
 	// 이름 칸이 없고 복원(CSTrashActor.cpp:150-209)이 메시만 되돌려서, 불러오면 "쓰레기"로 보인다. 이름 칸 추가가 필요하다
+	// [백무송] 저장 연결 완료
+	// FCSTrashRecord에 DisplayName 칸을 추가해 쓰레기 표시 이름을 저장
+	// ACSTrashActor::CaptureSaveRecord에서 현재 이름을 기록하고 RestoreSaveRecord에서 복원
+	// 이름 칸이 없던 이전 세이브는 빈 값이므로 클래스 기본 이름을 유지
 	const FTransform SpawnTransform = LocationAndRotationOnly(ResultModel1);
 	ACSTrashActor* Trash = GetWorld()->SpawnActorDeferred<ACSTrashActor>(
 		TrashActorClass, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);

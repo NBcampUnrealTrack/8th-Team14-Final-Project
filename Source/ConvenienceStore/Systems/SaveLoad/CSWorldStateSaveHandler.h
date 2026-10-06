@@ -8,9 +8,11 @@
 class ACSDeliveryCrateActor;
 class ACSFreshnessSafeZoneActor;
 class ACSPlayerCharacter;
+class ACSTrashActor;
 class UCSSaveGame;
 class UDataTable;
 struct FCSCrateRecord;
+struct FCSTrashRecord;
 struct FCSWorldSaveRecord;
 
 // 월드 액터(Tier B) 상태의 캡처·복원을 담당하는 서브시스템
@@ -30,11 +32,11 @@ public:
 
 	// 상자 레코드로 배송 상자를 생성하고 저장 시점 상태를 적용해 반환
 	// 월드 복원과 퀵바 복원이 같은 생성 순서를 사용하도록 공개
-	static ACSDeliveryCrateActor* SpawnCrateFromRecord(
-		UWorld& InWorld,
-		const FCSCrateRecord& InRecord,
-		const FTransform& InSpawnTransform,
-		const UDataTable* FallbackProductTable);
+	static ACSDeliveryCrateActor* SpawnCrateFromRecord(UWorld& InWorld,const FCSCrateRecord& InRecord,const FTransform& InSpawnTransform,const UDataTable* FallbackProductTable);
+
+	// 쓰레기 레코드로 쓰레기를 생성하고 저장 시점의 이름·메시·물리 상태를 적용해 반환
+	// 월드 복원과 퀵바 복원이 같은 생성 순서를 사용하도록 공개
+	static ACSTrashActor* SpawnTrashFromRecord(UWorld& InWorld,const FCSTrashRecord& InRecord,const FTransform& InSpawnTransform);
 
 private:
 	void CaptureShelves(FCSWorldSaveRecord& OutRecord) const;

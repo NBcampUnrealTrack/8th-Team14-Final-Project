@@ -255,10 +255,18 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 		return;
 	}
 
+	// 퀵바 쓰레기 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
 	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
 	{
 		const ACSTrashActor* Trash = *It;
 		if (!IsValid(Trash) || Trash->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 쓰레기는 퀵바 레코드가 기록하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(Trash))
 		{
 			continue;
 		}
@@ -269,7 +277,7 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 		const AActor* ParentActor = Trash->GetAttachParentActor();
 		if (const APawn* CarrierPawn = Cast<APawn>(ParentActor))
 		{
-			// 손에 들거나 퀵바에 보관한 쓰레기는 부착 상태 대신 운반자 위치의 바닥 쓰레기로 기록
+			// 퀵바에 등록되지 않은 채 운반 중인 쓰레기는 부착 상태 대신 운반자 위치의 바닥 쓰레기로 기록
 			TrashRecord.Transform = FTransform(
 				Trash->GetActorRotation(),
 				CarrierPawn->GetActorLocation(),
@@ -451,24 +459,8 @@ void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 
 	for (const FCSTrashRecord& TrashRecord : InRecord.Trash)
 	{
-		UClass* TrashClass = TrashRecord.ActorClass.TryLoadClass<ACSTrashActor>();
-		if (TrashClass == nullptr)
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[CSSave] 쓰레기 클래스를 불러오지 못했습니다: %s"),
-				*TrashRecord.ActorClass.ToString());
-			continue;
-		}
-
-		FActorSpawnParameters SpawnParameters;
-		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		ACSTrashActor* Trash = World->SpawnActor<ACSTrashActor>(TrashClass, TrashRecord.Transform, SpawnParameters);
-		if (!IsValid(Trash))
-		{
-			continue;
-		}
-
-		Trash->RestoreSaveRecord(TrashRecord);
+		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
+		SpawnTrashFromRecord(*World, TrashRecord, TrashRecord.Transform);
 	}
 }
 
@@ -675,11 +667,7 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 	}
 }
 
-ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(
-	UWorld& InWorld,
-	const FCSCrateRecord& InRecord,
-	const FTransform& InSpawnTransform,
-	const UDataTable* FallbackProductTable)
+ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(UWorld& InWorld,const FCSCrateRecord& InRecord,const FTransform& InSpawnTransform,const UDataTable* FallbackProductTable)
 {
 	UClass* CrateClass = InRecord.ActorClass.TryLoadClass<ACSDeliveryCrateActor>();
 	if (CrateClass == nullptr)
@@ -723,6 +711,32 @@ ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(
 	// BeginPlay가 신선도를 초기화한 뒤 저장 시점 상태로 덮어씀
 	Crate->RestoreSaveRecord(InRecord);
 	return Crate;
+}
+
+ACSTrashActor* UCSWorldStateSaveHandler::SpawnTrashFromRecord(UWorld& InWorld,const FCSTrashRecord& InRecord,const FTransform& InSpawnTransform)
+{
+	// 저장된 쓰레기 클래스를 조회하고 실패하면 경고 후 생성을 생략
+	UClass* TrashClass = InRecord.ActorClass.TryLoadClass<ACSTrashActor>();
+	if (TrashClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 쓰레기 클래스를 불러오지 못했습니다: %s"),
+			*InRecord.ActorClass.ToString());
+		return nullptr;
+	}
+
+	// 다른 액터와 겹쳐도 생성되도록 충돌 처리 방식을 설정
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACSTrashActor* Trash = InWorld.SpawnActor<ACSTrashActor>(TrashClass, InSpawnTransform, SpawnParameters);
+	if (!IsValid(Trash))
+	{
+		return nullptr;
+	}
+
+	// 저장 시점의 이름·메시·충돌·물리 상태를 적용
+	Trash->RestoreSaveRecord(InRecord);
+	return Trash;
 }
 
 void UCSWorldStateSaveHandler::RestoreFacilities(const FCSWorldSaveRecord& InRecord)
