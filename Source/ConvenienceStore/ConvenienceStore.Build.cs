@@ -21,7 +21,9 @@ public class ConvenienceStore : ModuleRules
 			"Slate",
 			"SlateCore",
 			"NavigationSystem",
-			"DeveloperSettings"
+			"DeveloperSettings",
+			"LevelSequence",
+			"MovieScene"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { "Niagara" });
