@@ -26,6 +26,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "TimerManager.h"
 #include "UI/Crafting/CSCraftAutoPanelWidget.h"
@@ -40,6 +41,7 @@ namespace
 	const FName MsgTooManyKinds(TEXT("TooManyKinds"));
 	const FName MsgSlotFull(TEXT("SlotFull"));
 	const FName MsgIngredientLocked(TEXT("IngredientLocked"));
+	const FName MsgExpiredIngredient(TEXT("ExpiredIngredient"));
 
 	// 모형은 E 조준용 Visibility만 막는다
 	void SetupModelComponent(UStaticMeshComponent* Model, USceneComponent* Parent)
@@ -55,6 +57,44 @@ namespace
 	FTransform LocationAndRotationOnly(const USceneComponent* Component)
 	{
 		return FTransform(Component->GetComponentQuat(), Component->GetComponentLocation());
+	}
+
+	// 판정은 ACSProductPickupActor::IsSellable과 같다
+	int32 CountUsableCrateUnits(const ACSDeliveryCrateActor* Crate)
+	{
+		const UWorld* World = Crate->GetWorld();
+		const ACSStoreGameState* GameState = World ? World->GetGameState<ACSStoreGameState>() : nullptr;
+		if (!IsValid(GameState))
+		{
+			return Crate->GetRemainingQuantity();
+		}
+
+		const FCSProductDataRow* ProductData =
+			Crate->GetProductRow().GetRow<FCSProductDataRow>(TEXT("CountUsableCrateUnits"));
+		const bool bChecksFreshness = ProductData != nullptr &&
+			(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+				ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+		auto IsUsable = [GameState, bChecksFreshness](const FCSProductStateRecord& State)
+		{
+			const bool bExpired = State.bExpirationInitialized && State.ExpirationBusinessDay > 0 &&
+				GameState->CurrentBusinessDay >= State.ExpirationBusinessDay;
+			return !bExpired && (!bChecksFreshness || !State.bFreshnessInitialized || State.Freshness > 0);
+		};
+
+		// 포장 상자의 낱개별 상태는 세이브 기록으로만 밖에서 읽을 수 있다
+		if (Crate->IsPackingCrate())
+		{
+			FCSCrateRecord Record;
+			Crate->CaptureSaveRecord(Record);
+			int32 Count = 0;
+			for (const FCSProductStateRecord& State : Record.PackedProductStates)
+			{
+				Count += IsUsable(State) ? 1 : 0;
+			}
+			return Count;
+		}
+		const FCSProductStateRecord State = CSSaveRecordUtils::ToRecord(Crate->GetProductRuntimeState(), Crate->GetCurrentFreshness());
+		return IsUsable(State) ? Crate->GetRemainingQuantity() : 0;
 	}
 }
 
@@ -298,6 +338,11 @@ FName ACSCraftStationActor::GetPlacementRejectReason(const ACSProductPickupActor
 	if (bIngredientsLocked)
 	{
 		return MsgIngredientLocked;
+	}
+	// 손님이 안 사는 상품은 재료로도 못 쓰게 한다
+	if (!Product->IsSellable())
+	{
+		return MsgExpiredIngredient;
 	}
 
 	TSet<FName> Kinds;
@@ -772,15 +817,17 @@ TMap<FName, FCSCraftStorageStock> ACSCraftStationActor::CollectStorageStock() co
 			if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(StoredActor))
 			{
 				// 직원이 옮기려고 잡아 둔 상자를 꺼내면 직원 업무가 빈 상자를 쫓는다
-				if (IsValid(Crate) && !Crate->IsReservedByEmployee() && Crate->GetRemainingQuantity() > 0 &&
-					!Crate->GetProductId().IsNone())
+				if (IsValid(Crate) && !Crate->IsReservedByEmployee() && !Crate->GetProductId().IsNone())
 				{
-					AddStock(Crate->GetProductId(), Crate->GetRemainingQuantity());
+					if (const int32 Usable = CountUsableCrateUnits(Crate); Usable > 0)
+					{
+						AddStock(Crate->GetProductId(), Usable);
+					}
 				}
 			}
 			else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product))
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable())
 				{
 					AddStock(Product->GetProductId(), 1);
 				}
@@ -839,7 +886,7 @@ bool ACSCraftStationActor::TakeFromStorage(FName ProductId, int32 Count, TArray<
 			}
 			else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->GetProductId() == ProductId)
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable() && Product->GetProductId() == ProductId)
 				{
 					LooseProducts.Add(Product);
 				}
@@ -872,13 +919,34 @@ bool ACSCraftStationActor::TakeFromStorage(FName ProductId, int32 Count, TArray<
 	for (ACSDeliveryCrateActor* Crate : Crates)
 	{
 		ACSFreshnessSafeZoneActor* Storage = Cast<ACSFreshnessSafeZoneActor>(Crate->GetAttachParentActor());
-		while (Taken < Count && IsValid(Crate) && Crate->GetRemainingQuantity() > 0)
+		int32 Usable = CountUsableCrateUnits(Crate);
+		// 판정이 어긋나도 상한 상품만 계속 돌리지 않게 한 바퀴로 막는다
+		int32 RotationsLeft = Crate->GetRemainingQuantity();
+		while (Taken < Count && Usable > 0 && IsValid(Crate) && Crate->GetRemainingQuantity() > 0)
 		{
 			ACSProductPickupActor* Product = Crate->SpawnProductActor();
 			if (!IsValid(Product))
 			{
 				break;
 			}
+			// 상한 상품이 앞에 있으면 상자 맨 뒤로 돌려 넣고 뒤의 멀쩡한 상품을 꺼낸다
+			if (!Product->IsSellable())
+			{
+				if (!Crate->IsPackingCrate() || RotationsLeft-- <= 0 || Crate->GetRemainingQuantity() < 2)
+				{
+					Product->Destroy();
+					break;
+				}
+				Crate->ConsumeOne();
+				if (!Crate->TryAddPackedProduct(Product, nullptr))
+				{
+					// 지우면 상품 하나가 그냥 사라지니 꺼낸 자리에 남긴다
+					UE_LOG(LogTemp, Warning, TEXT("[제조] 상한 '%s'를 상자에 다시 넣지 못해 상자 자리에 남깁니다."), *ProductId.ToString());
+					break;
+				}
+				continue;
+			}
+			--Usable;
 			// 마지막 1개를 빼면 상자가 스스로 사라지므로 창고의 신선도 보호 등록을 먼저 푼다
 			if (Crate->GetRemainingQuantity() == 1 && IsValid(Storage))
 			{
