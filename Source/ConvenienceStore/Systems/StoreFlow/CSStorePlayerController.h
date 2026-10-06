@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/SlateWrapperTypes.h"
+#include "Layout/Visibility.h"
 #include "GameFramework/PlayerController.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "UI/HUD/CSInteractionPrompt.h"
@@ -22,6 +23,7 @@ class UCSSaveLoadMenuWidget;
 class UTexture2D;
 class UInputAction;
 class UInputMappingContext;
+class ACSStoreOpeningDirector;
 enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
@@ -167,6 +169,7 @@ public:
 protected:
 	virtual void SetupInputComponent() override;
 	virtual void BeginPlay() override;
+	virtual void OnPossess(APawn* InPawn) override;
 	// UI 담당자가 제작한 CSJournalWidget 기반 WBP를 지정해 주시면 됩니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Journal")
 	TSubclassOf<UCSJournalWidget> JournalWidgetClass;
@@ -213,6 +216,21 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> ActiveTemporaryTitleWidget;
 	// === End Temporary Title Screen ===
+
+	// 연출 액터를 배치하지 않으시면 시작 위치를 기준으로 기본 전경 카메라를 생성합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Opening")
+	bool bUseOpeningPresentation = true;
+	UPROPERTY(Transient)
+	TObjectPtr<ACSStoreOpeningDirector> ActiveOpeningDirector;
+	bool bOpeningPresentationActive = false;
+	bool bOpeningPresentationPlayed = false;
+	bool bOpeningPresentationRequested = false;
+	FTimerHandle OpeningStartTimer;
+	TWeakPtr<SWidget> OpeningUILayer;
+	EVisibility UILayerVisibilityBeforeOpening = EVisibility::SelfHitTestInvisible;
+	void SetOpeningUIHidden(bool bShouldHide);
+	void StartOpeningPresentation();
+	UFUNCTION() void FinishOpeningPresentation();
 
 	// 메뉴 위젯의 닫기 요청을 처리
 	UFUNCTION()
