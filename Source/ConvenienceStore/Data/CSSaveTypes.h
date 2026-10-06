@@ -972,6 +972,41 @@ struct CONVENIENCESTORE_API FCSTrashRecord
 	bool bIgnorePawnCollision = false;
 };
 
+// 월드에 놓인 아티팩트 픽업 한 개의 레코드
+// 레벨 배치 픽업과 가챠 보상 픽업을 구분 없이 기록
+USTRUCT()
+struct CONVENIENCESTORE_API FCSArtifactPickupRecord
+{
+	GENERATED_BODY()
+
+	// 픽업을 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 아티팩트 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ArtifactRow;
+
+	// 획득 시 지급할 수량
+	UPROPERTY()
+	int32 Quantity = 1;
+
+	// 픽업 액터의 월드 트랜스폼
+	// 물리로 떨어진 픽업은 메시 위치를 액터 위치로 기록
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 표시 메시의 월드 트랜스폼
+	// 행 기본 메시 배치를 다시 적용한 뒤에도 저장 시점 위치·회전·크기를 유지
+	UPROPERTY()
+	FTransform MeshWorldTransform = FTransform::Identity;
+
+	// 표시 메시가 물리 시뮬레이션 중이던 픽업 여부
+	// 가챠에서 배출된 픽업의 충돌·물리 상태를 복원 후에도 유지
+	UPROPERTY()
+	bool bSimulatingPhysics = false;
+};
+
 // 퀵바 슬롯 한 칸의 레코드
 // 도구는 클래스 경로, 상자는 상자 레코드, 쓰레기는 쓰레기 레코드로 저장
 USTRUCT()
@@ -1044,6 +1079,10 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 	// 월드에 놓인 쓰레기 레코드 목록
 	UPROPERTY()
 	TArray<FCSTrashRecord> Trash;
+
+	// 월드에 놓인 아티팩트 픽업 레코드 목록
+	UPROPERTY()
+	TArray<FCSArtifactPickupRecord> ArtifactPickups;
 
 	// 플레이어 퀵바 레코드
 	UPROPERTY()

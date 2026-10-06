@@ -44,6 +44,7 @@ private:
 	void CaptureCrates(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureFacilities(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureTrash(FCSWorldSaveRecord& OutRecord) const;
+	void CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const;
 
 	// 자금 복원 후 엔딩 조건이 다시 충족되므로 엔딩 진행 상태를 함께 기록
@@ -57,11 +58,15 @@ private:
 	// 레벨이 다시 열리며 생성된 배치 쓰레기를 포함해 월드의 모든 쓰레기를 제거
 	void DestroyAllTrash();
 
+	// 획득한 레벨 배치 픽업이 다시 나타나지 않도록 배치분을 포함해 월드의 모든 아티팩트 픽업을 제거
+	void DestroyAllArtifactPickups();
+
 	void RestoreShelves(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 	void RestoreLooseProducts(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 	void RestoreCrates(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 	void RestoreFacilities(const FCSWorldSaveRecord& InRecord);
 	void RestoreTrash(const FCSWorldSaveRecord& InRecord);
+	void RestoreArtifactPickups(const FCSWorldSaveRecord& InRecord);
 	void RestoreQuickbar(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 
 	// 월드의 플레이어 캐릭터를 조회

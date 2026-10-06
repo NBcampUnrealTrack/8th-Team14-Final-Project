@@ -10,6 +10,7 @@
 #include "Features/Ending/CSEndingActors.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Facilities/CSSaveIdComponent.h"
+#include "Features/Gacha/CSGachaArtifactPickup.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -34,16 +35,18 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 	CaptureCrates(Record);
 	CaptureFacilities(Record);
 	CaptureTrash(Record);
+	CaptureArtifactPickups(Record);
 	CaptureQuickbar(Record);
 	CaptureEnding(OutSave);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.ArtifactPickups.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -295,6 +298,38 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 	}
 }
 
+void UCSWorldStateSaveHandler::CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSGachaArtifactPickup> It(World); It; ++It)
+	{
+		// 획득 처리로 제거 중인 픽업은 기록에서 제외
+		const ACSGachaArtifactPickup* Pickup = *It;
+		if (!IsValid(Pickup) || Pickup->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 아티팩트 행이 없는 픽업은 복원해도 획득할 수 없으므로 경고 후 제외
+		if (Pickup->GetArtifactId().IsNone())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 아티팩트 픽업 %s에 아티팩트 행이 없어 저장에서 제외합니다."),
+				*Pickup->GetName());
+			continue;
+		}
+
+		FCSArtifactPickupRecord PickupRecord;
+		Pickup->CaptureSaveRecord(PickupRecord);
+		OutRecord.ArtifactPickups.Add(PickupRecord);
+	}
+}
+
 void UCSWorldStateSaveHandler::CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const
 {
 	if (const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter())
@@ -340,22 +375,25 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 
 	DestroyAllProductsAndCrates();
 	DestroyAllTrash();
+	DestroyAllArtifactPickups();
 
 	RestoreFacilities(Record);
 	RestoreShelves(Record, FallbackProductTable);
 	RestoreLooseProducts(Record, FallbackProductTable);
 	RestoreCrates(Record, FallbackProductTable);
 	RestoreTrash(Record);
+	RestoreArtifactPickups(Record);
 	RestoreQuickbar(Record, FallbackProductTable);
 	RestoreEnding(InSave);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.ArtifactPickups.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -449,6 +487,33 @@ void UCSWorldStateSaveHandler::DestroyAllTrash()
 	}
 }
 
+void UCSWorldStateSaveHandler::DestroyAllArtifactPickups()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 반복 중 액터 목록이 바뀌지 않도록 제거 대상을 먼저 수집
+	TArray<ACSGachaArtifactPickup*> PickupsToDestroy;
+	for (TActorIterator<ACSGachaArtifactPickup> It(World); It; ++It)
+	{
+		if (ACSGachaArtifactPickup* Pickup = *It; IsValid(Pickup))
+		{
+			PickupsToDestroy.Add(Pickup);
+		}
+	}
+
+	for (ACSGachaArtifactPickup* Pickup : PickupsToDestroy)
+	{
+		if (IsValid(Pickup))
+		{
+			Pickup->Destroy();
+		}
+	}
+}
+
 void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 {
 	UWorld* World = GetWorld();
@@ -461,6 +526,54 @@ void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 	{
 		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
 		SpawnTrashFromRecord(*World, TrashRecord, TrashRecord.Transform);
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreArtifactPickups(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const FCSArtifactPickupRecord& PickupRecord : InRecord.ArtifactPickups)
+	{
+		// 저장된 픽업 클래스를 조회하고 실패하면 경고 후 생성을 생략
+		UClass* PickupClass = PickupRecord.ActorClass.TryLoadClass<ACSGachaArtifactPickup>();
+		if (PickupClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 아티팩트 픽업 클래스를 불러오지 못했습니다: %s"),
+				*PickupRecord.ActorClass.ToString());
+			continue;
+		}
+
+		// 봉인석 보상 생성과 같이 BeginPlay 전에 아티팩트 행을 지정하도록 지연 생성
+		ACSGachaArtifactPickup* Pickup = World->SpawnActorDeferred<ACSGachaArtifactPickup>(
+			PickupClass,
+			PickupRecord.Transform,
+			nullptr,
+			nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!IsValid(Pickup))
+		{
+			continue;
+		}
+
+		// 행을 해석하지 못하면 획득할 수 없는 픽업이 남지 않도록 제거
+		if (!Pickup->InitializeArtifact(PickupRecord.ArtifactRow.ToHandle(), PickupRecord.Quantity))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 아티팩트 행 %s을 불러오지 못해 픽업을 생성하지 않습니다."),
+				*PickupRecord.ArtifactRow.RowName.ToString());
+			Pickup->Destroy();
+			continue;
+		}
+
+		// BeginPlay에서 테이블을 다시 등록한 뒤 저장 시점의 메시 위치와 물리 상태를 적용
+		Pickup->FinishSpawning(PickupRecord.Transform);
+		Pickup->RestoreSaveRecord(PickupRecord);
 	}
 }
 
