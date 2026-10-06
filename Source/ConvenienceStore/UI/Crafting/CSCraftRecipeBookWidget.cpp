@@ -2,6 +2,7 @@
 
 #include "Components/Image.h"
 #include "Components/PanelWidget.h"
+#include "Components/ScrollBoxSlot.h"
 #include "Components/TextBlock.h"
 #include "Components/WidgetSwitcher.h"
 #include "Engine/Texture2D.h"
@@ -59,7 +60,8 @@ UCSCraftListRowWidget* UCSCraftRecipeBookWidget::AddRow(
 	const FText& Name,
 	const FText& Detail,
 	FName IconProductId,
-	bool bSelectable)
+	bool bSelectable,
+	UTexture2D* FallbackIcon)
 {
 	const ACSCraftStationActor* StationActor = Station.Get();
 	UCSCraftListRowWidget* Row = RowClass ? CreateWidget<UCSCraftListRowWidget>(this, RowClass) : nullptr;
@@ -69,10 +71,17 @@ UCSCraftListRowWidget* UCSCraftRecipeBookWidget::AddRow(
 	}
 	UTexture2D* Icon = !IconProductId.IsNone() && IsValid(StationActor)
 		? StationActor->FindProductIcon(IconProductId).LoadSynchronous()
-		: nullptr;
+		: FallbackIcon;
 	Row->SetEntry(Key, Name, Detail, -1, Icon, bSelectable,
 		FCSCraftListRowSelected::CreateUObject(this, &UCSCraftRecipeBookWidget::SelectEntry));
-	Panel->AddChild(Row);
+	UPanelSlot* AddedSlot = Panel->AddChild(Row);
+	if (Panel == AttemptList)
+	{
+		if (UScrollBoxSlot* ScrollSlot = Cast<UScrollBoxSlot>(AddedSlot))
+		{
+			ScrollSlot->SetPadding(FMargin(0.0f, 0.0f, 0.0f, AttemptCardSpacing));
+		}
+	}
 	return Row;
 }
 
@@ -92,13 +101,16 @@ void UCSCraftRecipeBookWidget::RefreshList()
 	}
 
 	TitleText->SetText(StationActor->GetMessage(TEXT("RecipeBookTitle")));
-	AddRow(RecipeList, RecentAttemptsKey, StationActor->GetMessage(TEXT("RecipeBookRecentAttempts")), FText::GetEmpty(), NAME_None, true);
+	AddRow(RecipeList, RecentAttemptsKey, StationActor->GetMessage(TEXT("RecipeBookRecentAttempts")), FText::GetEmpty(),
+		NAME_None, true, RecentAttemptsIcon);
 
 	// 장부 제조 탭이 이름을 보여 주며 도감으로 안내하므로 제조 전용은 발견 전에도 이름이 보인다
 	for (const FName RowName : Crafting->GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
 	{
 		const FCSCraftRecipeRow* Recipe = Crafting->FindRecipeByRowName(RowName);
-		AddRow(RecipeList, RowName, Crafting->GetProductDisplayName(Recipe->ResultProduct), FText::GetEmpty(), Recipe->ResultProduct, true);
+		const bool bShowUnknownIcon = IsValid(UnknownRecipeIcon) && !Crafting->GetDiscoveredRecipeRows().Contains(RowName);
+		AddRow(RecipeList, RowName, Crafting->GetProductDisplayName(Recipe->ResultProduct), FText::GetEmpty(),
+			bShowUnknownIcon ? NAME_None : Recipe->ResultProduct, true, UnknownRecipeIcon);
 	}
 
 	// 발견 전의 양념·꽝은 개수 자체가 단서가 되어 목록에 넣지 않는다
@@ -126,6 +138,14 @@ void UCSCraftRecipeBookWidget::RefreshList()
 
 void UCSCraftRecipeBookWidget::SelectEntry(FName EntryKey)
 {
+	for (UWidget* Child : RecipeList->GetAllChildren())
+	{
+		if (UCSCraftListRowWidget* Row = Cast<UCSCraftListRowWidget>(Child))
+		{
+			Row->SetSelected(Row->GetKey() == EntryKey);
+		}
+	}
+
 	if (EntryKey == RecentAttemptsKey)
 	{
 		ShowRecentAttempts();
@@ -255,7 +275,11 @@ void UCSCraftRecipeBookWidget::ShowRecentAttempts()
 	const TArray<FCSCraftAttemptRecord>& Attempts = Crafting->GetRecentAttempts();
 	if (Attempts.IsEmpty())
 	{
-		AddRow(AttemptList, NAME_None, StationActor->GetMessage(TEXT("RecipeBookNoAttempts")), FText::GetEmpty(), NAME_None, false);
+		if (UCSCraftListRowWidget* Row = AddRow(AttemptList, NAME_None,
+			StationActor->GetMessage(TEXT("RecipeBookNoAttempts")), FText::GetEmpty(), NAME_None, false, RecentAttemptsIcon))
+		{
+			Row->SetAttemptPresentation(FText::GetEmpty(), FText::GetEmpty(), false);
+		}
 		return;
 	}
 
@@ -278,9 +302,17 @@ void UCSCraftRecipeBookWidget::ShowRecentAttempts()
 		Extra.Add(TEXT("PopHits"), FText::AsNumber(Attempt.PopHits));
 		Extra.Add(TEXT("PopCount"), FText::AsNumber(Attempt.PopCount));
 		Extra.Add(TEXT("Result"), Result);
-		const FText Line = FormatIngredientLine(TEXT("RecipeBookAttemptLine"), Extra,
+		const FText Ingredients = FormatIngredientLine(TEXT("RecipeBookAttemptIngredients"), Extra,
 			Attempt.IngredientA, Attempt.IngredientACount, Attempt.IngredientB, Attempt.IngredientBCount,
 			Attempt.Heat, Attempt.StirCount);
-		AddRow(AttemptList, NAME_None, Line, Detail, NAME_None, false);
+		const FText Method = FormatIngredientLine(TEXT("RecipeBookAttemptMethod"), Extra,
+			Attempt.IngredientA, Attempt.IngredientACount, Attempt.IngredientB, Attempt.IngredientBCount,
+			Attempt.Heat, Attempt.StirCount);
+		const FText ResultLine = FText::Format(StationActor->GetMessage(TEXT("RecipeBookAttemptResult")), Extra);
+		if (UCSCraftListRowWidget* Row = AddRow(AttemptList, NAME_None, Ingredients, Method, NAME_None, false, RecentAttemptsIcon))
+		{
+			const bool bSucceeded = Attempt.Outcome == ECSCraftOutcome::Success || Attempt.Outcome == ECSCraftOutcome::GreatSuccess;
+			Row->SetAttemptPresentation(ResultLine, Detail, bSucceeded);
+		}
 	}
 }
