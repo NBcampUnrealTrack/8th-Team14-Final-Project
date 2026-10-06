@@ -63,6 +63,28 @@ bool UCSQuickbarInventoryComponent::RemoveTool(ACSUsableToolActor* ToolActor)
 	return RemoveItem(ToolActor);
 }
 
+bool UCSQuickbarInventoryComponent::CanAddItem(const AActor* ItemActor) const
+{
+	return IsValid(ItemActor) && (ContainsItem(ItemActor) ||
+		Slots.ContainsByPredicate([](const FCSQuickbarSlot& Slot) { return !IsValid(Slot.ItemActor); }));
+}
+
+bool UCSQuickbarInventoryComponent::MoveItemToSlot(AActor* ItemActor, int32 TargetSlotIndex)
+{
+	if (!IsValid(ItemActor) || !Slots.IsValidIndex(TargetSlotIndex)) return false;
+	const int32 SourceSlotIndex = Slots.IndexOfByPredicate([ItemActor](const FCSQuickbarSlot& Slot)
+	{
+		return Slot.ItemActor == ItemActor;
+	});
+	if (SourceSlotIndex == INDEX_NONE) return false;
+	if (SourceSlotIndex != TargetSlotIndex)
+	{
+		Slots.Swap(SourceSlotIndex, TargetSlotIndex);
+		OnQuickbarChanged.Broadcast();
+	}
+	return true;
+}
+
 bool UCSQuickbarInventoryComponent::RemoveItem(AActor* ItemActor)
 {
 	for (FCSQuickbarSlot& Slot : Slots)
