@@ -21,6 +21,13 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
+#include "Features/Store/CSStoreOpeningDirector.h"
+#include "EngineUtils.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "TimerManager.h"
+#include "Engine/GameViewportClient.h"
+#include "Slate/SGameLayerManager.h"
 
 // 게임 입력 상태에서는 Tab/C/Esc로 각 화면을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
@@ -172,6 +179,30 @@ void ACSStorePlayerController::BeginPlay()
 			this, &ACSStorePlayerController::HandleClosingWarningRequested);
 		UpdateClosingInputMode();
 	}
+
+	// 타이틀 없이 에디터에서 실행하셔도 새 게임 전경을 한 번 재생합니다.
+	// 불러온 게임은 기존 위치와 시점을 유지하도록 연출을 생략합니다.
+	const UCSSaveSubsystem* SaveSubsystem = GetGameInstance()
+		? GetGameInstance()->GetSubsystem<UCSSaveSubsystem>() : nullptr;
+	if (IsLocalPlayerController() && !IsValid(ActiveTemporaryTitleWidget) &&
+		(!SaveSubsystem || !SaveSubsystem->HasPendingLoad()))
+	{
+		bOpeningPresentationRequested = true;
+		OpeningStartTimer = GetWorldTimerManager().SetTimerForNextTick(
+			this, &ThisClass::StartOpeningPresentation);
+	}
+}
+
+void ACSStorePlayerController::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+	if (HasActorBegunPlay() && bOpeningPresentationRequested && !bOpeningPresentationPlayed)
+	{
+		// 플레이어 생성이 늦어져도 기본 카메라 설정이 끝난 다음 프레임에 연출을 시작합니다.
+		GetWorldTimerManager().ClearTimer(OpeningStartTimer);
+		OpeningStartTimer = GetWorldTimerManager().SetTimerForNextTick(
+			this, &ThisClass::StartOpeningPresentation);
+	}
 }
 
 // === Temporary Title Screen: 정식 타이틀 도입 시 아래 세 함수 전체 제거 ===
@@ -214,8 +245,92 @@ void ACSStorePlayerController::ShowTemporaryTitleScreen()
 
 void ACSStorePlayerController::StartGameFromTemporaryTitle()
 {
+	if (bOpeningPresentationPlayed || bOpeningPresentationActive) return;
 	// 이 버튼은 최초 생성된 월드를 진행하므로 첫날 기록을 유지합니다. 별도의 새 게임 시작 시에는 ResetJournal을 호출해 주시면 됩니다.
+	bOpeningPresentationRequested = true;
+	StartOpeningPresentation();
 	CloseTemporaryTitleScreen();
+}
+
+void ACSStorePlayerController::StartOpeningPresentation()
+{
+	if (!bUseOpeningPresentation || bOpeningPresentationPlayed ||
+		!IsLocalPlayerController() || !IsValid(GetPawn())) return;
+	for (TActorIterator<ACSStoreOpeningDirector> It(GetWorld()); It; ++It)
+	{
+		ActiveOpeningDirector = *It;
+		break;
+	}
+	if (!IsValid(ActiveOpeningDirector))
+	{
+		// 정확한 가게 구도는 레벨에 연출 액터를 배치하여 직접 조정해 주세요.
+		const FVector Forward = FRotator(0.0f, GetControlRotation().Yaw, 0.0f).Vector();
+		const FVector Location = GetPawn()->GetActorLocation() - Forward * 650.0f + FVector(0.0f, 0.0f, 300.0f);
+		const FVector Focus = GetPawn()->GetActorLocation() + Forward * 350.0f;
+		ActiveOpeningDirector = GetWorld()->SpawnActor<ACSStoreOpeningDirector>(
+			ACSStoreOpeningDirector::StaticClass(), Location, (Focus - Location).Rotation());
+	}
+	if (!IsValid(ActiveOpeningDirector)) return;
+	bOpeningPresentationPlayed = true;
+	bOpeningPresentationActive = true;
+	SetStoreHUDHidden(this, true);
+	SetStoreTopBarHidden(this, true);
+	FlushPressedKeys();
+	if (ACharacter* PlayerCharacter = Cast<ACharacter>(GetPawn()))
+	{
+		PlayerCharacter->StopJumping();
+		PlayerCharacter->ConsumeMovementInputVector();
+		PlayerCharacter->GetCharacterMovement()->StopMovementImmediately();
+	}
+	UpdateClosingInputMode();
+	SetOpeningUIHidden(true);
+	ActiveOpeningDirector->OnOpeningFinished.AddDynamic(this, &ThisClass::FinishOpeningPresentation);
+	if (!ActiveOpeningDirector->PlayOpening(this)) FinishOpeningPresentation();
+}
+
+void ACSStorePlayerController::FinishOpeningPresentation()
+{
+	if (!bOpeningPresentationActive) return;
+	if (IsValid(ActiveOpeningDirector))
+	{
+		ActiveOpeningDirector->OnOpeningFinished.RemoveDynamic(this, &ThisClass::FinishOpeningPresentation);
+	}
+	ActiveOpeningDirector = nullptr;
+	bOpeningPresentationActive = false;
+	SetStoreHUDHidden(this, false);
+	SetStoreTopBarHidden(this, false);
+	SetOpeningUIHidden(false);
+	UpdateClosingInputMode();
+	if (!IsActorBeingDestroyed())
+	{
+		TryShowQueuedDeliveryToast();
+		TryShowPendingClosingAnnouncement();
+	}
+}
+
+void ACSStorePlayerController::SetOpeningUIHidden(bool bShouldHide)
+{
+	if (bShouldHide)
+	{
+		UGameViewportClient* ViewportClient = GetWorld()->GetGameViewport();
+		if (!ViewportClient) return;
+		const TSharedPtr<IGameLayerManager> LayerManager = ViewportClient->GetGameLayerManager();
+		if (!LayerManager.IsValid()) return;
+		const TSharedRef<SWidget> UILayer = LayerManager->AsWidget();
+		OpeningUILayer = UILayer;
+		UILayerVisibilityBeforeOpening = UILayer->GetVisibility();
+		// UI 전체를 숨겨 오프닝 중 새로 생성되는 튜토리얼과 알림도 표시되지 않게 합니다.
+		UILayer->SetVisibility(EVisibility::Hidden);
+	}
+	else
+	{
+		// 오프닝과 카메라 복귀가 끝나면 각 위젯의 상태를 유지한 채 UI 표시를 복원합니다.
+		if (const TSharedPtr<SWidget> UILayer = OpeningUILayer.Pin())
+		{
+			UILayer->SetVisibility(UILayerVisibilityBeforeOpening);
+		}
+		OpeningUILayer.Reset();
+	}
 }
 
 void ACSStorePlayerController::ToggleSaveLoadMenu()
@@ -291,6 +406,8 @@ void ACSStorePlayerController::CloseTemporaryTitleScreen()
 
 void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(OpeningStartTimer);
+	FinishOpeningPresentation();
 	CloseJournal();
 	CloseSettings();
 	CloseTemporaryTitleScreen();
@@ -648,7 +765,7 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 	const bool bHasGameplayUIInputLock = HasGameplayUIInputLock();
 	const bool bShouldUseUIInput = bIsClosingUIOpen || bHasGameplayUIInputLock;
 
-	bShowMouseCursor = bShouldUseUIInput &&
+	bShowMouseCursor = !bOpeningPresentationActive && bShouldUseUIInput &&
 		(!IsSleepTransitionActive() || IsValid(ActiveSleepTransitionWidget));
 
 	// 단계와 업무 이벤트가 같은 입력 잠금을 여러 번 요청할 수 있으므로 먼저 초기화합니다.
@@ -661,7 +778,12 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 		SetIgnoreLookInput(true);
 	}
 
-	if (IsSleepTransitionActive())
+	if (bOpeningPresentationActive)
+	{
+		// 전경 연출과 카메라 복귀가 끝날 때까지 이동과 메뉴 입력을 막습니다.
+		SetInputMode(FInputModeUIOnly());
+	}
+	else if (IsSleepTransitionActive())
 	{
 		// 날짜/단계 변경 이벤트가 와도 Fade가 끝날 때까지 모든 게임 입력을 차단합니다.
 		FInputModeUIOnly InputMode;
@@ -809,7 +931,7 @@ bool ACSStorePlayerController::IsGameplayUIInputLocked() const
 
 bool ACSStorePlayerController::HasGameplayUIInputLock() const
 {
-	return IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
+	return bOpeningPresentationActive || IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
 		[](const TObjectPtr<UUserWidget>& Widget)
 		{
 			return IsValid(Widget);
@@ -818,7 +940,7 @@ bool ACSStorePlayerController::HasGameplayUIInputLock() const
 
 bool ACSStorePlayerController::IsCriticalDeliveryToastUIOpen() const
 {
-	return IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
+	return bOpeningPresentationActive || IsSleepTransitionActive() || GameplayUIInputLockWidgets.ContainsByPredicate(
 		[](const TObjectPtr<UUserWidget>& Widget)
 		{
 			return IsValid(Widget) && Widget->IsA(UCSDailySummaryWidget::StaticClass());
