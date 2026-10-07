@@ -5,6 +5,7 @@
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "Features/Facilities/CSBuildableFacility.h"
+#include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Tutorial/CSTutorialShelfSpawnPoint.h"
@@ -13,6 +14,7 @@
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/Ordering/CSOrderSubsystem.h"
 #include "Systems/SaveLoad/CSSaveSubsystem.h"
@@ -21,6 +23,7 @@
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
+#include "UI/Tutorial/CSTutorialChoiceWidget.h"
 #include "UI/Tutorial/CSTutorialDialogueWidgetBase.h"
 #include "UI/Tutorial/CSTutorialObjectiveWidgetBase.h"
 
@@ -39,6 +42,19 @@ static constexpr int32 MaxTitleScreenWaitAttempts = 1200;
 
 // 재시도 사이 간격(초). 0.25초 * 1200회 = 최대 5분까지 대기
 static constexpr float TitleScreenWaitRetryInterval = 0.25f;
+
+namespace
+{
+	// 정리할 때 이 태그로 튜토리얼이 준 물건과 그걸로 만든 결과물을 찾는다
+	const FName TutorialCraftItemTag(TEXT("TutorialCraftItem"));
+	// 레벨에서 제조대가 있는 건물에 붙여 둔 태그
+	const FName TutorialCraftHouseTag(TEXT("TutorialCraftHouse"));
+	// 침대가 있는 건물. 침대는 실내라 밖에서 외곽선이 안 보여서 건물을 강조한다
+	const FName TutorialHomeHouseTag(TEXT("TutorialHomeHouse"));
+	const FName TutorialRetryMessageRow(TEXT("TutorialRetry"));
+	// 잎 우산 재료. 첫 제조를 정답 레시피로 안내한다
+	const TArray<FName> TutorialIngredientIds = { TEXT("TOI_ElfHerbSoap"), TEXT("SNK_SlimeJelly") };
+}
 
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
 static void DebugAdvanceTutorialStepCommand(const TArray<FString>& Args, UWorld* World)
@@ -168,6 +184,8 @@ void UCSTutorialSubsystem::Deinitialize()
 	UnsubscribeFromOrderSubsystem();
 	UnsubscribeFromStoreGameState();
 	UnsubscribeFromCustomerRuntimeSubsystem();
+	UnsubscribeFromCraftingSubsystem();
+	CloseChoiceWidget();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -187,6 +205,8 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	StockShelvesPlacedCount = 0;
 	bTutorialShelfSpawned = false;
 	bTutorialCratesSpawned = false;
+	bCraftTutorialAccepted = false;
+	bSkippingCraftBundle = false;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -227,6 +247,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToOrderSubsystem();
 	SubscribeToStoreGameState();
 	SubscribeToCustomerRuntimeSubsystem();
+	SubscribeToCraftingSubsystem();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -243,8 +264,18 @@ void UCSTutorialSubsystem::AdvanceStep()
 		return;
 	}
 
+	HandleStepEnded();
+
 	const ECSTutorialPart FinishedPart = StepRows[CurrentStepIndex]->Part;
-	const int32 NextIndex = CurrentStepIndex + 1;
+	int32 NextIndex = CurrentStepIndex + 1;
+	if (bSkippingCraftBundle)
+	{
+		bSkippingCraftBundle = false;
+		while (StepRows.IsValidIndex(NextIndex) && IsCraftBundleStep(StepRows[NextIndex]->StepId))
+		{
+			++NextIndex;
+		}
+	}
 
 	// 다음 행이 없거나, 있어도 소속 Part가 지금과 다르면 지금 Part는 여기서 끝난 것으로 봄
 	// (다음 Part 진입은 HandlePartFinished가 아니라 각 Part의 실제 트리거가 맡음)
@@ -261,6 +292,7 @@ void UCSTutorialSubsystem::AdvanceStep()
 	UpdateHighlightMarkersForCurrentStep();
 	TrySpawnTutorialShelfDelivery();
 	TrySpawnTutorialCrateDeliveries();
+	HandleStepStarted();
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -321,6 +353,8 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromOrderSubsystem();
 	UnsubscribeFromStoreGameState();
 	UnsubscribeFromCustomerRuntimeSubsystem();
+	CleanUpCraftTutorial();
+	UnsubscribeFromCraftingSubsystem();
 	CloseTutorialWidgets();
 }
 
@@ -783,6 +817,14 @@ void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int
 
 void UCSTutorialSubsystem::DebugForceAdvanceStep()
 {
+	// 선택 창은 예를 고른 것으로 넘긴다. 제조 스텝을 이어서 확인할 수 있게
+	if (StepRows.IsValidIndex(CurrentStepIndex) &&
+		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::CraftChoice)
+	{
+		HandleTutorialChoiceMade(true);
+		return;
+	}
+
 	if (StepRows.IsValidIndex(CurrentStepIndex) &&
 		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::CleanTrash)
 	{
@@ -806,6 +848,12 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 
 void UCSTutorialSubsystem::DebugSkipTutorial()
 {
+	// 설정창 건너뛰기도 여기로 온다. 끝난 뒤에 누르면 플레이 중에 생긴 쓰레기까지 지워진다
+	if (bTutorialCompleted)
+	{
+		return;
+	}
+
 	// 어느 스텝에서 부르든 안전하게: 남아있을 수 있는 쓰레기/선반/상자 외곽선을 먼저 정리하고 완전히 종료
 	DebugDestroyRemainingTrash();
 	DebugHideTutorialShelfHighlight();
@@ -1320,6 +1368,19 @@ void UCSTutorialSubsystem::HandleStoreOpenStateChanged(bool bNewStoreOpen)
 
 void UCSTutorialSubsystem::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
+	// 3부 도중 다음 날로 넘어가면 안내와 튜토리얼 물건이 2일차까지 남는다.
+	// 1일차 시작에도 Preparation이 오므로 3부에 들어선 뒤에만 끝낸다
+	if (NewPhase == ECStorePhase::Preparation)
+	{
+		const bool bInPart3 = bPart3EntryScheduled ||
+			(StepRows.IsValidIndex(CurrentStepIndex) && StepRows[CurrentStepIndex]->Part == ECSTutorialPart::PostClose);
+		if (!bTutorialCompleted && bInPart3)
+		{
+			CompleteTutorial();
+		}
+		return;
+	}
+
 	if (NewPhase != ECStorePhase::ClosingFreeRoam || bTutorialCompleted || bPart3EntryScheduled)
 	{
 		return;
@@ -1370,6 +1431,7 @@ void UCSTutorialSubsystem::EnterPart3()
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
+	HandleStepStarted();
 }
 
 void UCSTutorialSubsystem::HandleInnerThoughtShown()
@@ -1555,4 +1617,383 @@ void UCSTutorialSubsystem::HandleShelfItemPlaced(AActor* PlacedItem, int32 SlotI
 	NotifyObjectiveProgress(
 		ECSTutorialStepId::StockShelves,
 		StockShelvesPlacedCount);
+}
+
+bool UCSTutorialSubsystem::ShouldBlockSleep(FText& OutMessage) const
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return false;
+	}
+
+	// 마감 안내가 끝나기 전에는 현재 스텝이 아직 1부 행이라 예약 여부도 같이 본다
+	const FCSTutorialStepRow& Row = *StepRows[CurrentStepIndex];
+	const bool bInPart3 = bPart3EntryScheduled || Row.Part == ECSTutorialPart::PostClose;
+	if (!bInPart3 || Row.StepId == ECSTutorialStepId::ApproachClosingBell)
+	{
+		return false;
+	}
+
+	OutMessage = Row.Part == ECSTutorialPart::PostClose && !Row.SleepBlockedText.IsEmpty()
+		? Row.SleepBlockedText
+		: NSLOCTEXT("Tutorial", "SleepBlocked", "아직 오늘 할 일이 남아 있어요.");
+	return true;
+}
+
+bool UCSTutorialSubsystem::IsCraftBundleStep(ECSTutorialStepId StepId)
+{
+	// 선택 창에서 아니요를 고르면 이 스텝들을 시작하지 않고 건너뛴다
+	return StepId == ECSTutorialStepId::CraftAddIngredients ||
+		StepId == ECSTutorialStepId::CraftBrew ||
+		StepId == ECSTutorialStepId::CraftRecipeBook ||
+		StepId == ECSTutorialStepId::CraftWrapUp;
+}
+
+void UCSTutorialSubsystem::HandleStepStarted()
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	const FCSTutorialStepRow& Row = *StepRows[CurrentStepIndex];
+	auto FindTaggedActors = [this](FName Tag)
+	{
+		TArray<AActor*> Found;
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				if (IsValid(*It) && It->ActorHasTag(Tag))
+				{
+					Found.Add(*It);
+				}
+			}
+		}
+		return Found;
+	};
+
+	switch (Row.StepId)
+	{
+	case ECSTutorialStepId::CraftMoveToHouse:
+		for (AActor* House : FindTaggedActors(TutorialCraftHouseTag))
+		{
+			AttachCraftMarker(House, Row.MarkerLabelText);
+		}
+		break;
+	case ECSTutorialStepId::ApproachClosingBell:
+		// 라벨은 침대 마커가 이미 띄우므로 건물은 외곽선만
+		for (AActor* House : FindTaggedActors(TutorialHomeHouseTag))
+		{
+			AttachCraftMarker(House, FText::GetEmpty());
+		}
+		break;
+	case ECSTutorialStepId::CraftChoice:
+		OpenChoiceWidget(Row);
+		break;
+	case ECSTutorialStepId::CraftAddIngredients:
+		for (ACSProductPickupActor* Ingredient : PlaceTutorialIngredients())
+		{
+			AttachCraftMarker(Ingredient, FText::GetEmpty());
+		}
+		if (IsValid(SubscribedCraftingSubsystem))
+		{
+			AttachCraftMarker(SubscribedCraftingSubsystem->GetCraftStationActor(), FText::GetEmpty());
+			// 튜토리얼 대화창 힌트가 클로즈업 키 안내·정보 창과 같은 자리에 겹친다
+			SubscribedCraftingSubsystem->SetCraftCloseupGuidesHidden(true);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void UCSTutorialSubsystem::HandleStepEnded()
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	switch (StepRows[CurrentStepIndex]->StepId)
+	{
+	case ECSTutorialStepId::CraftMoveToHouse:
+	case ECSTutorialStepId::CraftAddIngredients:
+	case ECSTutorialStepId::ApproachClosingBell:
+		RemoveCraftMarkers();
+		break;
+	case ECSTutorialStepId::CraftChoice:
+		CloseChoiceWidget();
+		break;
+	case ECSTutorialStepId::CraftRecipeBook:
+		// 만든 잎 우산을 회수한다. 도감을 본 뒤라 결과 슬롯을 비워도 된다
+		if (IsValid(SubscribedCraftingSubsystem))
+		{
+			SubscribedCraftingSubsystem->ClearCraftStationPot();
+		}
+		break;
+	case ECSTutorialStepId::CraftWrapUp:
+		CleanUpCraftTutorial();
+		break;
+	default:
+		break;
+	}
+}
+
+void UCSTutorialSubsystem::SubscribeToCraftingSubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSCraftingSubsystem* CraftingSubsystem = World->GetSubsystem<UCSCraftingSubsystem>())
+		{
+			SubscribedCraftingSubsystem = CraftingSubsystem;
+			CraftingSubsystem->OnCraftIngredientAdded.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleCraftIngredientAdded);
+			CraftingSubsystem->OnManualCraftFinished.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleManualCraftFinished);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromCraftingSubsystem()
+{
+	if (IsValid(SubscribedCraftingSubsystem))
+	{
+		SubscribedCraftingSubsystem->OnCraftIngredientAdded.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleCraftIngredientAdded);
+		SubscribedCraftingSubsystem->OnManualCraftFinished.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleManualCraftFinished);
+	}
+
+	SubscribedCraftingSubsystem = nullptr;
+}
+
+void UCSTutorialSubsystem::OpenChoiceWidget(const FCSTutorialStepRow& Row)
+{
+	CloseChoiceWidget();
+
+	ACSStorePlayerController* PlayerController = IsValid(SubscribedPlayerController)
+		? SubscribedPlayerController.Get()
+		: Cast<ACSStorePlayerController>(GetWorld() != nullptr ? GetWorld()->GetFirstPlayerController() : nullptr);
+	UClass* ChoiceClass = Row.ChoiceWidgetClass.LoadSynchronous();
+	if (!IsValid(PlayerController) || ChoiceClass == nullptr)
+	{
+		// 창 없이 멈춰 있으면 튜토리얼이 진행되지 않아서 예로 넘긴다
+		UE_LOG(LogTemp, Warning, TEXT("[Tutorial] 선택 창을 띄우지 못해 예를 고른 것으로 진행합니다. ChoiceWidgetClass를 확인하세요."));
+		HandleTutorialChoiceMade(true);
+		return;
+	}
+
+	ChoiceWidgetInstance = CreateWidget<UCSTutorialChoiceWidget>(PlayerController, ChoiceClass);
+	if (!IsValid(ChoiceWidgetInstance))
+	{
+		HandleTutorialChoiceMade(true);
+		return;
+	}
+
+	ChoiceWidgetInstance->SetTexts(Row.PromptText, Row.ChoiceYesText, Row.ChoiceNoText);
+	ChoiceWidgetInstance->OnChoiceMade.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleTutorialChoiceMade);
+	ChoiceWidgetInstance->AddToViewport(TutorialWidgetZOrder + 1);
+	PlayerController->SetGameplayUIInputLock(ChoiceWidgetInstance, true);
+
+	// 같은 질문이 하단 대화창에도 떠서 겹친다
+	ClearTutorialDisplay();
+}
+
+void UCSTutorialSubsystem::CloseChoiceWidget()
+{
+	if (!IsValid(ChoiceWidgetInstance))
+	{
+		ChoiceWidgetInstance = nullptr;
+		return;
+	}
+
+	UCSTutorialChoiceWidget* Widget = ChoiceWidgetInstance;
+	ChoiceWidgetInstance = nullptr;
+	Widget->OnChoiceMade.RemoveDynamic(this, &UCSTutorialSubsystem::HandleTutorialChoiceMade);
+	if (ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(Widget->GetOwningPlayer()))
+	{
+		PlayerController->SetGameplayUIInputLock(Widget, false);
+	}
+	Widget->RemoveFromParent();
+}
+
+void UCSTutorialSubsystem::HandleTutorialChoiceMade(bool bYes)
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::CraftChoice)
+	{
+		return;
+	}
+
+	bCraftTutorialAccepted = bYes;
+	bSkippingCraftBundle = !bYes;
+	NotifyStepCompleted(ECSTutorialStepId::CraftChoice);
+}
+
+TArray<ACSProductPickupActor*> UCSTutorialSubsystem::PlaceTutorialIngredients()
+{
+	if (!IsValid(SubscribedCraftingSubsystem))
+	{
+		return {};
+	}
+
+	TArray<ACSProductPickupActor*> Ingredients = SubscribedCraftingSubsystem->PlaceProductsOnCraftCircle(TutorialIngredientIds);
+	for (ACSProductPickupActor* Ingredient : Ingredients)
+	{
+		Ingredient->Tags.AddUnique(TutorialCraftItemTag);
+		Ingredient->Tags.AddUnique(CSProductTags::TemporaryProduct);
+	}
+	return Ingredients;
+}
+
+void UCSTutorialSubsystem::AttachCraftMarker(AActor* Target, const FText& Label)
+{
+	if (!IsValid(Target) || !IsValid(Target->GetRootComponent()))
+	{
+		return;
+	}
+
+	// 동적으로 만든 마커에는 라벨 위젯이 없어서 레벨의 마커가 쓰는 위젯을 빌린다. 없으면 외곽선만 나온다
+	TSubclassOf<UUserWidget> LabelWidgetClass;
+	if (!Label.IsEmpty())
+	{
+		for (TActorIterator<AActor> It(GetWorld()); It && LabelWidgetClass == nullptr; ++It)
+		{
+			if (const UCSTutorialMarkerComponent* Existing = It->FindComponentByClass<UCSTutorialMarkerComponent>())
+			{
+				LabelWidgetClass = Existing->GetWidgetClass();
+			}
+		}
+	}
+
+	UCSTutorialMarkerComponent* Marker = NewObject<UCSTutorialMarkerComponent>(Target);
+	if (!IsValid(Marker))
+	{
+		return;
+	}
+	if (LabelWidgetClass != nullptr)
+	{
+		Marker->SetWidgetClass(LabelWidgetClass);
+	}
+	Marker->SetupAttachment(Target->GetRootComponent());
+	Marker->RegisterComponent();
+	Marker->ShowMarker(Label);
+	CraftMarkerComponents.Add(Marker);
+}
+
+void UCSTutorialSubsystem::RemoveCraftMarkers()
+{
+	for (UCSTutorialMarkerComponent* Marker : CraftMarkerComponents)
+	{
+		if (IsValid(Marker))
+		{
+			Marker->HideMarker();
+			Marker->DestroyComponent();
+		}
+	}
+
+	CraftMarkerComponents.Reset();
+}
+
+void UCSTutorialSubsystem::HandleCraftIngredientAdded(int32 IngredientCount)
+{
+	// 1부 상자처럼 집을 때 끄는 신호가 없어서 솥에 들어가 숨겨진 재료의 마커를 끈다
+	for (UCSTutorialMarkerComponent* Marker : CraftMarkerComponents)
+	{
+		if (IsValid(Marker) && IsValid(Marker->GetOwner()) && Marker->GetOwner()->IsHidden())
+		{
+			Marker->HideMarker();
+		}
+	}
+
+	if (!StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::CraftAddIngredients)
+	{
+		return;
+	}
+
+	NotifyObjectiveProgress(ECSTutorialStepId::CraftAddIngredients, IngredientCount);
+}
+
+void UCSTutorialSubsystem::HandleManualCraftFinished(ECSCraftOutcome Outcome)
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex) ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::CraftBrew ||
+		!IsValid(SubscribedCraftingSubsystem))
+	{
+		return;
+	}
+
+	const bool bSucceeded = Outcome == ECSCraftOutcome::Success || Outcome == ECSCraftOutcome::GreatSuccess;
+	if (bSucceeded || Outcome == ECSCraftOutcome::Junk)
+	{
+		SubscribedCraftingSubsystem->AddTagsToCraftResults({ TutorialCraftItemTag, CSProductTags::TemporaryProduct });
+	}
+
+	if (bSucceeded)
+	{
+		NotifyStepCompleted(ECSTutorialStepId::CraftBrew);
+		return;
+	}
+
+	PlaceTutorialIngredients();
+	// 지금 띄우면 제조대가 바로 뒤에 띄우는 결과 문구에 덮인다
+	if (UWorld* World = GetWorld())
+	{
+		TWeakObjectPtr<UCSTutorialSubsystem> WeakThis(this);
+		World->GetTimerManager().SetTimerForNextTick([WeakThis]()
+		{
+			if (WeakThis.IsValid() && IsValid(WeakThis->SubscribedCraftingSubsystem))
+			{
+				WeakThis->SubscribedCraftingSubsystem->ShowCraftStationMessage(TutorialRetryMessageRow, false);
+			}
+		});
+	}
+}
+
+void UCSTutorialSubsystem::CleanUpCraftTutorial()
+{
+	CloseChoiceWidget();
+
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	if (UCSCraftingSubsystem* CraftingSubsystem = World->GetSubsystem<UCSCraftingSubsystem>())
+	{
+		CraftingSubsystem->SetCraftCloseupGuidesHidden(false);
+		CraftingSubsystem->CloseCraftStationPanels();
+		// 아니요를 골랐으면 솥에 튜토리얼 물건이 없고, 플레이어가 넣어 둔 재료만 있을 수 있다
+		if (bCraftTutorialAccepted)
+		{
+			CraftingSubsystem->ClearCraftStationPot();
+		}
+	}
+	bCraftTutorialAccepted = false;
+
+	TArray<ACSProductPickupActor*> TutorialItems;
+	for (TActorIterator<ACSProductPickupActor> It(World); It; ++It)
+	{
+		if (IsValid(*It) && It->ActorHasTag(TutorialCraftItemTag))
+		{
+			TutorialItems.Add(*It);
+		}
+	}
+
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	ACSPlayerCharacter* PlayerCharacter = PlayerController != nullptr ? Cast<ACSPlayerCharacter>(PlayerController->GetPawn()) : nullptr;
+	for (ACSProductPickupActor* Item : TutorialItems)
+	{
+		// 손이나 퀵바에 남은 참조부터 떼어야 지운 뒤 퀵바 아이콘이 남지 않는다
+		if (IsValid(PlayerCharacter))
+		{
+			PlayerCharacter->RemoveProductFromHands(Item);
+		}
+		ACSDeliveryCrateActor::RemovePackedSource(Item);
+	}
+
+	RemoveCraftMarkers();
 }

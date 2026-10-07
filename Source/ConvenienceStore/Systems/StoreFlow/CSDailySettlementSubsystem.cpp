@@ -115,7 +115,8 @@ void UCSDailySettlementSubsystem::HandleItemDisposed(
 	const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(DisposedItem);
 	ACSStoreGameState* StoreGameState =
 		GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
-	if (IsValid(Product) && IsValid(StoreGameState))
+	// 잠깐 쓰고 지워질 상품은 산 물건이 아니라서 버려도 손실이 아니다
+	if (IsValid(Product) && IsValid(StoreGameState) && !Product->ActorHasTag(CSProductTags::TemporaryProduct))
 	{
 		StoreGameState->RecordDisposedProduct(Product);
 	}

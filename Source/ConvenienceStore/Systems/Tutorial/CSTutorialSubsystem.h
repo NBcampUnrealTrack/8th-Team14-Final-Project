@@ -4,6 +4,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/CSTutorialTypes.h"
 #include "Data/CSStorePhaseTypes.h"
+#include "Data/CSCraftTypes.h"
 #include "CSTutorialSubsystem.generated.h"
 
 class UDataTable;
@@ -22,6 +23,9 @@ class UCSTutorialObjectiveWidgetBase;
 class UCSOrderSubsystem;
 class UCSCustomerRuntimeSubsystem;
 class UCSDailySummaryWidget;
+class UCSCraftingSubsystem;
+class UCSTutorialChoiceWidget;
+class ACSProductPickupActor;
 struct FCSOrderResult;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
@@ -90,6 +94,9 @@ public:
 	// WBP_Orderv2 닫기 버튼에서 false 시 닫기를 막도록 Branch로 연결해야 함
 	UFUNCTION(BlueprintCallable, Category = "Tutorial")
 	bool CanCloseOrderWidget();
+
+	// 3부 진행 중이고 아직 잠자기 스텝이 아니면 true와 침대에 띄울 문구
+	bool ShouldBlockSleep(FText& OutMessage) const;
 
 protected:
 	// 임시 타이틀 화면이 게임을 멈춰둔 동안 튜토리얼이 먼저 시작되는 문제 방지
@@ -260,6 +267,29 @@ protected:
 	UFUNCTION()
 	void HandleHeadIconShown(ACSCustomerCharacter* Customer);
 
+	// 제조 튜토리얼
+	static bool IsCraftBundleStep(ECSTutorialStepId StepId);
+	void HandleStepStarted();
+	void HandleStepEnded();
+	void SubscribeToCraftingSubsystem();
+	void UnsubscribeFromCraftingSubsystem();
+	void OpenChoiceWidget(const FCSTutorialStepRow& Row);
+	void CloseChoiceWidget();
+	TArray<ACSProductPickupActor*> PlaceTutorialIngredients();
+	void AttachCraftMarker(AActor* Target, const FText& Label);
+	void RemoveCraftMarkers();
+	// 여러 번 불러도 안전하다. 튜토리얼 물건과 마커를 지우고 선택 창을 닫는다
+	void CleanUpCraftTutorial();
+
+	UFUNCTION()
+	void HandleTutorialChoiceMade(bool bYes);
+
+	UFUNCTION()
+	void HandleCraftIngredientAdded(int32 IngredientCount);
+
+	UFUNCTION()
+	void HandleManualCraftFinished(ECSCraftOutcome Outcome);
+
 private:
 	// DataTable에서 읽어온 행들을 테이블에 적힌 순서 그대로 담아둠 (Part가 PreOpen/PostClose인 행만)
 	// 이 배열의 인덱스가 곧 진행 순서
@@ -372,4 +402,20 @@ private:
 
 	// 정산창 때문에 화면을 숨긴 상태인지. 정산창이 닫힐 때만 되살리도록 막는 가드
 	bool bDisplaySuspendedForDailySummary = false;
+
+	UPROPERTY()
+	TObjectPtr<UCSCraftingSubsystem> SubscribedCraftingSubsystem;
+
+	UPROPERTY()
+	TObjectPtr<UCSTutorialChoiceWidget> ChoiceWidgetInstance;
+
+	// 제조 튜토리얼 중에 동적으로 붙인 마커. 끝나면 떼어 낸다
+	UPROPERTY()
+	TArray<TObjectPtr<UCSTutorialMarkerComponent>> CraftMarkerComponents;
+
+	// 아니요를 고른 경우에는 솥을 비우지 않는다. 플레이어가 넣어 둔 재료까지 지우면 안 된다
+	bool bCraftTutorialAccepted = false;
+
+	// 아니요를 고르면 다음 진행에서 제조 묶음 스텝을 시작 처리 없이 건너뛴다
+	bool bSkippingCraftBundle = false;
 };

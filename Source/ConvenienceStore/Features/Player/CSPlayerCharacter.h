@@ -85,6 +85,8 @@ public:
 	bool ConsumeQuickbarTool(ACSUsableToolActor* Tool);
 	// 전시대 등에 넘길 도구를 파괴하지 않고 손과 퀵바에서 분리합니다.
 	bool ReleaseQuickbarTool(ACSUsableToolActor* Tool);
+	// 상품을 파괴하기 전에 손과 퀵바에서 떼어 낸다. 파괴는 부른 쪽이 한다
+	bool RemoveProductFromHands(AActor* Product);
 	// 창고 상호작용에서 손에 든 상자 또는 낱개 상품의 소유권을 창고 슬롯으로 넘깁니다.
 	bool TryStoreHeldItem(
 		ACSFreshnessSafeZoneActor* StoragePoint,

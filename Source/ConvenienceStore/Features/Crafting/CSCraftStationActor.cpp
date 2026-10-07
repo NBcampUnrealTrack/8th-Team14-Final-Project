@@ -430,6 +430,15 @@ bool ACSCraftStationActor::TryPlaceItem_Implementation(AActor* ItemActor, FVecto
 	}
 	RefreshInfoWidget();
 	OnIngredientAdded(Product->GetProductId());
+	if (UCSCraftingSubsystem* Crafting = GetCraftingSubsystem())
+	{
+		int32 IngredientCount = 0;
+		for (const TObjectPtr<ACSProductPickupActor>& Ingredient : IngredientSlots)
+		{
+			IngredientCount += IsValid(Ingredient) ? 1 : 0;
+		}
+		Crafting->NotifyIngredientAdded(IngredientCount);
+	}
 	return true;
 }
 
@@ -505,6 +514,38 @@ void ACSCraftStationActor::RestoreProductVisible(ACSProductPickupActor* Product,
 	Product->SetExcludedFromStockCount(false);
 	Product->SetActorEnableCollision(true);
 	Product->SetActorHiddenInGame(false);
+}
+
+TArray<ACSProductPickupActor*> ACSCraftStationActor::AddTagsToResultProducts(const TArray<FName>& NewTags)
+{
+	TArray<ACSProductPickupActor*> Products;
+	for (const TObjectPtr<ACSProductPickupActor>& Product : ResultSlots)
+	{
+		if (IsValid(Product))
+		{
+			for (const FName& Tag : NewTags)
+			{
+				Product->Tags.AddUnique(Tag);
+			}
+			Products.Add(Product);
+		}
+	}
+	return Products;
+}
+
+void ACSCraftStationActor::CloseAllPanelsAndCloseup()
+{
+	CloseSummonList();
+	ExitCloseup(true);
+}
+
+void ACSCraftStationActor::SetCloseupGuidesHidden(bool bShouldHide)
+{
+	bCloseupGuidesHidden = bShouldHide;
+	if (IsValid(ActiveCloseupWidget))
+	{
+		ActiveCloseupWidget->SetGuidesHidden(bShouldHide);
+	}
 }
 
 FCSCraftStationSaveRecord ACSCraftStationActor::CapturePotRecord() const
@@ -698,6 +739,12 @@ void ACSCraftStationActor::Interact_Implementation(AActor* Interactor)
 		return;
 	case EAimTarget::Result:
 	{
+		// 잠깐 쓰고 지워질 결과물이라 받게 두면 회수하기 전에 손이나 진열대로 옮겨 간다
+		if (IsValid(ResultSlots[SlotIndex]) && ResultSlots[SlotIndex]->ActorHasTag(CSProductTags::TemporaryProduct))
+		{
+			ShowBanner(TEXT("TemporaryResultLocked"));
+			return;
+		}
 		const FName ProductId = IsValid(ResultSlots[SlotIndex]) ? ResultSlots[SlotIndex]->GetProductId() : NAME_None;
 		if (!RetrieveFromSlot(InteractingPawn, true, SlotIndex))
 		{
@@ -733,7 +780,9 @@ FText ACSCraftStationActor::GetInteractionText_Implementation() const
 	case EAimTarget::SummonCircle:
 		return GetMessage(TEXT("SummonAimPrompt"));
 	case EAimTarget::Result:
-		return GetMessage(TEXT("InteractRetrieveResult"));
+		return IsValid(ResultSlots[SlotIndex]) && ResultSlots[SlotIndex]->ActorHasTag(CSProductTags::TemporaryProduct)
+			? GetMessage(TEXT("TemporaryResultLocked"))
+			: GetMessage(TEXT("InteractRetrieveResult"));
 	default:
 		return GetMessage(TEXT("InteractCloseup"));
 	}
@@ -827,7 +876,9 @@ TMap<FName, FCSCraftStorageStock> ACSCraftStationActor::CollectStorageStock() co
 			}
 			else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable())
+				// 잠깐 쓰고 지워질 상품을 소환·자동 제조 재료로 쓰면 지울 수 없는 물건이 생긴다
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable() &&
+					!Product->ActorHasTag(CSProductTags::TemporaryProduct))
 				{
 					AddStock(Product->GetProductId(), 1);
 				}
@@ -886,7 +937,8 @@ bool ACSCraftStationActor::TakeFromStorage(FName ProductId, int32 Count, TArray<
 			}
 			else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable() && Product->GetProductId() == ProductId)
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable() && Product->GetProductId() == ProductId &&
+					!Product->ActorHasTag(CSProductTags::TemporaryProduct))
 				{
 					LooseProducts.Add(Product);
 				}
@@ -1165,6 +1217,29 @@ bool ACSCraftStationActor::SpawnFreshResultsOnCircle(FName ProductId, int32 Coun
 		return false;
 	}
 	return true;
+}
+
+TArray<ACSProductPickupActor*> ACSCraftStationActor::PlaceFreshProductsOnCircle(const TArray<FName>& ProductIds)
+{
+	TArray<ACSProductPickupActor*> Placed;
+	const FRotator Rotation(0.0f, GetActorRotation().Yaw, 0.0f);
+	for (int32 Index = 0; Index < ProductIds.Num(); ++Index)
+	{
+		const FVector Location = GetCircleSlotLocation(Index);
+		TArray<ACSProductPickupActor*> Spawned;
+		if (!SpawnFreshProducts(ProductIds[Index], { FTransform(Rotation, Location) }, Spawned) ||
+			!PlaceProductsOnCircle(Spawned, Location))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[제조] %s를 마법진에 놓지 못했습니다."), *ProductIds[Index].ToString());
+			for (ACSProductPickupActor* Product : Spawned)
+			{
+				Product->Destroy();
+			}
+			continue;
+		}
+		Placed.Append(Spawned);
+	}
+	return Placed;
 }
 
 // =====================================================================
@@ -1638,6 +1713,7 @@ void ACSCraftStationActor::EnterCloseup(APlayerController* PlayerController)
 		{
 			ActiveCloseupWidget->AddToViewport(10);
 			ActiveCloseupWidget->SetStep(CraftStep);
+			ActiveCloseupWidget->SetGuidesHidden(bCloseupGuidesHidden);
 		}
 	}
 
@@ -1949,6 +2025,22 @@ void ACSCraftStationActor::FinishCraft()
 			return;
 		}
 		ResultName = Products[0]->GetProductDisplayName();
+
+		// 잠깐 쓰고 지워질 재료로 만든 결과물도 같이 지워져야 공짜 상품이 남지 않는다
+		for (const TObjectPtr<ACSProductPickupActor>& Ingredient : IngredientSlots)
+		{
+			if (!IsValid(Ingredient) || !Ingredient->ActorHasTag(CSProductTags::TemporaryProduct))
+			{
+				continue;
+			}
+			for (ACSProductPickupActor* Product : Products)
+			{
+				for (const FName& Tag : Ingredient->Tags)
+				{
+					Product->Tags.AddUnique(Tag);
+				}
+			}
+		}
 	}
 	else if (!SpawnFailureTrash(Evaluation.Outcome, ResultName))
 	{

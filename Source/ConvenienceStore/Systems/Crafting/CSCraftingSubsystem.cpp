@@ -521,6 +521,83 @@ void UCSCraftingSubsystem::RecordManualCraft(const FCSCraftAttemptRecord& Attemp
 	{
 		RecentAttempts.RemoveAt(0, RecentAttempts.Num() - MaxRecentAttempts);
 	}
+
+	OnManualCraftFinished.Broadcast(Attempt.Outcome);
+}
+
+void UCSCraftingSubsystem::NotifyIngredientAdded(int32 IngredientCount)
+{
+	OnCraftIngredientAdded.Broadcast(IngredientCount);
+}
+
+ACSCraftStationActor* UCSCraftingSubsystem::FindCraftStation() const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+	for (TActorIterator<ACSCraftStationActor> It(World); It; ++It)
+	{
+		return *It;
+	}
+	return nullptr;
+}
+
+AActor* UCSCraftingSubsystem::GetCraftStationActor() const
+{
+	return FindCraftStation();
+}
+
+TArray<ACSProductPickupActor*> UCSCraftingSubsystem::PlaceProductsOnCraftCircle(const TArray<FName>& ProductIds)
+{
+	ACSCraftStationActor* Station = FindCraftStation();
+	if (!IsValid(Station))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제조] 레벨에 제조대가 없어 마법진에 상품을 놓지 못했습니다."));
+		return {};
+	}
+	return Station->PlaceFreshProductsOnCircle(ProductIds);
+}
+
+TArray<ACSProductPickupActor*> UCSCraftingSubsystem::AddTagsToCraftResults(const TArray<FName>& NewTags)
+{
+	ACSCraftStationActor* Station = FindCraftStation();
+	return IsValid(Station) ? Station->AddTagsToResultProducts(NewTags) : TArray<ACSProductPickupActor*>();
+}
+
+void UCSCraftingSubsystem::ShowCraftStationMessage(FName MessageRowName, bool bWarning) const
+{
+	if (const ACSCraftStationActor* Station = FindCraftStation())
+	{
+		Station->ShowBanner(MessageRowName, bWarning);
+	}
+}
+
+void UCSCraftingSubsystem::CloseCraftStationPanels()
+{
+	if (ACSCraftStationActor* Station = FindCraftStation())
+	{
+		Station->CloseAllPanelsAndCloseup();
+	}
+}
+
+void UCSCraftingSubsystem::SetCraftCloseupGuidesHidden(bool bHidden)
+{
+	if (ACSCraftStationActor* Station = FindCraftStation())
+	{
+		Station->SetCloseupGuidesHidden(bHidden);
+	}
+}
+
+void UCSCraftingSubsystem::ClearCraftStationPot()
+{
+	if (ACSCraftStationActor* Station = FindCraftStation())
+	{
+		FCSCraftStationSaveRecord EmptyRecord;
+		EmptyRecord.StationName = Station->GetFName();
+		Station->RestorePotRecord(EmptyRecord);
+	}
 }
 
 FText UCSCraftingSubsystem::GetProductDisplayName(FName ProductId) const

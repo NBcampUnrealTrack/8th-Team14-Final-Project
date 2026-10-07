@@ -7,6 +7,11 @@
 #include "CSCraftingSubsystem.generated.h"
 
 class UDataTable;
+class ACSCraftStationActor;
+class ACSProductPickupActor;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCraftIngredientAdded, int32, IngredientCount);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnManualCraftFinished, ECSCraftOutcome, Outcome);
 
 // 레시피 표, 조합 판정, 한 판 동안의 레시피 발견 기록을 맡는다
 // 판정에 난수를 쓰지 않는다. 손님 RNG 스트림 순서가 밀리지 않게 하려는 것
@@ -31,6 +36,27 @@ public:
 	// [백무송]
 	// 세이브의 제조 블록으로 도감 기록·솥 재료·결과물·소문 시드를 복원
 	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+
+	// 솥에 재료가 들어갈 때. 인수는 들어간 뒤 솥 안 재료 개수
+	UPROPERTY(BlueprintAssignable, Category = "Crafting")
+	FCSOnCraftIngredientAdded OnCraftIngredientAdded;
+
+	// 직접 제조가 결과물을 내고 기록된 뒤. 자동 제조와 스폰 실패 재시도 대기는 오지 않는다
+	UPROPERTY(BlueprintAssignable, Category = "Crafting")
+	FCSOnManualCraftFinished OnManualCraftFinished;
+
+	void NotifyIngredientAdded(int32 IngredientCount);
+
+	// 튜토리얼이 제조대 클래스를 몰라도 되게 레벨의 첫 제조대에 대신 시킨다. 제조대가 없으면 아무것도 안 한다
+	AActor* GetCraftStationActor() const;
+	// 종류마다 1개씩 마법진 자리에 놓고 놓은 상품을 돌려준다
+	TArray<ACSProductPickupActor*> PlaceProductsOnCraftCircle(const TArray<FName>& ProductIds);
+	TArray<ACSProductPickupActor*> AddTagsToCraftResults(const TArray<FName>& NewTags);
+	void ShowCraftStationMessage(FName MessageRowName, bool bWarning) const;
+	void CloseCraftStationPanels();
+	void SetCraftCloseupGuidesHidden(bool bHidden);
+	// 진행 중이던 제조를 버리고 솥 재료와 결과 슬롯 물건을 지운다
+	void ClearCraftStationPot();
 
 	// 레시피 표나 상품 표가 없으면 false. 이때 제조대는 제조를 시작하지 않는다
 	bool IsCraftingAvailable() const { return bCraftingAvailable; }
@@ -85,6 +111,7 @@ public:
 
 private:
 	static TPair<FName, FName> MakeIngredientKey(FName IngredientA, FName IngredientB);
+	ACSCraftStationActor* FindCraftStation() const;
 	void BuildRecipeMap();
 	void ValidateTables() const;
 

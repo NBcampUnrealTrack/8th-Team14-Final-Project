@@ -130,7 +130,16 @@ public:
 	void CloseIngredientPanel();
 
 	FText GetMessage(FName MessageRowName) const;
+	// 클로즈업 중이면 클로즈업 화면의 메시지 칸에, 아니면 공용 배너에 띄운다
+	void ShowBanner(FName MessageRowName, bool bWarning = true) const;
 	FText GetProductDisplayName(FName ProductId) const;
+
+	// 종류마다 1개씩 마법진 자리에 낱개로 놓는다. 이미 물건이 있어도 놓는다
+	TArray<ACSProductPickupActor*> PlaceFreshProductsOnCircle(const TArray<FName>& ProductIds);
+	TArray<ACSProductPickupActor*> AddTagsToResultProducts(const TArray<FName>& NewTags);
+	void CloseAllPanelsAndCloseup();
+	// 튜토리얼 안내가 클로즈업 키 안내·정보 창과 같은 자리에 겹쳐서 잠시 접는다
+	void SetCloseupGuidesHidden(bool bShouldHide);
 	TSoftObjectPtr<UTexture2D> FindProductIcon(FName ProductId) const;
 
 	// [백무송님] 저장 연결: 솥 재료와 결과 슬롯 물건은 재고 집계 제외 표시 때문에 낱개 상품 저장
@@ -357,7 +366,6 @@ private:
 	UCSProductVisualRegistry* ResolveVisualRegistry(const ACSProductPickupActor* Product) const;
 	// 클로즈업 중이면 클로즈업 화면의 메시지 칸에, 아니면 공용 배너에 띄운다
 	void ShowMessage(const FText& Message, bool bWarning) const;
-	void ShowBanner(FName MessageRowName, bool bWarning = true) const;
 	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다
 	bool IsBeforeCraftStart() const;
 	bool IsAnyCloseupPanelOpen() const;
@@ -421,6 +429,7 @@ private:
 	FTimerHandle BubbleTimerHandle;
 	FTimerHandle PawnVisibilityRestoreTimerHandle;
 	bool bCloseupActive = false;
+	bool bCloseupGuidesHidden = false;
 	bool bCloseupInputBound = false;
 	bool bPawnWasHidden = false;
 	bool bPawnVisibilityOverridden = false;

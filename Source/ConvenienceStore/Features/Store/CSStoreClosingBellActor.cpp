@@ -8,6 +8,7 @@
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "UI/Store/CSStoreClosingBellConfirmWidget.h"
 #include "UI/Store/CSStoreSleepTransitionWidget.h"
 #include "UI/Store/CSWakeUpWidget.h"
@@ -39,6 +40,15 @@ void ACSStoreClosingBellActor::Interact_Implementation(AActor* Interactor)
 	if (!IsValid(Controller)) return;
 	if (const ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(Controller);
 		StoreController && StoreController->IsSleepTransitionActive()) return;
+	// 튜토리얼 3부 도중에 자면 남은 안내가 다음 날까지 이어진다
+	const UWorld* World = GetWorld();
+	const UCSTutorialSubsystem* Tutorial = World != nullptr ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr;
+	FText SleepBlockedText;
+	if (IsValid(Tutorial) && Tutorial->ShouldBlockSleep(SleepBlockedText))
+	{
+		if (ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(Controller)) StoreController->ShowNoticeBanner(SleepBlockedText);
+		return;
+	}
 	ActiveConfirmWidget = CreateWidget<UCSStoreClosingBellConfirmWidget>(Controller, ConfirmWidgetClass);
 	if (!IsValid(ActiveConfirmWidget)) return;
 	ActiveConfirmWidget->OnClosingBellConfirmed.AddDynamic(this, &ACSStoreClosingBellActor::HandleConfirmed);
