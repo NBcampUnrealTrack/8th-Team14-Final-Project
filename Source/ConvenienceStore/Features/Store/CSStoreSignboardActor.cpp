@@ -7,6 +7,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "UI/Store/CSStoreBusinessConfirmWidget.h"
 
 ACSStoreSignboardActor::ACSStoreSignboardActor()
@@ -86,6 +87,19 @@ void ACSStoreSignboardActor::Interact_Implementation(AActor* Interactor)
 		: nullptr;
 	if (!IsValid(PlayerController))
 	{
+		return;
+	}
+
+	// 튜토리얼 준비 스텝 도중에 개점하면 남은 안내가 영업 중에 뜬다
+	const UWorld* World = GetWorld();
+	const UCSTutorialSubsystem* Tutorial = World != nullptr ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr;
+	FText StoreOpenBlockedText;
+	if (IsValid(Tutorial) && Tutorial->ShouldBlockStoreOpen(StoreOpenBlockedText))
+	{
+		if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(PlayerController))
+		{
+			StorePlayerController->ShowNoticeBanner(StoreOpenBlockedText);
+		}
 		return;
 	}
 

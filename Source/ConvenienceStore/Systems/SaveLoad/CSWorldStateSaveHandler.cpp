@@ -112,6 +112,12 @@ void UCSWorldStateSaveHandler::CaptureLooseProducts(FCSWorldSaveRecord& OutRecor
 			continue;
 		}
 
+		// 잠깐 쓰고 지워질 상품은 불러온 게임에서 지워 줄 곳이 없어 그대로 남는다
+		if (Product->ActorHasTag(CSProductTags::TemporaryProduct))
+		{
+			continue;
+		}
+
 		// 진열대 슬롯 상품은 진열대 레코드가 기록하므로 중복 기록을 방지
 		const AActor* ParentActor = Product->GetAttachParentActor();
 		if (IsValid(ParentActor) && ParentActor->IsA<ACSShelfActor>())

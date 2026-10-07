@@ -5,6 +5,7 @@
 #include "CSTutorialTypes.generated.h"
 
 class UUserWidget;
+class UCSTutorialChoiceWidget;
 
 // 지금이 하루 흐름 중 어디에 해당하는지
 UENUM(BlueprintType)
@@ -57,7 +58,15 @@ enum class ECSTutorialStepId : uint8
 	TipDiary,
 	TipNoticeBoard,
 	TipInnerThought,
-	TipSettlement
+	TipSettlement,
+
+	// 3부 제조 튜토리얼. 판매가 설정과 잠자기 사이에 들어간다
+	CraftMoveToHouse,
+	CraftChoice,
+	CraftAddIngredients,
+	CraftBrew,
+	CraftRecipeBook,
+	CraftWrapUp
 };
 
 // 대화창 힌트 줄 하나 (키 라벨 + 설명). 이동/건축 회전처럼 키가 여러 개라
@@ -155,4 +164,18 @@ struct FCSTutorialStepRow : public FTableRowBase
 	// true = 위젯이 닫힐 때 완료
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial")
 	bool bCompleteOnWidgetClosed = false;
+
+	// 채워져 있으면 이 스텝은 예/아니요 선택 창을 띄운다. 질문은 PromptText를 쓴다
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial|Choice")
+	TSoftClassPtr<UCSTutorialChoiceWidget> ChoiceWidgetClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial|Choice")
+	FText ChoiceYesText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial|Choice")
+	FText ChoiceNoText;
+
+	// 3부에서 아직 잠자기 스텝이 아닐 때 침대가 띄우는 문구. 비우면 코드 기본 문구
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Tutorial", meta = (MultiLine = "true"))
+	FText SleepBlockedText;
 };
