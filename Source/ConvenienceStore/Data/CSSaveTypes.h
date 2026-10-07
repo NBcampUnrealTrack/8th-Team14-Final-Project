@@ -8,6 +8,7 @@
 #include "Data/CSWeatherTypes.h"
 #include "Data/CSEmployeeHiringTypes.h"
 #include "Data/CSDeliveryOrderTypes.h"
+#include "Data/CSGachaDataTypes.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "CSSaveTypes.generated.h"
 
@@ -16,7 +17,8 @@
 // 2: 퀵바 슬롯별 레코드, 포장 상자·창고 보관·바닥 물리 상태 추가
 // 3: 월드 쓰레기 레코드 추가
 // 4: 영업 종료 시점 저장, 저장 당시 단계·당일 집계·평판 당일 통계 추가
-#define CS_SAVE_VERSION_CURRENT 4
+// 5: 아티팩트·제조 블록, 가챠 봉인석·아티팩트 픽업·소환 수레 레코드, 쓰레기 표시 이름 추가
+#define CS_SAVE_VERSION_CURRENT 5
 
 // DataTable 행을 세이브에 담는 공용 표현
 // RowName을 기준으로 저장하고 테이블 경로는 복원용 힌트로 함께 보관
@@ -897,6 +899,12 @@ struct CONVENIENCESTORE_API FCSCrateRecord
 	// 복원 후 물리를 다시 켜서 바닥에 안착
 	UPROPERTY()
 	bool bWorldDropPhysics = false;
+
+	// [백무송]
+	// 실려 있던 소환 수레의 식별자
+	// 비어 있거나 수레를 찾지 못하면 바닥 상자로 복원
+	UPROPERTY()
+	FGuid CartSaveId;
 };
 
 // 설치형 시설 한 개의 레코드
@@ -947,6 +955,11 @@ struct CONVENIENCESTORE_API FCSTrashRecord
 	UPROPERTY()
 	FSoftObjectPath StaticMesh;
 
+	// 상호작용 안내와 퀵바에 표시할 쓰레기 이름
+	// 제조 실패물처럼 생성 후 이름을 바꾼 쓰레기가 기본 이름으로 돌아가지 않도록 기록
+	UPROPERTY()
+	FText DisplayName;
+
 	// 쓰레기의 월드 트랜스폼
 	UPROPERTY()
 	FTransform Transform = FTransform::Identity;
@@ -966,8 +979,123 @@ struct CONVENIENCESTORE_API FCSTrashRecord
 	bool bIgnorePawnCollision = false;
 };
 
+// 월드에 놓인 아티팩트 픽업 한 개의 레코드
+// 레벨 배치 픽업과 가챠 보상 픽업을 구분 없이 기록
+USTRUCT()
+struct CONVENIENCESTORE_API FCSArtifactPickupRecord
+{
+	GENERATED_BODY()
+
+	// 픽업을 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 아티팩트 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ArtifactRow;
+
+	// 획득 시 지급할 수량
+	UPROPERTY()
+	int32 Quantity = 1;
+
+	// 픽업 액터의 월드 트랜스폼
+	// 물리로 떨어진 픽업은 메시 위치를 액터 위치로 기록
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 표시 메시의 월드 트랜스폼
+	// 행 기본 메시 배치를 다시 적용한 뒤에도 저장 시점 위치·회전·크기를 유지
+	UPROPERTY()
+	FTransform MeshWorldTransform = FTransform::Identity;
+
+	// 표시 메시가 물리 시뮬레이션 중이던 픽업 여부
+	// 가챠에서 배출된 픽업의 충돌·물리 상태를 복원 후에도 유지
+	UPROPERTY()
+	bool bSimulatingPhysics = false;
+};
+
+// 개봉하지 않은 가챠 봉인석 한 개의 레코드
+// 보상 행 전체 대신 개봉 시 보상 생성에 필요한 값만 기록
+USTRUCT()
+struct CONVENIENCESTORE_API FCSGachaSealRecord
+{
+	GENERATED_BODY()
+
+	// 봉인석을 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 봉인석의 월드 트랜스폼
+	// 루트인 표시 메시가 물리로 움직인 위치까지 포함
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 바닥 물리 상태로 놓여 있던 봉인석 여부
+	// 복원 후 물리를 다시 켜서 바닥에 안착
+	UPROPERTY()
+	bool bWorldDropPhysics = false;
+
+	// 보상 종류
+	UPROPERTY()
+	ECSGachaRewardType RewardType = ECSGachaRewardType::Product;
+
+	// 개봉 알림과 경고 로그에 사용하는 보상 식별자
+	UPROPERTY()
+	FName RewardId;
+
+	// 보상 표시 이름
+	UPROPERTY()
+	FText DisplayName;
+
+	// 상품 보상의 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ProductRow;
+
+	// 아티팩트 보상의 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ArtifactRow;
+
+	// 보상 행이 지정한 상품 액터 클래스
+	// 비어 있으면 ProductPickupClass로 상품을 생성
+	UPROPERTY()
+	FSoftClassPath RewardActorClass;
+
+	// 보상 수량
+	UPROPERTY()
+	int32 Quantity = 1;
+
+	// 상품 보상을 생성할 기본 상품 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ProductPickupClass;
+
+	// 아티팩트 보상을 생성할 픽업 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ArtifactPickupClass;
+};
+
+// 아티팩트로 소환한 수레 한 개의 레코드
+// 레벨 배치 수레는 레벨이 다시 생성하므로 기록하지 않음
+USTRUCT()
+struct CONVENIENCESTORE_API FCSSummonedCartRecord
+{
+	GENERATED_BODY()
+
+	// 다시 생성한 수레가 이어받을 식별자
+	UPROPERTY()
+	FGuid SaveId;
+
+	// 수레를 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 수레의 월드 트랜스폼
+	// 복원 시 위치·회전만 사용하고 크기는 클래스 기본값을 사용
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+};
+
 // 퀵바 슬롯 한 칸의 레코드
-// 도구는 클래스 경로, 상자는 상자 레코드로 저장
+// 도구는 클래스 경로, 상자·쓰레기·봉인석은 각 레코드로 저장
 USTRUCT()
 struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 {
@@ -985,6 +1113,28 @@ struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 	// 보관 중인 배송 상자 상태
 	UPROPERTY()
 	FCSCrateRecord Crate;
+
+	// 쓰레기 보관 여부
+	// 이전 세이브는 false로 읽혀 월드 쓰레기 레코드의 바닥 복원을 유지
+	UPROPERTY()
+	bool bHasTrash = false;
+
+	// 보관 중인 쓰레기 상태
+	// 표시 이름과 메시를 함께 기록해 퀵바 복원 후에도 유지
+	UPROPERTY()
+	FCSTrashRecord Trash;
+
+	// [백무송]
+	// 가챠 봉인석 보관 여부
+	// 이전 세이브는 false로 읽혀 클래스만 기록된 봉인석과 구분
+	UPROPERTY()
+	bool bHasGachaSeal = false;
+
+	// [백무송]
+	// 보관 중인 가챠 봉인석의 보상 정보
+	// 퀵바에 다시 보관하므로 위치와 바닥 물리 상태는 사용하지 않음
+	UPROPERTY()
+	FCSGachaSealRecord GachaSeal;
 };
 
 // 퀵바 전체 레코드
@@ -993,8 +1143,8 @@ struct CONVENIENCESTORE_API FCSQuickbarRecord
 {
 	GENERATED_BODY()
 
-	// 슬롯 순서대로 기록하며 빈 칸과 쓰레기는 비어 있는 레코드로 유지
-	// 퀵바의 쓰레기는 월드 쓰레기 레코드가 플레이어 위치의 바닥 쓰레기로 기록
+	// 슬롯 순서대로 기록하며 빈 칸은 비어 있는 레코드로 유지
+	// 퀵바의 쓰레기는 월드 쓰레기 레코드에서 제외하고 이 레코드에 기록
 	UPROPERTY()
 	TArray<FCSQuickbarSlotRecord> Slots;
 
@@ -1028,6 +1178,20 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 	// 월드에 놓인 쓰레기 레코드 목록
 	UPROPERTY()
 	TArray<FCSTrashRecord> Trash;
+
+	// 월드에 놓인 미개봉 가챠 봉인석 레코드 목록
+	// 퀵바에 보관하거나 손에 든 봉인석은 제외
+	UPROPERTY()
+	TArray<FCSGachaSealRecord> GachaSeals;
+
+	// 월드에 놓인 아티팩트 픽업 레코드 목록
+	UPROPERTY()
+	TArray<FCSArtifactPickupRecord> ArtifactPickups;
+
+	// 아티팩트로 소환한 수레 레코드 목록
+	// 레벨 배치 수레는 제외
+	UPROPERTY()
+	TArray<FCSSummonedCartRecord> SummonedCarts;
 
 	// 플레이어 퀵바 레코드
 	UPROPERTY()

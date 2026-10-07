@@ -7,6 +7,7 @@
 #include "Features/Crafting/CSCraftStationActor.h"
 #include "HAL/IConsoleManager.h"
 #include "Systems/Crafting/CSCraftRumorSubsystem.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 
 namespace
@@ -647,6 +648,34 @@ void UCSCraftingSubsystem::RestoreCraftSaveData(const FCSCraftSaveData& Data)
 	{
 		Rumor->SetRumorBaseSeed(Data.RumorBaseSeed);
 	}
+}
+
+// [백무송]
+void UCSCraftingSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	// 기존 제조 저장 데이터 수집 함수로 제조 블록을 기록
+	OutSave.Craft = CaptureCraftSaveData();
+
+	// 캡처한 제조 기록 개수를 로그로 기록
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSSave] 제조 캡처: 발견 레시피 %d, 최근 시도 %d, 제조대 %d"),
+		OutSave.Craft.DiscoveredRecipeRows.Num(),
+		OutSave.Craft.RecentAttempts.Num(),
+		OutSave.Craft.Stations.Num());
+}
+
+// [백무송]
+void UCSCraftingSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	// 기존 제조 저장 데이터 복원 함수로 도감 기록·솥 재료·결과물·소문 시드를 복원
+	RestoreCraftSaveData(InSave.Craft);
+
+	// 월드 복원 이후 실행 순서를 확인하도록 복원한 제조 기록 개수를 로그로 기록
+	UE_LOG(LogTemp, Log,
+		TEXT("[CSSave] 제조 복원: 발견 레시피 %d, 최근 시도 %d, 제조대 %d"),
+		InSave.Craft.DiscoveredRecipeRows.Num(),
+		InSave.Craft.RecentAttempts.Num(),
+		InSave.Craft.Stations.Num());
 }
 
 bool UCSCraftingSubsystem::IsJunkResultProduct(FName ProductId) const

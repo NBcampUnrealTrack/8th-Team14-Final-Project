@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Data/CSCraftTypes.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSCraftingSubsystem.generated.h"
 
 class UDataTable;
@@ -10,13 +11,26 @@ class UDataTable;
 // 레시피 표, 조합 판정, 한 판 동안의 레시피 발견 기록을 맡는다
 // 판정에 난수를 쓰지 않는다. 손님 RNG 스트림 순서가 밀리지 않게 하려는 것
 UCLASS()
-class CONVENIENCESTORE_API UCSCraftingSubsystem : public UWorldSubsystem
+class CONVENIENCESTORE_API UCSCraftingSubsystem : public UWorldSubsystem, public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
 public:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+
+	// [백무송]
+	// 불러오기 시 참가자 복원 순서를 반환하고 값이 작을수록 먼저 복원
+	// GameState(0) → 서브시스템(5) → 월드 핸들러(10) 다음 순서로 제조를 복원
+	virtual int32 GetSaveRestorePriority() const override { return 15; }
+
+	// [백무송]
+	// 제조 저장 데이터를 세이브의 제조 블록에 기록
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+
+	// [백무송]
+	// 세이브의 제조 블록으로 도감 기록·솥 재료·결과물·소문 시드를 복원
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
 
 	// 레시피 표나 상품 표가 없으면 false. 이때 제조대는 제조를 시작하지 않는다
 	bool IsCraftingAvailable() const { return bCraftingAvailable; }

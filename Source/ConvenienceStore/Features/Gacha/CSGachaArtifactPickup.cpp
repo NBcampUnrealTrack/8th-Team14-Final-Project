@@ -4,6 +4,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSJournalTypes.h"
 #include "Data/CSArtifactVisualRegistry.h"
+// [백무송]
+// 픽업 저장 레코드의 구조체 정의를 조회
+#include "Data/CSSaveTypes.h"
 #include "Engine/GameInstance.h"
 #include "Engine/StaticMesh.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -149,5 +152,49 @@ void ACSGachaArtifactPickup::Interact_Implementation(AActor* Interactor)
 					Artifact.Name, FText::AsNumber(Quantity)));
 		}
 		Destroy();
+	}
+}
+
+// [백무송]
+void ACSGachaArtifactPickup::CaptureSaveRecord(FCSArtifactPickupRecord& OutRecord) const
+{
+	OutRecord = FCSArtifactPickupRecord();
+	OutRecord.ActorClass = FSoftClassPath(GetClass());
+	OutRecord.ArtifactRow = FCSSaveRowRef::FromHandle(ArtifactRow);
+	OutRecord.Quantity = Quantity;
+	OutRecord.Transform = GetActorTransform();
+
+	if (!IsValid(DisplayMesh))
+	{
+		return;
+	}
+
+	// 물리로 떨어진 뒤에도 메시가 실제 표시 위치이므로 메시 트랜스폼과 물리 상태를 기록
+	OutRecord.MeshWorldTransform = DisplayMesh->GetComponentTransform();
+	OutRecord.bSimulatingPhysics = DisplayMesh->IsSimulatingPhysics();
+
+	// 물리로 분리된 메시는 공중에 남은 액터와 떨어져 있으므로 메시 위치를 액터 위치로 기록
+	// 복원 후 상호작용 박스가 메시와 같은 위치에 오도록 설정
+	if (OutRecord.bSimulatingPhysics)
+	{
+		OutRecord.Transform.SetLocation(DisplayMesh->GetComponentLocation());
+	}
+}
+
+// [백무송]
+void ACSGachaArtifactPickup::RestoreSaveRecord(const FCSArtifactPickupRecord& InRecord)
+{
+	if (!IsValid(DisplayMesh))
+	{
+		return;
+	}
+
+	// BeginPlay에서 다시 적용한 행 기본 메시 배치 대신 저장 시점의 메시 트랜스폼을 적용
+	DisplayMesh->SetWorldTransform(InRecord.MeshWorldTransform, false, nullptr, ETeleportType::TeleportPhysics);
+
+	// 가챠에서 배출된 픽업은 충격량 없이 물리를 다시 켜 같은 충돌·물리 상태로 안착
+	if (InRecord.bSimulatingPhysics)
+	{
+		Launch(FVector::ZeroVector);
 	}
 }

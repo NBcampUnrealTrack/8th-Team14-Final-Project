@@ -4,6 +4,9 @@
 #include "Components/PointLightComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+// [백무송]
+// 봉인석 저장 레코드의 구조체 정의를 조회
+#include "Data/CSSaveTypes.h"
 #include "Features/Gacha/CSGachaArtifactPickup.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -255,4 +258,64 @@ void ACSGachaSeal::FellOutOfWorld(const UDamageType& DamageType)
 	PrepareForPickupPhysics();
 	SetActorLocation(RecoveryLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	EnableWorldDropPhysics();
+}
+
+// [백무송]
+void ACSGachaSeal::CaptureSaveRecord(FCSGachaSealRecord& OutRecord) const
+{
+	OutRecord = FCSGachaSealRecord();
+	OutRecord.ActorClass = FSoftClassPath(GetClass());
+
+	// 루트인 표시 메시가 물리로 움직인 위치가 액터 트랜스폼에 반영되어 있으므로 그대로 기록
+	OutRecord.Transform = GetActorTransform();
+	OutRecord.bWorldDropPhysics = IsValid(ToolMesh) && ToolMesh->IsSimulatingPhysics();
+
+	// 개봉 시 보상 생성에 필요한 값만 기록
+	// 하드 참조인 SourceCatalog는 저장하지 않도록 보상 행을 필드 단위로 기록
+	OutRecord.RewardType = Reward.RewardType;
+	OutRecord.RewardId = Reward.RewardId;
+	OutRecord.DisplayName = Reward.DisplayName;
+	OutRecord.ProductRow = FCSSaveRowRef::FromHandle(Reward.ProductRow);
+	OutRecord.ArtifactRow = FCSSaveRowRef::FromHandle(Reward.ArtifactRow);
+	OutRecord.RewardActorClass = FSoftClassPath(Reward.ActorClass.ToString());
+	OutRecord.Quantity = Reward.Quantity;
+	OutRecord.ProductPickupClass = FSoftClassPath(ProductClass.Get());
+	OutRecord.ArtifactPickupClass = FSoftClassPath(ArtifactClass.Get());
+}
+
+// [백무송]
+bool ACSGachaSeal::RestoreSaveRecord(const FCSGachaSealRecord& InRecord)
+{
+	// 엔딩 보상은 추첨에서 제외되고 개봉해도 생성되지 않으므로 복원하지 않음
+	if (InRecord.RewardType != ECSGachaRewardType::Product
+		&& InRecord.RewardType != ECSGachaRewardType::Artifact)
+	{
+		return false;
+	}
+
+	// 레코드 값으로 저장 시점의 보상 행을 재구성
+	FCSGachaPoolRow RestoredReward;
+	RestoredReward.RewardType = InRecord.RewardType;
+	RestoredReward.RewardId = InRecord.RewardId;
+	RestoredReward.DisplayName = InRecord.DisplayName;
+	RestoredReward.ProductRow = InRecord.ProductRow.ToHandle();
+	RestoredReward.ArtifactRow = InRecord.ArtifactRow.ToHandle();
+	RestoredReward.ActorClass = TSoftClassPtr<AActor>(InRecord.RewardActorClass);
+	RestoredReward.Quantity = FMath::Max(1, InRecord.Quantity);
+
+	// 보상 종류에 맞는 행을 찾지 못하면 개봉할 수 없는 봉인석이 남지 않도록 실패를 반환
+	const FDataTableRowHandle& RewardRow = InRecord.RewardType == ECSGachaRewardType::Product
+		? RestoredReward.ProductRow
+		: RestoredReward.ArtifactRow;
+	if (RewardRow.DataTable == nullptr || RewardRow.DataTable->FindRowUnchecked(RewardRow.RowName) == nullptr)
+	{
+		return false;
+	}
+
+	// 가챠 우물과 같은 함수로 보상과 보상 생성 클래스를 설정
+	InitializeReward(
+		RestoredReward,
+		InRecord.ProductPickupClass.TryLoadClass<ACSProductPickupActor>(),
+		InRecord.ArtifactPickupClass.TryLoadClass<ACSGachaArtifactPickup>());
+	return true;
 }

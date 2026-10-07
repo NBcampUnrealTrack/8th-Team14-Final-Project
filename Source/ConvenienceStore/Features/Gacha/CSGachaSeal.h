@@ -11,6 +11,9 @@ class UPointLightComponent;
 class UMaterialInterface;
 class USoundBase;
 class UStaticMesh;
+// [백무송]
+// 봉인석 저장 레코드를 함수 선언에서 참조
+struct FCSGachaSealRecord;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSGachaSealOpened, ECSGachaRewardType, Type, FName, RewardId);
 
@@ -30,6 +33,19 @@ public:
 	void InitializeReward(const FCSGachaPoolRow& InReward, TSubclassOf<ACSProductPickupActor> InProductClass, TSubclassOf<ACSGachaArtifactPickup> InArtifactClass);
 	void Launch(const FVector& Velocity);
 	bool IsOpened() const { return bOpened; }
+
+	// [백무송]
+	// 보상을 보관 중이고 아직 개봉하지 않은 봉인석인지 확인
+	bool HasSealedReward() const { return bHasReward && !bOpened && !bOpening; }
+
+	// [백무송]
+	// 저장 시점의 위치·물리 상태와 개봉에 필요한 보상 정보를 레코드에 기록
+	void CaptureSaveRecord(FCSGachaSealRecord& OutRecord) const;
+
+	// [백무송]
+	// 레코드의 보상 정보로 봉인석을 초기화하고 보상 행을 찾지 못하면 false를 반환
+	// SpawnActorDeferred 직후 FinishSpawning 전에 호출
+	bool RestoreSaveRecord(const FCSGachaSealRecord& InRecord);
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Seal|Visual") TObjectPtr<UStaticMesh> SealMesh;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Seal|Visual") TObjectPtr<UStaticMesh> FragmentMesh;
