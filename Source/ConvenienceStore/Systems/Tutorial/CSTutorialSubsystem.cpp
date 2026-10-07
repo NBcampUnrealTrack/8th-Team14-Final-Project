@@ -1640,6 +1640,25 @@ bool UCSTutorialSubsystem::ShouldBlockSleep(FText& OutMessage) const
 	return true;
 }
 
+bool UCSTutorialSubsystem::ShouldBlockStoreOpen(FText& OutMessage) const
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return false;
+	}
+
+	// 1부 중간에 개점하면 남은 준비 스텝이 영업 중에 뜬다
+	const FCSTutorialStepRow& Row = *StepRows[CurrentStepIndex];
+	if (Row.Part != ECSTutorialPart::PreOpen || Row.StepId == ECSTutorialStepId::OpenSign)
+	{
+		return false;
+	}
+
+	OutMessage = NSLOCTEXT("Tutorial", "StoreOpenBlocked",
+		"튜토리얼 중에는 영업을 시작할 수 없습니다.\n튜토리얼을 스킵하고 싶다면 설정창에서 튜토리얼을 스킵해 주세요.");
+	return true;
+}
+
 bool UCSTutorialSubsystem::IsCraftBundleStep(ECSTutorialStepId StepId)
 {
 	// 선택 창에서 아니요를 고르면 이 스텝들을 시작하지 않고 건너뛴다

@@ -98,6 +98,9 @@ public:
 	// 3부 진행 중이고 아직 잠자기 스텝이 아니면 true와 침대에 띄울 문구
 	bool ShouldBlockSleep(FText& OutMessage) const;
 
+	// 1부 진행 중이고 아직 입간판 스텝이 아니면 true와 입간판에 띄울 문구
+	bool ShouldBlockStoreOpen(FText& OutMessage) const;
+
 protected:
 	// 임시 타이틀 화면이 게임을 멈춰둔 동안 튜토리얼이 먼저 시작되는 문제 방지
 	// IsPaused()가 풀릴 때까지 짧은 간격으로 재시도
