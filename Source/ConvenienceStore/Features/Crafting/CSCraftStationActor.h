@@ -373,6 +373,7 @@ private:
 	// 받을 수 없으면 안내 문구 RowName, 받을 수 있으면 None
 	FName GetPlacementRejectReason(const ACSProductPickupActor* Product) const;
 	TMap<FName, int32> CountIngredients() const;
+	// 결과 슬롯 상품이나 결과 자리에 놓인 실패 쓰레기가 있으면 true
 	bool HasResultProduct() const;
 
 	void StoreProductHidden(ACSProductPickupActor* Product);
@@ -428,6 +429,9 @@ private:
 
 	FTimerHandle BubbleTimerHandle;
 	FTimerHandle PawnVisibilityRestoreTimerHandle;
+	// 저장하지 않는다. 불러온 뒤 남은 실패 쓰레기는 제조를 막지 않는다
+	TWeakObjectPtr<ACSTrashActor> LastFailureTrash;
+
 	bool bCloseupActive = false;
 	bool bCloseupGuidesHidden = false;
 	bool bCloseupInputBound = false;

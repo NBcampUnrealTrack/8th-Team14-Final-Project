@@ -330,7 +330,18 @@ bool ACSCraftStationActor::HasResultProduct() const
 			return true;
 		}
 	}
-	return false;
+
+	// 실패 쓰레기는 결과 슬롯에 들어가지 않아서, 치우기 전에 또 만들면 같은 자리에 겹쳐 쌓인다
+	const ACSTrashActor* Trash = LastFailureTrash.Get();
+	if (!IsValid(Trash) || Trash->GetAttachParentActor() != nullptr || !IsValid(ResultModel1))
+	{
+		return false;
+	}
+	// 물리로 떨어진 메시는 액터 루트에서 떨어져 움직여서 메시 범위 중심을 본다
+	constexpr float ResultSpotRadius = 60.0f;
+	const FBox Bounds = Trash->GetComponentsBoundingBox(true);
+	const FVector TrashCenter = Bounds.IsValid ? Bounds.GetCenter() : Trash->GetActorLocation();
+	return FVector::DistSquared2D(TrashCenter, ResultModel1->GetComponentLocation()) <= FMath::Square(ResultSpotRadius);
 }
 
 FName ACSCraftStationActor::GetPlacementRejectReason(const ACSProductPickupActor* Product) const
@@ -2182,6 +2193,7 @@ bool ACSCraftStationActor::SpawnFailureTrash(ECSCraftOutcome Outcome, FText& Out
 	}
 
 	OutDisplayName = Trash->GetTrashDisplayName();
+	LastFailureTrash = Trash;
 	return true;
 }
 
