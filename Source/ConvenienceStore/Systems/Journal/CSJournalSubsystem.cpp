@@ -230,6 +230,13 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 	Catalog = NewObject<UCSJournalCatalog>(this);
 	const TCHAR *Races[] = {TEXT("Goblin"), TEXT("Orc"), TEXT("Human"), TEXT("Wizard"), TEXT("Dwarf"), TEXT("Elf")};
 	const TCHAR *Names[] = {TEXT("고블린"), TEXT("오크"), TEXT("인간"), TEXT("마법사"), TEXT("드워프"), TEXT("엘프")};
+	const TCHAR *LifeDescriptions[] = {
+		TEXT("고블린은 작고 민첩하며 실용적인 생활을 한다. 값비싼 물건보다는 당장 사용할 수 있는 물건을 선호하며, 시장이나 상점 근처에서 자주 모습을 드러낸다. 새로운 먹거리와 눈에 띄는 상품에도 관심이 많다."),
+		TEXT("오크는 강인한 체력을 바탕으로 육체적인 일을 하며 생활한다. 복잡한 장식이나 격식보다는 튼튼하고 실용적인 물건을 중요하게 생각한다. 일과를 마친 뒤에는 충분한 식사와 휴식을 즐긴다."),
+		TEXT("모험가는 여러 지역을 돌아다니며 의뢰를 수행하고 새로운 장소를 탐험한다. 언제 다시 길을 떠날지 모르기 때문에 식량과 회복용품, 여행에 필요한 물건을 미리 준비하는 편이다."),
+		TEXT("마법사는 마법을 연구하거나 새로운 주문을 익히며 많은 시간을 보낸다. 연구에 몰두하면 식사나 휴식을 잊기도 하며, 마법 실험에 사용할 물약과 두루마리 같은 물건에 익숙하다."),
+		TEXT("드워프는 광산과 공방에서 일하며 물건을 만들고 수리하는 생활에 익숙하다. 오래 사용할 수 있는 튼튼한 물건을 높게 평가하며, 일을 마친 뒤 동료들과 함께 쉬는 시간을 중요하게 여긴다."),
+		TEXT("엘프는 자연과 조화를 이루며 차분한 생활을 한다. 주변 환경을 세심하게 관리하고 깨끗한 상태를 유지하는 것을 중요하게 생각한다. 인공적인 물건보다는 신선하고 자연에 가까운 상품에 관심을 보인다.")};
 	const TCHAR *Categories[] = {TEXT("주류"),	   TEXT("음료"),	 TEXT("신선 식품"),	 TEXT("냉동 식품"),
 								 TEXT("물약"),	   TEXT("두루마리"), TEXT("간식"),		 TEXT("생활용품"),
 								 TEXT("위생용품"), TEXT("도구"),	 TEXT("숙취 해소제")};
@@ -241,7 +248,8 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 		E.Title = FText::FromString(FString::Printf(TEXT("%s의 상품 취향"), Names[I]));
 		const UCSCustomerArchetypeDataAsset* Archetype = IsValid(ConfiguredCatalog)
 			? ConfiguredCatalog->FallbackArchetypes.FindRef(E.Race).Get() : nullptr;
-		FString Body = TEXT("관련 장소를 방문하며 이 종족의 생활과 상품 취향을 조사했다.");
+		E.LifeBody = FText::FromString(LifeDescriptions[I]);
+		FString PreferenceBody = TEXT("관련 장소를 방문하며 이 종족의 생활과 상품 취향을 조사했다.");
 		if (Archetype)
 		{
 			float Best = -1;
@@ -253,7 +261,7 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 					Category = static_cast<int32>(Pair.Key);
 				}
 			if (Category >= 0 && Category < UE_ARRAY_COUNT(Categories))
-				Body += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), Categories[Category]);
+				PreferenceBody += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), Categories[Category]);
 			TArray<FString> Blocked;
 			for (auto C : Archetype->BlockedCategories)
 				if (static_cast<int32>(C) < UE_ARRAY_COUNT(Categories))
@@ -261,10 +269,12 @@ void UCSJournalSubsystem::Initialize(FSubsystemCollectionBase &Collection)
 			if (!Blocked.IsEmpty())
 			{
 				Blocked.Sort();
-				Body += TEXT("\n\n구매하지 않는 상품 분류: ") + FString::Join(Blocked, TEXT(", ")) + TEXT(".");
+				if (!PreferenceBody.IsEmpty()) PreferenceBody += TEXT("\n\n");
+				PreferenceBody += TEXT("구매하지 않는 상품 분류: ") + FString::Join(Blocked, TEXT(", ")) + TEXT(".");
 			}
 		}
-		E.Body = FText::FromString(Body);
+		E.PreferenceBody = FText::FromString(PreferenceBody);
+		E.Body = FText::FromString(FString(LifeDescriptions[I]) + TEXT("\n\n") + PreferenceBody);
 		Catalog->RaceEntries.Add(E);
 	}
 }

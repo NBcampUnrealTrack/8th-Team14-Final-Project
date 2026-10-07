@@ -21,6 +21,7 @@ FText GetProductRowCategoryText(ECSProductCategory Category)
 	case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
 	case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
 	case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
+	case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
 	default: return FText::GetEmpty();
 	}
 }
@@ -49,7 +50,6 @@ void UCSLedgerProductRowWidget::SetProductData(
 	bool bInSelected)
 {
 	DisplayedProduct = InProductData;
-	DisplayedProduct.bUnlocked = true;
 	bSelected = bInSelected;
 	RefreshRowView();
 }
@@ -84,9 +84,13 @@ void UCSLedgerProductRowWidget::RefreshRowView()
 			: ESlateVisibility::Hidden);
 	}
 
-	// 기존 WBP 바인딩은 유지하지만 상품 잠금 연출은 표시하지 않습니다.
-	if (IsValid(LockOnImage)) LockOnImage->SetVisibility(ESlateVisibility::Collapsed);
-	if (IsValid(LockedStatus)) LockedStatus->SetVisibility(ESlateVisibility::Collapsed);
+	// 일반 상품은 항상 열린 상태이며, 제조 전용 미발견 상품에만 기존 장부의
+	// 자물쇠 연출을 재사용합니다. 클릭은 유지하여 오른쪽 제조 힌트를 볼 수 있습니다.
+	const ESlateVisibility LockVisibility = DisplayedProduct.bUnlocked
+		? ESlateVisibility::Collapsed
+		: ESlateVisibility::HitTestInvisible;
+	if (IsValid(LockOnImage)) LockOnImage->SetVisibility(LockVisibility);
+	if (IsValid(LockedStatus)) LockedStatus->SetVisibility(LockVisibility);
 	if (IsValid(SelBg_Row))
 	{
 		SelBg_Row->SetVisibility(bSelected

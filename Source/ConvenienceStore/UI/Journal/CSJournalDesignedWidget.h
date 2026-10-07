@@ -33,6 +33,20 @@ private:
 	UFUNCTION() void ExecuteAction();
 };
 
+// 아티팩트 셀에 일반 UButton을 사용해도 클릭한 셀의 ID를 수첩에 전달합니다.
+UCLASS()
+class CONVENIENCESTORE_API UCSJournalArtifactClickProxy : public UObject
+{
+	GENERATED_BODY()
+public:
+	void Connect(UCSJournalWidget* InJournal, FName InArtifactId);
+	UFUNCTION() void Execute();
+
+private:
+	UPROPERTY(Transient) TObjectPtr<UCSJournalWidget> OwnerJournal;
+	FName ArtifactId;
+};
+
 // 레이아웃은 저장된 WBP 트리에서 가져오며 이름으로 연결된 표시 내용만 갱신합니다.
 UCLASS(Abstract, Blueprintable)
 class CONVENIENCESTORE_API UCSJournalDesignedWidget : public UCSJournalWidget
@@ -42,6 +56,22 @@ class CONVENIENCESTORE_API UCSJournalDesignedWidget : public UCSJournalWidget
 
 public:
 	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design") TSubclassOf<UUserWidget> ArtifactCellClass;
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Artifacts")
+	FMargin ArtifactCellPadding = FMargin(6.0f);
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Artifacts")
+	FLinearColor ArtifactDefaultTextColor = FLinearColor::FromSRGBColor(FColor(54, 39, 22));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Artifacts")
+	FLinearColor ArtifactSelectedTextColor = FLinearColor::FromSRGBColor(FColor(241, 226, 181));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Tabs")
+	FLinearColor DefaultTabTextColor = FLinearColor::FromSRGBColor(FColor(54, 39, 22));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Tabs")
+	FLinearColor SelectedTabTextColor = FLinearColor::FromSRGBColor(FColor(241, 226, 181));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Calendar")
+	FLinearColor DefaultDayTextColor = FLinearColor::FromSRGBColor(FColor(54, 39, 22));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Calendar")
+	FLinearColor SelectedDayTextColor = FLinearColor::FromSRGBColor(FColor(250, 244, 221));
+	UPROPERTY(EditDefaultsOnly, Category = "Journal|Design|Calendar")
+	FLinearColor UnavailableDayTextColor = FLinearColor::FromSRGBColor(FColor(166, 157, 132));
 
 protected:
 	virtual void NativeConstruct() override;
@@ -52,9 +82,11 @@ protected:
 private:
 	void SetLabel(FName Name, const FText& Text);
 	void SetLabel(FName Name, const FString& Text);
+	void RefreshCalendarEvents();
 	void RefreshDeliveries();
 	void RefreshArtifactCells();
 	UPROPERTY(Transient) TArray<TObjectPtr<UUserWidget>> ArtifactCells;
+	UPROPERTY(Transient) TArray<TObjectPtr<UCSJournalArtifactClickProxy>> ArtifactClickProxies;
 	UPROPERTY(Transient) TObjectPtr<UCSJournalActionButton> ArtifactUseButton;
 	UPROPERTY(Transient) TObjectPtr<UCSJournalActionButton> ArtifactCancelUseButton;
 	UPROPERTY(Transient) TObjectPtr<UCSJournalCatalog> DisplayedCatalog;

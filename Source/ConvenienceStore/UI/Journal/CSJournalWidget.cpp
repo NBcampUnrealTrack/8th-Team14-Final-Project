@@ -15,6 +15,7 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Data/CSCustomerArchetypeDataAsset.h"
 
 namespace
 {
@@ -30,6 +31,55 @@ constexpr const TCHAR* JournalPageTitles[] = {TEXT("지도"),
 											  TEXT("달력 · 사건 기록"),
 											  TEXT("배달 기록"),
 											  TEXT("아티팩트 도감")};
+
+FString GetRaceLifeDescription(ECSJournalRace Race)
+{
+	static const TCHAR* Descriptions[] = {
+		TEXT("고블린은 작고 민첩하며 실용적인 생활을 한다. 값비싼 물건보다는 당장 사용할 수 있는 물건을 선호하며, 시장이나 상점 근처에서 자주 모습을 드러낸다. 새로운 먹거리와 눈에 띄는 상품에도 관심이 많다."),
+		TEXT("오크는 강인한 체력을 바탕으로 육체적인 일을 하며 생활한다. 복잡한 장식이나 격식보다는 튼튼하고 실용적인 물건을 중요하게 생각한다. 일과를 마친 뒤에는 충분한 식사와 휴식을 즐긴다."),
+		TEXT("모험가는 여러 지역을 돌아다니며 의뢰를 수행하고 새로운 장소를 탐험한다. 언제 다시 길을 떠날지 모르기 때문에 식량과 회복용품, 여행에 필요한 물건을 미리 준비하는 편이다."),
+		TEXT("마법사는 마법을 연구하거나 새로운 주문을 익히며 많은 시간을 보낸다. 연구에 몰두하면 식사나 휴식을 잊기도 하며, 마법 실험에 사용할 물약과 두루마리 같은 물건에 익숙하다."),
+		TEXT("드워프는 광산과 공방에서 일하며 물건을 만들고 수리하는 생활에 익숙하다. 오래 사용할 수 있는 튼튼한 물건을 높게 평가하며, 일을 마친 뒤 동료들과 함께 쉬는 시간을 중요하게 여긴다."),
+		TEXT("엘프는 자연과 조화를 이루며 차분한 생활을 한다. 주변 환경을 세심하게 관리하고 깨끗한 상태를 유지하는 것을 중요하게 생각한다. 인공적인 물건보다는 신선하고 자연에 가까운 상품에 관심을 보인다.")};
+	const int32 Index = static_cast<int32>(Race);
+	return Index >= 0 && Index < UE_ARRAY_COUNT(Descriptions) ? Descriptions[Index] : TEXT("");
+}
+
+FString BuildRacePreferenceDescription(const UCSCustomerArchetypeDataAsset* Archetype)
+{
+	static const TCHAR* Categories[] = {TEXT("주류"), TEXT("음료"), TEXT("신선 식품"), TEXT("냉동 식품"),
+		TEXT("물약"), TEXT("두루마리"), TEXT("간식"), TEXT("생활용품"), TEXT("위생용품"), TEXT("도구"), TEXT("숙취 해소제")};
+	FString Result = TEXT("관련 장소를 방문하며 이 종족의 생활과 상품 취향을 조사했다.");
+	if (!Archetype)
+		return Result;
+
+	float Best = -1.f;
+	int32 BestCategory = INDEX_NONE;
+	for (const auto& Pair : Archetype->CategoryPreference)
+		if (Pair.Value > Best && !Archetype->BlockedCategories.Contains(Pair.Key))
+		{
+			Best = Pair.Value;
+			BestCategory = static_cast<int32>(Pair.Key);
+		}
+
+	if (BestCategory >= 0 && BestCategory < UE_ARRAY_COUNT(Categories))
+		Result += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), Categories[BestCategory]);
+
+	TArray<FString> Blocked;
+	for (const auto Category : Archetype->BlockedCategories)
+	{
+		const int32 Index = static_cast<int32>(Category);
+		if (Index >= 0 && Index < UE_ARRAY_COUNT(Categories))
+			Blocked.Add(Categories[Index]);
+	}
+	Blocked.Sort();
+	if (!Blocked.IsEmpty())
+	{
+		if (!Result.IsEmpty()) Result += TEXT("\n\n");
+		Result += TEXT("구매하지 않는 상품 분류: ") + FString::Join(Blocked, TEXT(", ")) + TEXT(".");
+	}
+	return Result;
+}
 bool IsInMap(FVector2D Point)
 {
 	return Point.X >= 0 && Point.X <= 1 && Point.Y >= 0 && Point.Y <= 1;
@@ -243,8 +293,25 @@ void UCSJournalWidget::RefreshJournal()
 void UCSJournalWidget::UpdateNavigationWidgets()
 {
 	const int32 Index = static_cast<int32>(SelectedPage);
-	if (PageSwitcher && Index < PageSwitcher->GetNumWidgets())
-		PageSwitcher->SetActiveWidgetIndex(Index);
+	// 디자이너 WBP에서 Is Variable 여부 등에 따라 BindWidgetOptional 포인터가 비어도
+	// 약속된 이름의 실제 WidgetSwitcher를 찾아 페이지 전환은 항상 수행합니다.
+	UWidgetSwitcher* Switcher = PageSwitcher;
+	if (!Switcher)
+		Switcher = Cast<UWidgetSwitcher>(GetWidgetFromName(TEXT("PageSwitcher")));
+	if (Switcher)
+	{
+		const int32 WidgetCount = Switcher->GetNumWidgets();
+		if (Index < WidgetCount)
+			Switcher->SetActiveWidgetIndex(Index);
+		else
+			UE_LOG(LogTemp, Warning,
+				TEXT("[Journal] PageSwitcher 자식 수가 부족합니다. SelectedIndex=%d, ChildCount=%d"),
+				Index, WidgetCount);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Journal] 이름이 PageSwitcher인 WidgetSwitcher를 찾지 못했습니다."));
+	}
 	if (PageTitleText)
 		PageTitleText->SetText(GetPageTitle());
 	if (PreviousPageButton)
@@ -342,7 +409,17 @@ TArray<FCSJournalRaceEntryView> UCSJournalWidget::GetRaceEntries(ECSJournalRace 
 				View.bUnlocked = Journal->IsEntryUnlocked(Entry.EntryId);
 				View.Title = View.bUnlocked ? Entry.Title : FText::FromString(TEXT("아직 발견하지 못한 기록"));
 				if (View.bUnlocked)
-					View.Body = Entry.Body;
+				{
+					View.LifeBody = Entry.LifeBody.IsEmpty()
+						? FText::FromString(GetRaceLifeDescription(Race)) : Entry.LifeBody;
+					View.PreferenceBody = Entry.PreferenceBody;
+					if (View.PreferenceBody.IsEmpty())
+					{
+						const UCSCustomerArchetypeDataAsset* Archetype = Journal->Catalog->FallbackArchetypes.FindRef(Race).Get();
+						View.PreferenceBody = FText::FromString(BuildRacePreferenceDescription(Archetype));
+					}
+					View.Body = FText::FromString(View.LifeBody.ToString() + TEXT("\n\n") + View.PreferenceBody.ToString());
+				}
 				Entries.Add(View);
 			}
 	return Entries;
