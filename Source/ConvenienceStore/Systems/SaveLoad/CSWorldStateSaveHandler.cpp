@@ -6,10 +6,13 @@
 #include "GameFramework/Pawn.h"
 
 #include "Data/CSSaveTypes.h"
+#include "Features/Cart/CSCartActor.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Ending/CSEndingActors.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Facilities/CSSaveIdComponent.h"
+#include "Features/Gacha/CSGachaArtifactPickup.h"
+#include "Features/Gacha/CSGachaSeal.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -34,16 +37,24 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 	CaptureCrates(Record);
 	CaptureFacilities(Record);
 	CaptureTrash(Record);
+	CaptureGachaSeals(Record);
+	CaptureArtifactPickups(Record);
+	// 아티팩트로 소환한 수레를 기록
+	CaptureSummonedCarts(Record);
 	CaptureQuickbar(Record);
 	CaptureEnding(OutSave);
 
+	// 요약 로그에 소환 수레 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.GachaSeals.Num(),
+		Record.ArtifactPickups.Num(),
+		Record.SummonedCarts.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -196,11 +207,23 @@ void UCSWorldStateSaveHandler::CaptureCrates(FCSWorldSaveRecord& OutRecord) cons
 		else if (IsValid(ParentActor))
 		{
 			// 운반자·수레에 실린 상자는 부착 상태 대신 현재 위치의 바닥 상자로 기록
+			// 소환 수레에 다시 싣지 못할 때의 폴백으로도 사용
 			CrateRecord.Transform = FTransform(
 				Crate->GetActorRotation(),
 				Crate->GetActorLocation(),
 				Crate->GetActorScale3D());
 			CrateRecord.bWorldDropPhysics = true;
+
+			// 소환 수레에 실린 상자는 복원 시 같은 수레에 다시 싣도록 수레 식별자를 기록
+			// 레벨 배치 수레는 식별자가 없으므로 바닥 상자로만 복원
+			if (const ACSCartActor* Cart = Cast<ACSCartActor>(ParentActor))
+			{
+				const UCSSaveIdComponent* CartSaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+				if (CartSaveIdComponent != nullptr && CartSaveIdComponent->WasSpawnedAtRuntime())
+				{
+					CrateRecord.CartSaveId = CartSaveIdComponent->GetSaveId();
+				}
+			}
 		}
 
 		OutRecord.Crates.Add(CrateRecord);
@@ -255,10 +278,18 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 		return;
 	}
 
+	// 퀵바 쓰레기 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
 	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
 	{
 		const ACSTrashActor* Trash = *It;
 		if (!IsValid(Trash) || Trash->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 쓰레기는 퀵바 레코드가 기록하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(Trash))
 		{
 			continue;
 		}
@@ -269,7 +300,7 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 		const AActor* ParentActor = Trash->GetAttachParentActor();
 		if (const APawn* CarrierPawn = Cast<APawn>(ParentActor))
 		{
-			// 손에 들거나 퀵바에 보관한 쓰레기는 부착 상태 대신 운반자 위치의 바닥 쓰레기로 기록
+			// 퀵바에 등록되지 않은 채 운반 중인 쓰레기는 부착 상태 대신 운반자 위치의 바닥 쓰레기로 기록
 			TrashRecord.Transform = FTransform(
 				Trash->GetActorRotation(),
 				CarrierPawn->GetActorLocation(),
@@ -284,6 +315,115 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 		}
 
 		OutRecord.Trash.Add(TrashRecord);
+	}
+}
+
+void UCSWorldStateSaveHandler::CaptureGachaSeals(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 퀵바 봉인석 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
+	for (TActorIterator<ACSGachaSeal> It(World); It; ++It)
+	{
+		// 개봉했거나 보상이 없는 봉인석은 복원해도 개봉할 수 없으므로 기록에서 제외
+		const ACSGachaSeal* Seal = *It;
+		if (!IsValid(Seal) || Seal->IsActorBeingDestroyed() || !Seal->HasSealedReward())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 봉인석은 퀵바 레코드가 담당하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(Seal))
+		{
+			continue;
+		}
+
+		FCSGachaSealRecord SealRecord;
+		Seal->CaptureSaveRecord(SealRecord);
+
+		// 퀵바에 등록되지 않은 채 운반 중인 봉인석은 부착 상태 대신 운반자 위치의 바닥 봉인석으로 기록
+		if (const APawn* CarrierPawn = Cast<APawn>(Seal->GetAttachParentActor()))
+		{
+			SealRecord.Transform = FTransform(
+				Seal->GetActorRotation(),
+				CarrierPawn->GetActorLocation(),
+				Seal->GetActorScale3D());
+			SealRecord.bWorldDropPhysics = true;
+		}
+
+		OutRecord.GachaSeals.Add(SealRecord);
+	}
+}
+
+void UCSWorldStateSaveHandler::CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSGachaArtifactPickup> It(World); It; ++It)
+	{
+		// 획득 처리로 제거 중인 픽업은 기록에서 제외
+		const ACSGachaArtifactPickup* Pickup = *It;
+		if (!IsValid(Pickup) || Pickup->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 아티팩트 행이 없는 픽업은 복원해도 획득할 수 없으므로 경고 후 제외
+		if (Pickup->GetArtifactId().IsNone())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 아티팩트 픽업 %s에 아티팩트 행이 없어 저장에서 제외합니다."),
+				*Pickup->GetName());
+			continue;
+		}
+
+		FCSArtifactPickupRecord PickupRecord;
+		Pickup->CaptureSaveRecord(PickupRecord);
+		OutRecord.ArtifactPickups.Add(PickupRecord);
+	}
+}
+
+void UCSWorldStateSaveHandler::CaptureSummonedCarts(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		// 제거 중인 수레는 기록에서 제외
+		const ACSCartActor* Cart = *It;
+		if (!IsValid(Cart) || Cart->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 레벨 배치 수레는 식별자 컴포넌트가 없거나 런타임 발급이 아니므로 제외
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent == nullptr
+			|| !SaveIdComponent->WasSpawnedAtRuntime()
+			|| !SaveIdComponent->GetSaveId().IsValid())
+		{
+			continue;
+		}
+
+		// 수레는 물리를 쓰지 않으므로 플레이어가 밀고 있어도 액터 트랜스폼을 그대로 기록
+		FCSSummonedCartRecord CartRecord;
+		CartRecord.SaveId = SaveIdComponent->GetSaveId();
+		CartRecord.ActorClass = FSoftClassPath(Cart->GetClass());
+		CartRecord.Transform = Cart->GetActorTransform();
+		OutRecord.SummonedCarts.Add(CartRecord);
 	}
 }
 
@@ -332,22 +472,33 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 
 	DestroyAllProductsAndCrates();
 	DestroyAllTrash();
+	// 퀵바로 복원한 봉인석까지 제거되지 않도록 퀵바 복원 전에 제거
+	DestroyAllGachaSeals();
+	DestroyAllArtifactPickups();
 
 	RestoreFacilities(Record);
+	// 수레 위 상자가 수레 자리에 떨어지도록 상자 복원보다 먼저 소환 수레를 복원
+	RestoreSummonedCarts(Record);
 	RestoreShelves(Record, FallbackProductTable);
 	RestoreLooseProducts(Record, FallbackProductTable);
 	RestoreCrates(Record, FallbackProductTable);
 	RestoreTrash(Record);
+	RestoreGachaSeals(Record);
+	RestoreArtifactPickups(Record);
 	RestoreQuickbar(Record, FallbackProductTable);
 	RestoreEnding(InSave);
 
+	// 요약 로그에 소환 수레 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.GachaSeals.Num(),
+		Record.ArtifactPickups.Num(),
+		Record.SummonedCarts.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -441,6 +592,60 @@ void UCSWorldStateSaveHandler::DestroyAllTrash()
 	}
 }
 
+void UCSWorldStateSaveHandler::DestroyAllGachaSeals()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 반복 중 액터 목록이 바뀌지 않도록 제거 대상을 먼저 수집
+	TArray<ACSGachaSeal*> SealsToDestroy;
+	for (TActorIterator<ACSGachaSeal> It(World); It; ++It)
+	{
+		if (ACSGachaSeal* Seal = *It; IsValid(Seal))
+		{
+			SealsToDestroy.Add(Seal);
+		}
+	}
+
+	for (ACSGachaSeal* Seal : SealsToDestroy)
+	{
+		if (IsValid(Seal))
+		{
+			Seal->Destroy();
+		}
+	}
+}
+
+void UCSWorldStateSaveHandler::DestroyAllArtifactPickups()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 반복 중 액터 목록이 바뀌지 않도록 제거 대상을 먼저 수집
+	TArray<ACSGachaArtifactPickup*> PickupsToDestroy;
+	for (TActorIterator<ACSGachaArtifactPickup> It(World); It; ++It)
+	{
+		if (ACSGachaArtifactPickup* Pickup = *It; IsValid(Pickup))
+		{
+			PickupsToDestroy.Add(Pickup);
+		}
+	}
+
+	for (ACSGachaArtifactPickup* Pickup : PickupsToDestroy)
+	{
+		if (IsValid(Pickup))
+		{
+			Pickup->Destroy();
+		}
+	}
+}
+
 void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 {
 	UWorld* World = GetWorld();
@@ -451,24 +656,82 @@ void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 
 	for (const FCSTrashRecord& TrashRecord : InRecord.Trash)
 	{
-		UClass* TrashClass = TrashRecord.ActorClass.TryLoadClass<ACSTrashActor>();
-		if (TrashClass == nullptr)
+		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
+		SpawnTrashFromRecord(*World, TrashRecord, TrashRecord.Transform);
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreGachaSeals(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const FCSGachaSealRecord& SealRecord : InRecord.GachaSeals)
+	{
+		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
+		ACSGachaSeal* Seal = SpawnGachaSealFromRecord(*World, SealRecord, SealRecord.Transform);
+		if (!IsValid(Seal))
+		{
+			continue;
+		}
+
+		// 바닥에 놓여 있던 봉인석은 충격량 없이 물리를 다시 켜 바닥에 안착
+		// Launch는 개봉 대기를 켜지 않으므로 복원 직후 개봉을 방지
+		if (SealRecord.bWorldDropPhysics)
+		{
+			Seal->Launch(FVector::ZeroVector);
+		}
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreArtifactPickups(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const FCSArtifactPickupRecord& PickupRecord : InRecord.ArtifactPickups)
+	{
+		// 저장된 픽업 클래스를 조회하고 실패하면 경고 후 생성을 생략
+		UClass* PickupClass = PickupRecord.ActorClass.TryLoadClass<ACSGachaArtifactPickup>();
+		if (PickupClass == nullptr)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[CSSave] 쓰레기 클래스를 불러오지 못했습니다: %s"),
-				*TrashRecord.ActorClass.ToString());
+				TEXT("[CSSave] 아티팩트 픽업 클래스를 불러오지 못했습니다: %s"),
+				*PickupRecord.ActorClass.ToString());
 			continue;
 		}
 
-		FActorSpawnParameters SpawnParameters;
-		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		ACSTrashActor* Trash = World->SpawnActor<ACSTrashActor>(TrashClass, TrashRecord.Transform, SpawnParameters);
-		if (!IsValid(Trash))
+		// 봉인석 보상 생성과 같이 BeginPlay 전에 아티팩트 행을 지정하도록 지연 생성
+		ACSGachaArtifactPickup* Pickup = World->SpawnActorDeferred<ACSGachaArtifactPickup>(
+			PickupClass,
+			PickupRecord.Transform,
+			nullptr,
+			nullptr,
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!IsValid(Pickup))
 		{
 			continue;
 		}
 
-		Trash->RestoreSaveRecord(TrashRecord);
+		// 행을 해석하지 못하면 획득할 수 없는 픽업이 남지 않도록 제거
+		if (!Pickup->InitializeArtifact(PickupRecord.ArtifactRow.ToHandle(), PickupRecord.Quantity))
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 아티팩트 행 %s을 불러오지 못해 픽업을 생성하지 않습니다."),
+				*PickupRecord.ArtifactRow.RowName.ToString());
+			Pickup->Destroy();
+			continue;
+		}
+
+		// BeginPlay에서 테이블을 다시 등록한 뒤 저장 시점의 메시 위치와 물리 상태를 적용
+		Pickup->FinishSpawning(PickupRecord.Transform);
+		Pickup->RestoreSaveRecord(PickupRecord);
 	}
 }
 
@@ -644,6 +907,11 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 	TMap<FName, ACSFreshnessSafeZoneActor*> StoragesByName;
 	CollectStoragesByName(StoragesByName);
 
+	// 소환 수레에 실려 있던 상자를 다시 싣도록 복원된 소환 수레를 수집
+	// RestoreSummonedCarts가 먼저 실행되므로 저장 당시 식별자로 조회 가능
+	TMap<FGuid, ACSCartActor*> SummonedCartsBySaveId;
+	CollectSummonedCartsBySaveId(SummonedCartsBySaveId);
+
 	for (const FCSCrateRecord& CrateRecord : InRecord.Crates)
 	{
 		ACSDeliveryCrateActor* Crate =
@@ -668,6 +936,23 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 				*CrateRecord.StorageActorName.ToString());
 		}
 
+		// 소환 수레에 실려 있던 상자는 저장 위치와 가장 가까운 빈 적재 칸에 다시 적재
+		// 수레가 저장 당시 위치에 복원되므로 저장 당시와 같은 칸을 선택
+		if (CrateRecord.CartSaveId.IsValid())
+		{
+			ACSCartActor** Cart = SummonedCartsBySaveId.Find(CrateRecord.CartSaveId);
+			if (Cart != nullptr
+				&& ICSShelfPlaceable::Execute_TryPlaceItem(*Cart, Crate, CrateRecord.Transform.GetLocation()))
+			{
+				continue;
+			}
+
+			// 수레를 찾지 못하거나 빈 적재 칸이 없으면 저장 위치의 바닥 상자로 유지
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 소환 수레 %s에 상자를 다시 싣지 못해 바닥에 둡니다."),
+				*CrateRecord.CartSaveId.ToString());
+		}
+
 		if (CrateRecord.bWorldDropPhysics)
 		{
 			Crate->EnableWorldDropPhysics();
@@ -675,11 +960,7 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 	}
 }
 
-ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(
-	UWorld& InWorld,
-	const FCSCrateRecord& InRecord,
-	const FTransform& InSpawnTransform,
-	const UDataTable* FallbackProductTable)
+ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(UWorld& InWorld,const FCSCrateRecord& InRecord,const FTransform& InSpawnTransform,const UDataTable* FallbackProductTable)
 {
 	UClass* CrateClass = InRecord.ActorClass.TryLoadClass<ACSDeliveryCrateActor>();
 	if (CrateClass == nullptr)
@@ -723,6 +1004,75 @@ ACSDeliveryCrateActor* UCSWorldStateSaveHandler::SpawnCrateFromRecord(
 	// BeginPlay가 신선도를 초기화한 뒤 저장 시점 상태로 덮어씀
 	Crate->RestoreSaveRecord(InRecord);
 	return Crate;
+}
+
+ACSTrashActor* UCSWorldStateSaveHandler::SpawnTrashFromRecord(UWorld& InWorld,const FCSTrashRecord& InRecord,const FTransform& InSpawnTransform)
+{
+	// 저장된 쓰레기 클래스를 조회하고 실패하면 경고 후 생성을 생략
+	UClass* TrashClass = InRecord.ActorClass.TryLoadClass<ACSTrashActor>();
+	if (TrashClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 쓰레기 클래스를 불러오지 못했습니다: %s"),
+			*InRecord.ActorClass.ToString());
+		return nullptr;
+	}
+
+	// 다른 액터와 겹쳐도 생성되도록 충돌 처리 방식을 설정
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACSTrashActor* Trash = InWorld.SpawnActor<ACSTrashActor>(TrashClass, InSpawnTransform, SpawnParameters);
+	if (!IsValid(Trash))
+	{
+		return nullptr;
+	}
+
+	// 저장 시점의 이름·메시·충돌·물리 상태를 적용
+	Trash->RestoreSaveRecord(InRecord);
+	return Trash;
+}
+
+ACSGachaSeal* UCSWorldStateSaveHandler::SpawnGachaSealFromRecord(UWorld& InWorld, const FCSGachaSealRecord& InRecord, const FTransform& InSpawnTransform)
+{
+	// 저장된 봉인석 클래스를 조회하고 실패하면 경고 후 생성을 생략
+	UClass* SealClass = InRecord.ActorClass.TryLoadClass<ACSGachaSeal>();
+	if (SealClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 봉인석 클래스를 불러오지 못했습니다: %s"),
+			*InRecord.ActorClass.ToString());
+		return nullptr;
+	}
+
+	// 생성 시 클래스 기본 크기에 전달한 크기가 곱해지므로 위치·회전만 사용
+	// 저장된 크기를 그대로 전달하면 기본 크기가 두 번 적용되어 봉인석이 작아지는 것을 방지
+	const FTransform SpawnTransform(InSpawnTransform.GetRotation(), InSpawnTransform.GetLocation());
+
+	// 가챠 우물과 같이 BeginPlay 전에 보상을 설정하도록 지연 생성
+	// 다른 액터와 겹쳐도 생성되도록 충돌 처리 방식을 설정
+	ACSGachaSeal* Seal = InWorld.SpawnActorDeferred<ACSGachaSeal>(
+		SealClass,
+		SpawnTransform,
+		nullptr,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(Seal))
+	{
+		return nullptr;
+	}
+
+	// 보상 행을 해석하지 못하면 개봉할 수 없는 봉인석이 남지 않도록 제거
+	if (!Seal->RestoreSaveRecord(InRecord))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 봉인석 보상 %s의 행을 불러오지 못해 봉인석을 생성하지 않습니다."),
+			*InRecord.RewardId.ToString());
+		Seal->Destroy();
+		return nullptr;
+	}
+
+	Seal->FinishSpawning(SpawnTransform);
+	return Seal;
 }
 
 void UCSWorldStateSaveHandler::RestoreFacilities(const FCSWorldSaveRecord& InRecord)
@@ -824,6 +1174,73 @@ void UCSWorldStateSaveHandler::RestoreFacilities(const FCSWorldSaveRecord& InRec
 	}
 }
 
+void UCSWorldStateSaveHandler::RestoreSummonedCarts(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 같은 월드에 다시 적용될 때 소환 수레가 중복되지 않도록 런타임 수레를 먼저 수집
+	// 레벨 배치 수레는 식별자 컴포넌트가 없으므로 유지
+	TArray<ACSCartActor*> RuntimeSpawnedCarts;
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		ACSCartActor* Cart = *It;
+		if (!IsValid(Cart))
+		{
+			continue;
+		}
+
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent != nullptr && SaveIdComponent->WasSpawnedAtRuntime())
+		{
+			RuntimeSpawnedCarts.Add(Cart);
+		}
+	}
+
+	for (ACSCartActor* Cart : RuntimeSpawnedCarts)
+	{
+		if (IsValid(Cart))
+		{
+			Cart->Destroy();
+		}
+	}
+
+	for (const FCSSummonedCartRecord& CartRecord : InRecord.SummonedCarts)
+	{
+		// 저장된 수레 클래스를 조회하고 실패하면 경고 후 생성을 생략
+		UClass* CartClass = CartRecord.ActorClass.TryLoadClass<ACSCartActor>();
+		if (CartClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 소환 수레 클래스를 불러오지 못했습니다: %s"),
+				*CartRecord.ActorClass.ToString());
+			continue;
+		}
+
+		// 생성 시 클래스 기본 크기에 전달한 크기가 곱해지므로 위치·회전만 사용
+		// 소환 시와 같은 방식으로 생성해 크기가 중복 적용되는 것을 방지
+		const FTransform SpawnTransform(CartRecord.Transform.GetRotation(), CartRecord.Transform.GetLocation());
+
+		// 저장 당시 자리에 그대로 두도록 다른 액터와 겹쳐도 생성
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ACSCartActor* Cart = World->SpawnActor<ACSCartActor>(CartClass, SpawnTransform, SpawnParameters);
+		if (!IsValid(Cart))
+		{
+			continue;
+		}
+
+		// 다음 저장에서도 소환 수레로 기록되도록 저장 당시 식별자와 런타임 표시를 이어받음
+		if (UCSSaveIdComponent* SaveIdComponent = UCSSaveIdComponent::FindOrAddComponent(Cart))
+		{
+			SaveIdComponent->OverrideSaveId(CartRecord.SaveId, true);
+		}
+	}
+}
+
 void UCSWorldStateSaveHandler::RestoreQuickbar(
 	const FCSWorldSaveRecord& InRecord,
 	const UDataTable* FallbackProductTable)
@@ -890,6 +1307,34 @@ void UCSWorldStateSaveHandler::CollectStoragesByName(
 		if (ACSFreshnessSafeZoneActor* Storage = *It; IsValid(Storage))
 		{
 			OutStorages.Add(Storage->GetFName(), Storage);
+		}
+	}
+}
+
+void UCSWorldStateSaveHandler::CollectSummonedCartsBySaveId(TMap<FGuid, ACSCartActor*>& OutCarts) const
+{
+	OutCarts.Reset();
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		// RestoreSummonedCarts에서 제거한 이전 수레는 제외
+		ACSCartActor* Cart = *It;
+		if (!IsValid(Cart) || Cart->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent != nullptr
+			&& SaveIdComponent->WasSpawnedAtRuntime()
+			&& SaveIdComponent->GetSaveId().IsValid())
+		{
+			OutCarts.Add(SaveIdComponent->GetSaveId(), Cart);
 		}
 	}
 }

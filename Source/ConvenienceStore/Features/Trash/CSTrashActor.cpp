@@ -153,6 +153,10 @@ void ACSTrashActor::CaptureSaveRecord(FCSTrashRecord& OutRecord) const
 	OutRecord.ActorClass = FSoftClassPath(GetClass());
 	OutRecord.Transform = GetActorTransform();
 
+	// [백무송]
+	// 메시가 없어도 이름은 유지되도록 메시 확인 전에 현재 표시 이름을 기록
+	OutRecord.DisplayName = TrashDisplayName;
+
 	if (!IsValid(TrashMesh))
 	{
 		return;
@@ -181,6 +185,14 @@ void ACSTrashActor::CaptureSaveRecord(FCSTrashRecord& OutRecord) const
 
 void ACSTrashActor::RestoreSaveRecord(const FCSTrashRecord& InRecord)
 {
+	// [백무송]
+	// 저장된 이름이 있으면 표시 이름을 복원
+	// 이름 칸이 없던 이전 세이브는 빈 값이므로 클래스 기본 이름을 유지
+	if (!InRecord.DisplayName.IsEmpty())
+	{
+		TrashDisplayName = InRecord.DisplayName;
+	}
+
 	if (!IsValid(TrashMesh))
 	{
 		return;
