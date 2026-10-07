@@ -53,6 +53,9 @@ struct FCSJournalRaceEntryView
 	UPROPERTY(BlueprintReadOnly) FName EntryId;
 	UPROPERTY(BlueprintReadOnly) ECSJournalRace Race = ECSJournalRace::Goblin;
 	UPROPERTY(BlueprintReadOnly) FText Title;
+	UPROPERTY(BlueprintReadOnly) FText LifeBody;
+	UPROPERTY(BlueprintReadOnly) FText PreferenceBody;
+	// 기존 통합 레이아웃을 위한 호환 본문입니다.
 	UPROPERTY(BlueprintReadOnly) FText Body;
 	UPROPERTY(BlueprintReadOnly) bool bUnlocked = false;
 };
