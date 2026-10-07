@@ -19,8 +19,9 @@ bool IsEmployeeManageableProduct(const ACSProductPickupActor* Product)
 {
 	// 배치 프리뷰와 계산대 표시품은 실제 재고와 같은 부모 클래스를 쓰지만,
 	// 표시 전용 액터이므로 직원 업무 대상이 될 수 없습니다.
+	// 잠깐 쓰고 지워질 상품을 직원이 들고 있으면 지울 때 손에 빈 참조가 남는다
 	return IsValid(Product) && !Product->IsA<ACSProductPlacementPreviewActor>() &&
-		!Product->IsExcludedFromStockCount();
+		!Product->IsExcludedFromStockCount() && !Product->ActorHasTag(CSProductTags::TemporaryProduct);
 }
 
 bool IsActorHeldByPlayer(const UWorld* World, const AActor* Actor)

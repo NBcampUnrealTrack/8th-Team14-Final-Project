@@ -1520,7 +1520,9 @@ bool ACSStoreEmployeeCharacter::TryPackNearbyProducts(ACSProductPickupActor* Sou
 	for (TActorIterator<ACSProductPickupActor> It(GetWorld()); It; ++It)
 	{
 		ACSProductPickupActor* Product = *It;
+		// 잠깐 쓰고 지워질 상품이 섞이면 포장이 거절돼 같이 묶으려던 상품까지 못 가져간다
 		if (Product == SourceProduct || !ACSDeliveryCrateActor::CanPackProduct(Product) || Product->IsReservedByEmployee() ||
+			Product->ActorHasTag(CSProductTags::TemporaryProduct) ||
 			Product->GetAttachParentActor() != SourceParent || Product->GetProductRow().DataTable != ActiveTask.ProductRow.DataTable ||
 			Product->GetProductRow().RowName != ActiveTask.ProductRow.RowName ||
 			(SourceShelf && bReorganizing && !SourceShelf->ShouldEmployeeReorganizeProduct(Product)) ||

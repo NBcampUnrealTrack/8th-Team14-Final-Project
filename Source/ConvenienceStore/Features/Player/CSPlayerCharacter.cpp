@@ -5147,6 +5147,28 @@ void ACSPlayerCharacter::RemoveHeldItemFromQuickbar()
 		QuickbarInventory->RemoveItem(HeldActor);
 }
 
+bool ACSPlayerCharacter::RemoveProductFromHands(AActor* Product)
+{
+	if (!IsValid(Product))
+	{
+		return false;
+	}
+	// 쓰레기통에 버릴 때와 같은 순서로 정리해야 미리보기와 상호작용 안내가 남지 않는다
+	if (HeldActor == Product)
+	{
+		RemoveHeldItemFromQuickbar();
+		HeldActor = nullptr;
+		DestroyPlacementPreview();
+		ClearShelfPlacementHighlights();
+		if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetController()))
+		{
+			StorePlayerController->ClearInteractionContext();
+		}
+		return true;
+	}
+	return IsValid(QuickbarInventory) && QuickbarInventory->ContainsItem(Product) && QuickbarInventory->RemoveItem(Product);
+}
+
 bool ACSPlayerCharacter::ConsumeQuickbarTool(ACSUsableToolActor* Tool)
 {
 	if (!ReleaseQuickbarTool(Tool)) return false;

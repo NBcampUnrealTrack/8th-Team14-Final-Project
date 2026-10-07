@@ -294,6 +294,12 @@ void ACSShelfActor::CaptureSaveRecord(FCSShelfRecord& OutRecord) const
 			continue;
 		}
 
+		// 잠깐 쓰고 지워질 상품은 불러온 게임에서 지워 줄 곳이 없어 그대로 남는다
+		if (Product->ActorHasTag(CSProductTags::TemporaryProduct))
+		{
+			continue;
+		}
+
 		FCSShelfSlotRecord SlotRecord;
 		SlotRecord.SlotIndex = SlotIndex;
 		SlotRecord.ActorClass = FSoftClassPath(Product->GetClass());

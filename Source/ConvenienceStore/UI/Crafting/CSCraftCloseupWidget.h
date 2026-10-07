@@ -22,6 +22,8 @@ public:
 	void SetStep(ECSCraftStep Step);
 	// 한 칸이라 새 메시지가 이전 것을 덮고 표시 시간도 다시 센다
 	void ShowMessage(const FText& Message, bool bWarning);
+	// 다른 안내가 같은 자리를 쓸 때 키 안내와 제조 정보 창을 접는다. 알림 칸은 그대로 둔다
+	void SetGuidesHidden(bool bHidden);
 
 protected:
 	virtual void NativeConstruct() override;

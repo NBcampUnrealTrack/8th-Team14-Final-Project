@@ -56,6 +56,16 @@ void UCSCraftCloseupWidget::ShowMessage(const FText& Message, bool bWarning)
 	}
 }
 
+void UCSCraftCloseupWidget::SetGuidesHidden(bool bHidden)
+{
+	const ESlateVisibility GuideVisibility = bHidden ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible;
+	KeyHintList->SetVisibility(GuideVisibility);
+	if (UWidget* StationInfo = GetWidgetFromName(TEXT("StationInfo")))
+	{
+		StationInfo->SetVisibility(GuideVisibility);
+	}
+}
+
 void UCSCraftCloseupWidget::HideMessage()
 {
 	MessageText->SetVisibility(ESlateVisibility::Collapsed);

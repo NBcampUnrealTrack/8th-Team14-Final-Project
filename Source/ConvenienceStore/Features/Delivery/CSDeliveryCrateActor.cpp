@@ -382,7 +382,9 @@ bool ACSDeliveryCrateActor::InitializePackedProducts(const TArray<ACSProductPick
 	TSet<ACSProductPickupActor*> UniqueProducts;
 	for (ACSProductPickupActor* Product : Products)
 	{
-		if (!IsValid(Product) || Product->IsExcludedFromStockCount() || UniqueProducts.Contains(Product) ||
+		// 잠깐 쓰고 지워질 상품은 상자에 들어가면 원본을 찾아 지울 수 없다
+		if (!IsValid(Product) || Product->IsExcludedFromStockCount() || Product->ActorHasTag(CSProductTags::TemporaryProduct) ||
+			UniqueProducts.Contains(Product) ||
 			Product->GetProductRow().DataTable != Row.DataTable || Product->GetProductRow().RowName != Row.RowName) return false;
 		UniqueProducts.Add(Product);
 	}
@@ -416,6 +418,8 @@ bool ACSDeliveryCrateActor::TryAddPackedProduct(ACSProductPickupActor* Product, 
 {
 	if (!bPackingCrate || RemainingQuantity >= PackingCapacity || !CanPackProduct(Product, Carrier, TaskId) ||
 		Product->GetProductRow().DataTable != ProductRow.DataTable || Product->GetProductRow().RowName != ProductRow.RowName) return false;
+	// 잠깐 쓰고 지워질 상품은 상자에 들어가면 원본을 찾아 지울 수 없다
+	if (Product->ActorHasTag(CSProductTags::TemporaryProduct)) return false;
 	PackedProductStates.Add(Product->GetProductRuntimeState());
 	RemainingQuantity = PackedProductStates.Num();
 	UpdateFreshnessDecayState();
