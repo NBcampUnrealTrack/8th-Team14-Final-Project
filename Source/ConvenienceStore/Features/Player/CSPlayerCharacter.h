@@ -15,6 +15,7 @@ class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UTexture2D;
 class UPrimitiveComponent;
 class UAnimSequence;
 class ACSCartActor;
@@ -168,6 +169,10 @@ protected:
 	// 장착형 도구만 보관하는 확장 가능한 퀵바 인벤토리입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory")
 	TObjectPtr<UCSQuickbarInventoryComponent> QuickbarInventory;
+
+	// 일반 쓰레기와 제조 실패물에 공통으로 표시할 퀵바 아이콘입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Inventory|Quickbar")
+	TObjectPtr<UTexture2D> TrashQuickbarIcon;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> BuildPlacementPreviewMesh;

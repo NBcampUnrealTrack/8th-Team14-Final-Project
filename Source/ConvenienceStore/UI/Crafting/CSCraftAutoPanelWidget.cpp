@@ -74,6 +74,7 @@ void UCSCraftAutoPanelWidget::RefreshList()
 				Row->SetEntry(Option.RecipeRowName, Option.ResultName, IngredientLine, Option.MaxSets,
 					Option.ResultIcon.LoadSynchronous(), Option.MaxSets > 0,
 					FCSCraftListRowSelected::CreateUObject(this, &UCSCraftAutoPanelWidget::SelectRecipe));
+				Row->SetAutoRecipePresentation();
 				RowList->AddChild(Row);
 			}
 		}
@@ -108,6 +109,14 @@ void UCSCraftAutoPanelWidget::RefreshSelection()
 	}
 	const int32 MaxSets = Selected ? Selected->MaxSets : 1;
 	SelectedSets = FMath::Clamp(SelectedSets, 1, FMath::Max(1, MaxSets));
+
+	for (UWidget* Child : RowList->GetAllChildren())
+	{
+		if (UCSCraftListRowWidget* Row = Cast<UCSCraftListRowWidget>(Child))
+		{
+			Row->SetSelected(Selected != nullptr && Row->GetKey() == SelectedRecipeRowName);
+		}
+	}
 
 	SelectedNameText->SetText(Selected ? Selected->ResultName : FText::GetEmpty());
 	CountText->SetText(Selected ? FText::AsNumber(SelectedSets) : FText::GetEmpty());

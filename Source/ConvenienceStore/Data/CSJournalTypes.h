@@ -27,6 +27,10 @@ struct FCSJournalEntry
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FName EntryId;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ECSJournalRace Race = ECSJournalRace::Goblin;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FText Title;
+	// 종족 소개 화면의 상단 생활 설명과 하단 상품 취향을 독립적으로 배치할 수 있습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = true)) FText LifeBody;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = true)) FText PreferenceBody;
+	// 기존 카탈로그 에셋과 위젯의 호환을 위해 유지하는 통합 본문입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = true)) FText Body;
 };
 

@@ -10,6 +10,7 @@
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "UI/Store/CSStoreClosingBellConfirmWidget.h"
 #include "UI/Store/CSStoreSleepTransitionWidget.h"
+#include "UI/Store/CSWakeUpWidget.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 ACSStoreClosingBellActor::ACSStoreClosingBellActor()
@@ -17,6 +18,7 @@ ACSStoreClosingBellActor::ACSStoreClosingBellActor()
 	BellMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BellMesh"));
 	SetRootComponent(BellMesh);
 	BellMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	WakeUpWidgetClass = UCSWakeUpWidget::StaticClass();
 }
 void ACSStoreClosingBellActor::BeginPlay() { Super::BeginPlay(); StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); }
 void ACSStoreClosingBellActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -173,6 +175,19 @@ void ACSStoreClosingBellActor::WakeAndFadeIn()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] Next-day preparation was not completed; keeping player position."));
 	}
+	// 다음 날 준비가 완료된 경우에만 눈뜨기를 재생하며, 취소되면 기존 페이드로 돌아갑니다.
+	if (bMorningReady && bUseEyeOpening && WakeUpWidgetClass)
+	{
+		ActiveWakeUpWidget = CreateWidget<UCSWakeUpWidget>(Controller, WakeUpWidgetClass);
+		if (IsValid(ActiveWakeUpWidget))
+		{
+			ActiveWakeUpWidget->OnEyeOpeningFinished.AddDynamic(this, &ThisClass::FinishSleep);
+			ActiveWakeUpWidget->AddToViewport(2400);
+			// 닫힌 눈꺼풀이 화면을 덮은 뒤 카메라의 검은 페이드를 해제합니다.
+			if (IsValid(Controller->PlayerCameraManager)) Controller->PlayerCameraManager->StopCameraFade();
+			return;
+		}
+	}
 	if (IsValid(Controller->PlayerCameraManager))
 	{
 		Controller->PlayerCameraManager->StartCameraFade(1.0f, 0.0f,
@@ -184,6 +199,13 @@ void ACSStoreClosingBellActor::WakeAndFadeIn()
 
 void ACSStoreClosingBellActor::FinishSleep()
 {
+	GetWorldTimerManager().ClearTimer(SleepTimer);
+	if (IsValid(ActiveWakeUpWidget))
+	{
+		ActiveWakeUpWidget->OnEyeOpeningFinished.RemoveDynamic(this, &ThisClass::FinishSleep);
+		ActiveWakeUpWidget->RemoveFromParent();
+		ActiveWakeUpWidget = nullptr;
+	}
 	CloseSleepTransitionWidget();
 	if (ACSStorePlayerController* Controller = SleepingController.Get())
 	{

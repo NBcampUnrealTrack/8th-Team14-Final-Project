@@ -26,10 +26,12 @@
 #include "GameFramework/PlayerController.h"
 #include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
+#include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "TimerManager.h"
 #include "UI/Crafting/CSCraftAutoPanelWidget.h"
 #include "UI/Crafting/CSCraftCloseupWidget.h"
+#include "UI/Crafting/CSCraftIngredientPanelWidget.h"
 #include "UI/Crafting/CSCraftRecipeBookWidget.h"
 #include "UI/Crafting/CSCraftStationInfoWidget.h"
 #include "UI/Crafting/CSCraftSummonListWidget.h"
@@ -39,6 +41,7 @@ namespace
 	const FName MsgTooManyKinds(TEXT("TooManyKinds"));
 	const FName MsgSlotFull(TEXT("SlotFull"));
 	const FName MsgIngredientLocked(TEXT("IngredientLocked"));
+	const FName MsgExpiredIngredient(TEXT("ExpiredIngredient"));
 
 	// 모형은 E 조준용 Visibility만 막는다
 	void SetupModelComponent(UStaticMeshComponent* Model, USceneComponent* Parent)
@@ -55,6 +58,44 @@ namespace
 	{
 		return FTransform(Component->GetComponentQuat(), Component->GetComponentLocation());
 	}
+
+	// 판정은 ACSProductPickupActor::IsSellable과 같다
+	int32 CountUsableCrateUnits(const ACSDeliveryCrateActor* Crate)
+	{
+		const UWorld* World = Crate->GetWorld();
+		const ACSStoreGameState* GameState = World ? World->GetGameState<ACSStoreGameState>() : nullptr;
+		if (!IsValid(GameState))
+		{
+			return Crate->GetRemainingQuantity();
+		}
+
+		const FCSProductDataRow* ProductData =
+			Crate->GetProductRow().GetRow<FCSProductDataRow>(TEXT("CountUsableCrateUnits"));
+		const bool bChecksFreshness = ProductData != nullptr &&
+			(ProductData->ShelfType == ECSProductShelfType::ChilledShelf ||
+				ProductData->ShelfType == ECSProductShelfType::FreezerShelf);
+		auto IsUsable = [GameState, bChecksFreshness](const FCSProductStateRecord& State)
+		{
+			const bool bExpired = State.bExpirationInitialized && State.ExpirationBusinessDay > 0 &&
+				GameState->CurrentBusinessDay >= State.ExpirationBusinessDay;
+			return !bExpired && (!bChecksFreshness || !State.bFreshnessInitialized || State.Freshness > 0);
+		};
+
+		// 포장 상자의 낱개별 상태는 세이브 기록으로만 밖에서 읽을 수 있다
+		if (Crate->IsPackingCrate())
+		{
+			FCSCrateRecord Record;
+			Crate->CaptureSaveRecord(Record);
+			int32 Count = 0;
+			for (const FCSProductStateRecord& State : Record.PackedProductStates)
+			{
+				Count += IsUsable(State) ? 1 : 0;
+			}
+			return Count;
+		}
+		const FCSProductStateRecord State = CSSaveRecordUtils::ToRecord(Crate->GetProductRuntimeState(), Crate->GetCurrentFreshness());
+		return IsUsable(State) ? Crate->GetRemainingQuantity() : 0;
+	}
 }
 
 ACSCraftStationActor::ACSCraftStationActor()
@@ -68,17 +109,15 @@ ACSCraftStationActor::ACSCraftStationActor()
 	BodyMesh->SetupAttachment(SceneRoot);
 	BodyMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 
-	IngredientModel1 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("IngredientModel1"));
-	IngredientModel2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("IngredientModel2"));
-	IngredientModel3 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("IngredientModel3"));
-	IngredientModel4 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("IngredientModel4"));
+	IngredientDropPoint = CreateDefaultSubobject<USceneComponent>(TEXT("IngredientDropPoint"));
+	IngredientDropPoint->SetupAttachment(SceneRoot);
+	// 솥 물약 면(StirPivot 높이 199) 조금 위
+	IngredientDropPoint->SetRelativeLocation(FVector(-28.6f, 32.45f, 215.0f));
+
 	ResultModel1 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ResultModel1"));
 	ResultModel2 = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ResultModel2"));
-	for (UStaticMeshComponent* Model : { IngredientModel1.Get(), IngredientModel2.Get(), IngredientModel3.Get(),
-		IngredientModel4.Get(), ResultModel1.Get(), ResultModel2.Get() })
-	{
-		SetupModelComponent(Model, SceneRoot);
-	}
+	SetupModelComponent(ResultModel1, SceneRoot);
+	SetupModelComponent(ResultModel2, SceneRoot);
 
 	CloseupCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CloseupCamera"));
 	CloseupCamera->SetupAttachment(SceneRoot);
@@ -115,11 +154,6 @@ void ACSCraftStationActor::BeginPlay()
 {
 	Super::BeginPlay();
 
-	IngredientModelBaseTransforms.SetNum(IngredientSlotCount);
-	for (int32 Index = 0; Index < IngredientSlotCount; ++Index)
-	{
-		IngredientModelBaseTransforms[Index] = GetIngredientModel(Index)->GetRelativeTransform();
-	}
 	ResultModelBaseTransforms.SetNum(ResultSlotCount);
 	for (int32 Index = 0; Index < ResultSlotCount; ++Index)
 	{
@@ -129,6 +163,12 @@ void ACSCraftStationActor::BeginPlay()
 	if (!ProductActorClass || !TrashActorClass)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: ProductActorClass / TrashActorClass를 지정해 주세요. 완성할 수 없습니다."), *GetName());
+	}
+
+	// 솥 위 월드 정보 창은 쓰지 않는다. 같은 정보는 클로즈업 화면 위쪽에 나온다
+	if (IsValid(InfoWidgetComponent))
+	{
+		InfoWidgetComponent->SetVisibility(false);
 	}
 
 	RefreshModels();
@@ -141,6 +181,7 @@ void ACSCraftStationActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	CloseSummonList();
 	CloseAutoPanel();
 	CloseRecipeBook();
+	CloseIngredientPanel();
 	// 클로즈업 중에 끝나면 플레이어 입력, 시점, HUD가 잠긴 채 남는다
 	if (bCloseupActive)
 	{
@@ -158,18 +199,6 @@ void ACSCraftStationActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 // =====================================================================
 // 조회 도우미
 // =====================================================================
-
-UStaticMeshComponent* ACSCraftStationActor::GetIngredientModel(int32 SlotIndex) const
-{
-	switch (SlotIndex)
-	{
-	case 0: return IngredientModel1;
-	case 1: return IngredientModel2;
-	case 2: return IngredientModel3;
-	case 3: return IngredientModel4;
-	default: return nullptr;
-	}
-}
 
 UStaticMeshComponent* ACSCraftStationActor::GetResultModel(int32 SlotIndex) const
 {
@@ -208,12 +237,33 @@ FText ACSCraftStationActor::GetMessage(FName MessageRowName) const
 	return IsValid(Crafting) ? Crafting->GetMessageText(MessageRowName) : FText::FromName(MessageRowName);
 }
 
-void ACSCraftStationActor::ShowBanner(FName MessageRowName) const
+void ACSCraftStationActor::ShowMessage(const FText& Message, bool bWarning) const
 {
+	// 공용 배너는 경고 톤이라 클로즈업 안의 결과 안내까지 경고처럼 보인다
+	if (bCloseupActive && IsValid(ActiveCloseupWidget))
+	{
+		ActiveCloseupWidget->ShowMessage(Message, bWarning);
+		return;
+	}
 	if (ACSStorePlayerController* Controller = GetLocalStoreController())
 	{
-		Controller->ShowNoticeBanner(GetMessage(MessageRowName));
+		Controller->ShowNoticeBanner(Message);
 	}
+}
+
+void ACSCraftStationActor::ShowBanner(FName MessageRowName, bool bWarning) const
+{
+	ShowMessage(GetMessage(MessageRowName), bWarning);
+}
+
+bool ACSCraftStationActor::IsBeforeCraftStart() const
+{
+	return (CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat) && !bIngredientsLocked;
+}
+
+bool ACSCraftStationActor::IsAnyCloseupPanelOpen() const
+{
+	return IsValid(ActiveAutoPanelWidget) || IsValid(ActiveRecipeBookWidget) || IsValid(ActiveIngredientPanelWidget);
 }
 
 ACSCraftStationActor::EAimTarget ACSCraftStationActor::TraceAimTarget(
@@ -246,14 +296,6 @@ ACSCraftStationActor::EAimTarget ACSCraftStationActor::TraceAimTarget(
 	if (HitComponent != nullptr && HitComponent == SummonCircleMesh)
 	{
 		return EAimTarget::SummonCircle;
-	}
-	for (int32 Index = 0; Index < IngredientSlotCount; ++Index)
-	{
-		if (HitComponent == GetIngredientModel(Index) && IsValid(IngredientSlots[Index]))
-		{
-			OutSlotIndex = Index;
-			return EAimTarget::Ingredient;
-		}
 	}
 	for (int32 Index = 0; Index < ResultSlotCount; ++Index)
 	{
@@ -296,6 +338,11 @@ FName ACSCraftStationActor::GetPlacementRejectReason(const ACSProductPickupActor
 	if (bIngredientsLocked)
 	{
 		return MsgIngredientLocked;
+	}
+	// 손님이 안 사는 상품은 재료로도 못 쓰게 한다
+	if (!Product->IsSellable())
+	{
+		return MsgExpiredIngredient;
 	}
 
 	TSet<FName> Kinds;
@@ -341,16 +388,9 @@ bool ACSCraftStationActor::GetPlacementPreview_Implementation(
 	{
 		return false;
 	}
-	for (int32 Index = 0; Index < IngredientSlotCount; ++Index)
-	{
-		if (!IsValid(IngredientSlots[Index]))
-		{
-			// 빈 슬롯 모형은 BP 배치 위치에 있다
-			OutSlotWorldTransform = LocationAndRotationOnly(GetIngredientModel(Index));
-			return true;
-		}
-	}
-	return false;
+	// 거절 사유가 없으면 빈 슬롯이 있다
+	OutSlotWorldTransform = LocationAndRotationOnly(IngredientDropPoint);
+	return true;
 }
 
 ECSShelfPlacementPreviewState ACSCraftStationActor::GetPlacementPreviewState_Implementation(
@@ -388,8 +428,8 @@ bool ACSCraftStationActor::TryPlaceItem_Implementation(AActor* ItemActor, FVecto
 			break;
 		}
 	}
-	RefreshModels();
 	RefreshInfoWidget();
+	OnIngredientAdded(Product->GetProductId());
 	return true;
 }
 
@@ -406,7 +446,7 @@ void ACSCraftStationActor::RemovePlacedItem_Implementation(AActor* ItemActor)
 		if (IngredientSlots[Index] == Product)
 		{
 			IngredientSlots[Index] = nullptr;
-			RestoreProductVisible(Product, GetIngredientModel(Index));
+			RestoreProductVisible(Product, IngredientDropPoint);
 		}
 	}
 	for (int32 Index = 0; Index < ResultSlotCount; ++Index)
@@ -424,6 +464,22 @@ void ACSCraftStationActor::RemovePlacedItem_Implementation(AActor* ItemActor)
 bool ACSCraftStationActor::GetItemSlotLevel_Implementation(AActor* ItemActor, ECSShelfSlotLevel& OutSlotLevel) const
 {
 	return false;
+}
+
+FText ACSCraftStationActor::GetPlacementPromptText() const
+{
+	return GetMessage(TEXT("PlacePrompt"));
+}
+
+FText ACSCraftStationActor::GetPlacementFailurePromptText(const AActor* ItemActor) const
+{
+	const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ItemActor);
+	if (!IsValid(Product))
+	{
+		return FText::GetEmpty();
+	}
+	const FName RejectReason = GetPlacementRejectReason(Product);
+	return RejectReason.IsNone() ? FText::GetEmpty() : GetMessage(RejectReason);
 }
 
 void ACSCraftStationActor::StoreProductHidden(ACSProductPickupActor* Product)
@@ -525,7 +581,7 @@ void ACSCraftStationActor::RestorePotRecord(const FCSCraftStationSaveRecord& Rec
 				*GetName(), Record.PotProducts.Num() - IngredientSlotCount);
 			break;
 		}
-		IngredientSlots[Index] = SpawnProductFromRecord(Record.PotProducts[Index], GetIngredientModel(Index));
+		IngredientSlots[Index] = SpawnProductFromRecord(Record.PotProducts[Index], IngredientDropPoint);
 	}
 	for (int32 Index = 0; Index < Record.ResultProducts.Num(); ++Index)
 	{
@@ -578,12 +634,11 @@ ACSProductPickupActor* ACSCraftStationActor::SpawnProductFromRecord(const FCSLoo
 	return Product;
 }
 
-void ACSCraftStationActor::ApplyModelVisual(UStaticMeshComponent* Model, int32 BaseIndex, const ACSProductPickupActor* Product)
+void ACSCraftStationActor::ApplyModelVisual(UStaticMeshComponent* Model, int32 ResultIndex, const ACSProductPickupActor* Product)
 {
-	const bool bResultModel = BaseIndex >= IngredientSlotCount;
-	const TArray<FTransform>& Bases = bResultModel ? ResultModelBaseTransforms : IngredientModelBaseTransforms;
-	const int32 LocalIndex = bResultModel ? BaseIndex - IngredientSlotCount : BaseIndex;
-	const FTransform BaseTransform = Bases.IsValidIndex(LocalIndex) ? Bases[LocalIndex] : Model->GetRelativeTransform();
+	const FTransform BaseTransform = ResultModelBaseTransforms.IsValidIndex(ResultIndex)
+		? ResultModelBaseTransforms[ResultIndex]
+		: Model->GetRelativeTransform();
 
 	if (!IsValid(Product))
 	{
@@ -616,13 +671,9 @@ void ACSCraftStationActor::ApplyModelVisual(UStaticMeshComponent* Model, int32 B
 
 void ACSCraftStationActor::RefreshModels()
 {
-	for (int32 Index = 0; Index < IngredientSlotCount; ++Index)
-	{
-		ApplyModelVisual(GetIngredientModel(Index), Index, IngredientSlots[Index]);
-	}
 	for (int32 Index = 0; Index < ResultSlotCount; ++Index)
 	{
-		ApplyModelVisual(GetResultModel(Index), IngredientSlotCount + Index, ResultSlots[Index]);
+		ApplyModelVisual(GetResultModel(Index), Index, ResultSlots[Index]);
 	}
 }
 
@@ -644,16 +695,6 @@ void ACSCraftStationActor::Interact_Implementation(AActor* Interactor)
 	{
 	case EAimTarget::SummonCircle:
 		OpenSummonList(PlayerController);
-		return;
-	case EAimTarget::Ingredient:
-		if (bIngredientsLocked)
-		{
-			ShowBanner(MsgIngredientLocked);
-		}
-		else
-		{
-			RetrieveFromSlot(InteractingPawn, false, SlotIndex);
-		}
 		return;
 	case EAimTarget::Result:
 	{
@@ -691,8 +732,6 @@ FText ACSCraftStationActor::GetInteractionText_Implementation() const
 	{
 	case EAimTarget::SummonCircle:
 		return GetMessage(TEXT("SummonAimPrompt"));
-	case EAimTarget::Ingredient:
-		return GetMessage(TEXT("InteractRetrieve"));
 	case EAimTarget::Result:
 		return GetMessage(TEXT("InteractRetrieveResult"));
 	default:
@@ -712,7 +751,7 @@ bool ACSCraftStationActor::RetrieveFromSlot(APawn* InteractingPawn, bool bResult
 
 	ACSProductPickupActor* Product = *Slot;
 	*Slot = nullptr;
-	RestoreProductVisible(Product, bResultSlot ? GetResultModel(SlotIndex) : GetIngredientModel(SlotIndex));
+	RestoreProductVisible(Product, bResultSlot ? GetResultModel(SlotIndex) : IngredientDropPoint.Get());
 
 	// 빈손이면 손에 들고, 같은 상품 상자를 들고 있으면 상자에 담긴다
 	ACSPlayerCharacter* Player = Cast<ACSPlayerCharacter>(InteractingPawn);
@@ -778,15 +817,17 @@ TMap<FName, FCSCraftStorageStock> ACSCraftStationActor::CollectStorageStock() co
 			if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(StoredActor))
 			{
 				// 직원이 옮기려고 잡아 둔 상자를 꺼내면 직원 업무가 빈 상자를 쫓는다
-				if (IsValid(Crate) && !Crate->IsReservedByEmployee() && Crate->GetRemainingQuantity() > 0 &&
-					!Crate->GetProductId().IsNone())
+				if (IsValid(Crate) && !Crate->IsReservedByEmployee() && !Crate->GetProductId().IsNone())
 				{
-					AddStock(Crate->GetProductId(), Crate->GetRemainingQuantity());
+					if (const int32 Usable = CountUsableCrateUnits(Crate); Usable > 0)
+					{
+						AddStock(Crate->GetProductId(), Usable);
+					}
 				}
 			}
 			else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product))
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable())
 				{
 					AddStock(Product->GetProductId(), 1);
 				}
@@ -845,7 +886,7 @@ bool ACSCraftStationActor::TakeFromStorage(FName ProductId, int32 Count, TArray<
 			}
 			else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(StoredActor))
 			{
-				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->GetProductId() == ProductId)
+				if (ACSDeliveryCrateActor::CanPackProduct(Product) && Product->IsSellable() && Product->GetProductId() == ProductId)
 				{
 					LooseProducts.Add(Product);
 				}
@@ -878,13 +919,34 @@ bool ACSCraftStationActor::TakeFromStorage(FName ProductId, int32 Count, TArray<
 	for (ACSDeliveryCrateActor* Crate : Crates)
 	{
 		ACSFreshnessSafeZoneActor* Storage = Cast<ACSFreshnessSafeZoneActor>(Crate->GetAttachParentActor());
-		while (Taken < Count && IsValid(Crate) && Crate->GetRemainingQuantity() > 0)
+		int32 Usable = CountUsableCrateUnits(Crate);
+		// 판정이 어긋나도 상한 상품만 계속 돌리지 않게 한 바퀴로 막는다
+		int32 RotationsLeft = Crate->GetRemainingQuantity();
+		while (Taken < Count && Usable > 0 && IsValid(Crate) && Crate->GetRemainingQuantity() > 0)
 		{
 			ACSProductPickupActor* Product = Crate->SpawnProductActor();
 			if (!IsValid(Product))
 			{
 				break;
 			}
+			// 상한 상품이 앞에 있으면 상자 맨 뒤로 돌려 넣고 뒤의 멀쩡한 상품을 꺼낸다
+			if (!Product->IsSellable())
+			{
+				if (!Crate->IsPackingCrate() || RotationsLeft-- <= 0 || Crate->GetRemainingQuantity() < 2)
+				{
+					Product->Destroy();
+					break;
+				}
+				Crate->ConsumeOne();
+				if (!Crate->TryAddPackedProduct(Product, nullptr))
+				{
+					// 지우면 상품 하나가 그냥 사라지니 꺼낸 자리에 남긴다
+					UE_LOG(LogTemp, Warning, TEXT("[제조] 상한 '%s'를 상자에 다시 넣지 못해 상자 자리에 남깁니다."), *ProductId.ToString());
+					break;
+				}
+				continue;
+			}
+			--Usable;
 			// 마지막 1개를 빼면 상자가 스스로 사라지므로 창고의 신선도 보호 등록을 먼저 푼다
 			if (Crate->GetRemainingQuantity() == 1 && IsValid(Storage))
 			{
@@ -1266,13 +1328,11 @@ TArray<FCSCraftAutoOption> ACSCraftStationActor::GetAutoCraftOptions() const
 
 void ACSCraftStationActor::HandleAutoCraftOpen()
 {
-	if (!bCloseupActive || IsValid(ActiveAutoPanelWidget) || IsValid(ActiveRecipeBookWidget))
+	if (!bCloseupActive || IsAnyCloseupPanelOpen())
 	{
 		return;
 	}
-	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다
-	const bool bBeforeCraftStart = CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat;
-	if (!bBeforeCraftStart || bIngredientsLocked || !CountIngredients().IsEmpty())
+	if (!IsBeforeCraftStart() || !CountIngredients().IsEmpty())
 	{
 		ShowBanner(TEXT("AutoCraftNeedEmptyPot"));
 		return;
@@ -1321,14 +1381,12 @@ void ACSCraftStationActor::CloseAutoPanel()
 
 void ACSCraftStationActor::HandleRecipeBookOpen()
 {
-	if (!bCloseupActive || IsValid(ActiveRecipeBookWidget) || IsValid(ActiveAutoPanelWidget))
+	if (!bCloseupActive || IsAnyCloseupPanelOpen())
 	{
 		return;
 	}
-	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다.
 	// 도감은 재료를 쓰지 않으니 솥에 재료가 있어도 연다
-	const bool bBeforeCraftStart = CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat;
-	if (!bBeforeCraftStart || bIngredientsLocked)
+	if (!IsBeforeCraftStart())
 	{
 		ShowBanner(TEXT("RecipeBookLocked"));
 		return;
@@ -1368,6 +1426,98 @@ void ACSCraftStationActor::CloseRecipeBook()
 		StoreController->SetGameplayUIInputLock(Widget, false);
 	}
 	Widget->RemoveFromParent();
+}
+
+void ACSCraftStationActor::HandleIngredientPanelOpen()
+{
+	if (!bCloseupActive || IsAnyCloseupPanelOpen())
+	{
+		return;
+	}
+	if (!IsBeforeCraftStart())
+	{
+		ShowBanner(MsgIngredientLocked);
+		return;
+	}
+
+	ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(CloseupController);
+	if (!IsValid(StoreController))
+	{
+		return;
+	}
+	if (!IngredientPanelWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제조] %s: IngredientPanelWidgetClass를 지정해 주세요. 재료 창을 열지 않습니다."), *GetName());
+		return;
+	}
+
+	ActiveIngredientPanelWidget = CreateWidget<UCSCraftIngredientPanelWidget>(StoreController, IngredientPanelWidgetClass);
+	if (!IsValid(ActiveIngredientPanelWidget))
+	{
+		return;
+	}
+	ActiveIngredientPanelWidget->AddToViewport(20);
+	StoreController->SetGameplayUIInputLock(ActiveIngredientPanelWidget, true);
+	ActiveIngredientPanelWidget->SetStation(this);
+}
+
+void ACSCraftStationActor::CloseIngredientPanel()
+{
+	UCSCraftIngredientPanelWidget* Widget = ActiveIngredientPanelWidget;
+	ActiveIngredientPanelWidget = nullptr;
+	if (!IsValid(Widget))
+	{
+		return;
+	}
+	if (ACSStorePlayerController* StoreController = Cast<ACSStorePlayerController>(Widget->GetOwningPlayer()))
+	{
+		StoreController->SetGameplayUIInputLock(Widget, false);
+	}
+	Widget->RemoveFromParent();
+}
+
+TArray<FCSCraftIngredientEntry> ACSCraftStationActor::GetIngredientEntries() const
+{
+	TArray<FCSCraftIngredientEntry> Entries;
+	for (const ACSProductPickupActor* Product : IngredientSlots)
+	{
+		if (!IsValid(Product))
+		{
+			continue;
+		}
+		const FName ProductId = Product->GetProductId();
+		FCSCraftIngredientEntry* Entry = Entries.FindByPredicate(
+			[ProductId](const FCSCraftIngredientEntry& Existing) { return Existing.ProductId == ProductId; });
+		if (Entry == nullptr)
+		{
+			Entry = &Entries.AddDefaulted_GetRef();
+			Entry->ProductId = ProductId;
+			Entry->DisplayName = Product->GetProductDisplayName();
+			Entry->Icon = FindProductIcon(ProductId);
+		}
+		++Entry->Count;
+	}
+	return Entries;
+}
+
+FText ACSCraftStationActor::RequestRemoveIngredient(FName ProductId)
+{
+	// 창이 열린 뒤 상태가 바뀌었을 수 있어서 다시 확인한다
+	if (!IsBeforeCraftStart())
+	{
+		return GetMessage(MsgIngredientLocked);
+	}
+	// 같은 종류 중 가장 뒤 슬롯부터 꺼내야 앞쪽 슬롯 순서가 유지된다
+	for (int32 Index = IngredientSlotCount - 1; Index >= 0; --Index)
+	{
+		if (IsValid(IngredientSlots[Index]) && IngredientSlots[Index]->GetProductId() == ProductId)
+		{
+			return RetrieveFromSlot(CloseupPawn, false, Index)
+				? FText::GetEmpty()
+				: GetMessage(TEXT("IngredientRemoveHandFull"));
+		}
+	}
+	return FText::GetEmpty();
 }
 
 FText ACSCraftStationActor::RequestAutoCraft(FName RecipeRowName, int32 Sets)
@@ -1427,11 +1577,8 @@ FText ACSCraftStationActor::RequestAutoCraft(FName RecipeRowName, int32 Sets)
 	}
 
 	CloseAutoPanel();
-	if (ACSStorePlayerController* Controller = GetLocalStoreController())
-	{
-		Controller->ShowNoticeBanner(FText::Format(
-			GetMessage(TEXT("AutoCraftDone")), GetProductDisplayName(Evaluation.ResultProduct), FText::AsNumber(Sets)));
-	}
+	ShowMessage(FText::Format(
+		GetMessage(TEXT("AutoCraftDone")), GetProductDisplayName(Evaluation.ResultProduct), FText::AsNumber(Sets)), false);
 	return FText::GetEmpty();
 }
 
@@ -1493,11 +1640,6 @@ void ACSCraftStationActor::EnterCloseup(APlayerController* PlayerController)
 			ActiveCloseupWidget->SetStep(CraftStep);
 		}
 	}
-	// 클로즈업 화면 안의 정보 창과 겹치지 않게 월드 정보 창은 숨긴다
-	if (IsValid(InfoWidgetComponent))
-	{
-		InfoWidgetComponent->SetVisibility(false);
-	}
 
 	bCloseupActive = true;
 	RefreshInfoWidget();
@@ -1512,6 +1654,7 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 	bCloseupActive = false;
 	CloseAutoPanel();
 	CloseRecipeBook();
+	CloseIngredientPanel();
 
 	// 제조 상태와 거품 타이머는 그대로 둔다. 다시 들어오면 이어서 한다
 	APlayerController* PlayerController = CloseupController;
@@ -1554,10 +1697,6 @@ void ACSCraftStationActor::ExitCloseup(bool bImmediate)
 		ActiveCloseupWidget->RemoveFromParent();
 	}
 	ActiveCloseupWidget = nullptr;
-	if (IsValid(InfoWidgetComponent))
-	{
-		InfoWidgetComponent->SetVisibility(true);
-	}
 	CloseupController = nullptr;
 	PreviousViewTarget = nullptr;
 
@@ -1766,7 +1905,9 @@ void ACSCraftStationActor::HandleFinish()
 	if (bFinishRetryPending)
 	{
 		FinishCraft();
+		return;
 	}
+	HandleIngredientPanelOpen();
 }
 
 void ACSCraftStationActor::HandleExit()
@@ -1865,10 +2006,8 @@ void ACSCraftStationActor::FinishCraft()
 	case ECSCraftOutcome::Junk: MessageRow = TEXT("ResultJunk"); break;
 	default: break;
 	}
-	if (ACSStorePlayerController* Controller = GetLocalStoreController())
-	{
-		Controller->ShowNoticeBanner(FText::Format(GetMessage(MessageRow), ResultName));
-	}
+	// 쓰레기도 정상적으로 나온 결과라 경고로 띄우지 않는다
+	ShowMessage(FText::Format(GetMessage(MessageRow), ResultName), false);
 
 	OnCraftFinished(Evaluation.Outcome, Evaluation.Quantity);
 

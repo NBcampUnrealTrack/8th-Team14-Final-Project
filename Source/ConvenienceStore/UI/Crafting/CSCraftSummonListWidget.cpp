@@ -87,6 +87,8 @@ void UCSCraftSummonListWidget::RefreshList()
 			{
 				Row->SetEntry(Stock.ProductId, Stock.DisplayName, Detail, Stock.Count, Stock.Icon.LoadSynchronous(), true,
 					FCSCraftListRowSelected::CreateUObject(this, &UCSCraftSummonListWidget::SelectProduct));
+				// +/-가 적용되는 줄만 표시한다. 담긴 다른 줄은 설명 칸의 "n개 선택"으로 보인다
+				Row->SetSelected(Stock.ProductId == FocusedProductId);
 				RowList->AddChild(Row);
 			}
 		}
@@ -132,7 +134,10 @@ void UCSCraftSummonListWidget::RefreshSelection()
 			Items.Add(FText::Format(ItemFormat, Stock.DisplayName, FText::AsNumber(*Selected)));
 		}
 	}
-	SelectedNameText->SetText(Items.IsEmpty() ? GetMessage(TEXT("SummonSelectNone")) : FText::Join(FText::FromString(TEXT(", ")), Items));
+	SelectedNameText->SetText(Items.IsEmpty() ? GetMessage(TEXT("SummonSelectNone")) : FText::Join(FText::FromString(TEXT("\n")), Items));
+	FSlateFontInfo SelectionFont = SelectedNameText->GetFont();
+	SelectionFont.TypefaceFontName = Items.IsEmpty() ? PlaceholderTypeface : SelectedTypeface;
+	SelectedNameText->SetFont(SelectionFont);
 
 	const int32* FocusedCount = SelectedCounts.Find(FocusedProductId);
 	CountText->SetText(FocusedCount ? FText::AsNumber(*FocusedCount) : FText::GetEmpty());

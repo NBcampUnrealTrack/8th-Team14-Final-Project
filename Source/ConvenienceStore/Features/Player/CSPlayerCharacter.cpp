@@ -27,6 +27,7 @@
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Data/CSProductTypes.h"
+#include "Data/CSProductVisualRegistry.h"
 #include "Data/CSSaveTypes.h"
 #include "Systems/SaveLoad/CSWorldStateSaveHandler.h"
 #include "Features/Gacha/CSGachaSeal.h"
@@ -949,7 +950,14 @@ bool ACSPlayerCharacter::TryPickUp(AActor* PickupActor)
 		return false;
 	}
 	const bool bQuickbarCargo = !IsBuildMode() &&
-		(Cast<ACSDeliveryCrateActor>(PickupActor) != nullptr || Cast<ACSTrashActor>(PickupActor) != nullptr);
+		(Cast<ACSDeliveryCrateActor>(PickupActor) != nullptr || Cast<ACSTrashActor>(PickupActor) != nullptr ||
+			Cast<ACSProductPickupActor>(PickupActor) != nullptr);
+	// 상품은 슬롯을 확보할 수 있을 때만 기존 진열/보관/직원 소유권을 해제합니다.
+	if (Cast<ACSProductPickupActor>(PickupActor) != nullptr &&
+		(!IsValid(QuickbarInventory) || !IsValid(QuickbarStorageAnchor) || !QuickbarInventory->CanAddItem(PickupActor)))
+	{
+		return false;
+	}
 	if (bQuickbarCargo && IsValid(HeldActor) && Cast<ACSUsableToolActor>(HeldActor) != nullptr)
 	{
 		StoreEquippedQuickbarTool();
@@ -3175,7 +3183,16 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 			}
 			else
 			{
-				StorePlayerController->ShowPlacementUnavailablePrompt();
+				const ICSShelfPlaceable* Placeable = Cast<ICSShelfPlaceable>(TargetActor);
+				const FText FailureText = Placeable ? Placeable->GetPlacementFailurePromptText(PlacementItem) : FText::GetEmpty();
+				if (FailureText.IsEmpty())
+				{
+					StorePlayerController->ShowPlacementUnavailablePrompt();
+				}
+				else
+				{
+					StorePlayerController->SetInteractionPrompt(FailureText, FLinearColor(1.0f, 0.25f, 0.25f, 1.0f));
+				}
 			}
 		}
 
@@ -3215,8 +3232,9 @@ void ACSPlayerCharacter::UpdatePlacementPreview()
 		PlacementPreviewActor->SetPlacementPreviewState(PreviewState);
 		if (IsValid(StorePlayerController))
 		{
+			const ICSShelfPlaceable* Placeable = Cast<ICSShelfPlaceable>(TargetActor);
 			StorePlayerController->SetInteractionPrompt(
-				NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"),
+				Placeable ? Placeable->GetPlacementPromptText() : NSLOCTEXT("Interaction", "PlacePrompt", "[Q] 진열하기"),
 				FLinearColor::White);
 		}
 
@@ -3378,6 +3396,7 @@ void ACSPlayerCharacter::DropHeldItem()
 			if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(HeldActor);
 				IsValid(Product) && MagicCircle->PlaceProduct(Product))
 			{
+				RemoveHeldItemFromQuickbar();
 				HeldActor = nullptr;
 				DestroyPlacementPreview();
 				ClearShelfPlacementHighlights();
@@ -3447,6 +3466,7 @@ void ACSPlayerCharacter::DropHeldItem()
 					PlacedProduct->SetHeldByPlayerForFreshness(false);
 				}
 				PlayPlayerGameplaySFX(this, ECSAudioEvent::ProductStock);
+				RemoveHeldItemFromQuickbar();
             HeldActor = nullptr;
 			DestroyPlacementPreview();
             return;
@@ -4636,7 +4656,8 @@ void ACSPlayerCharacter::UpdateHeldCollectionHUD()
 bool ACSPlayerCharacter::CanCollectProductForPrompt(const ACSProductPickupActor* Product) const
 {
 	if (!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return false;
-	if (!IsValid(HeldActor)) return true;
+	if (!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor))
+		return IsValid(QuickbarInventory) && QuickbarInventory->CanAddItem(Product);
 	const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor);
 	const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
 	if (Crate && (!Crate->IsPackingCrate() || Crate->GetRemainingQuantity() >= ACSDeliveryCrateActor::PackingCapacity)) return false;
@@ -4652,7 +4673,12 @@ FText ACSPlayerCharacter::GetProductCollectionPrompt(const ACSProductPickupActor
 		return FText::FromString(Crate->IsPackingCrate() ? TEXT("상자가 가득 찼습니다 · 6/6") : TEXT("배송 상자에는 상품을 추가할 수 없습니다."));
 	if (!IsValid(Product)) return FText::FromString(TEXT("회수 불가: 이 단에 같은 종류의 상품이 없습니다."));
 	if (!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return FText::FromString(TEXT("회수할 수 없는 상품입니다."));
-	if (!IsValid(HeldActor)) return FText::Format(NSLOCTEXT("Packing", "PickOne", "[E] {0} 회수"), Product->GetProductDisplayName());
+	if (!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor))
+	{
+		if (!IsValid(QuickbarInventory) || !QuickbarInventory->CanAddItem(Product))
+			return NSLOCTEXT("Quickbar", "ProductSlotsFull", "퀵슬롯이 가득 찼습니다.");
+		return FText::Format(NSLOCTEXT("Packing", "PickOne", "[E] {0} 회수"), Product->GetProductDisplayName());
+	}
 	const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor);
 	const FDataTableRowHandle Row = Crate ? Crate->GetProductRow() : HeldProduct ? HeldProduct->GetProductRow() : FDataTableRowHandle();
 	if (Row.DataTable != Product->GetProductRow().DataTable || Row.RowName != Product->GetProductRow().RowName)
@@ -4675,7 +4701,7 @@ bool ACSPlayerCharacter::TryCollectProduct(ACSProductPickupActor* Product)
 {
 	if (IsBuildMode() || IsValid(PushedCart) || !IsValid(HeldItemAnchor) || Product == HeldActor ||
 		!ACSDeliveryCrateActor::CanPackProduct(Product, this)) return false;
-	if (!IsValid(HeldActor)) return TryPickUp(Product);
+	if (!IsValid(HeldActor) || Cast<ACSUsableToolActor>(HeldActor)) return TryPickUp(Product);
 	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(HeldActor))
 	{
 		// 담을 수 없는 입력으로 직원 업무가 취소되지 않도록 용량과 품목을 먼저 확인합니다.
@@ -4702,8 +4728,25 @@ bool ACSPlayerCharacter::TryCollectProduct(ACSProductPickupActor* Product)
 	Crate->FinishSpawning(Transform);
 	if (!IsValid(Crate)) return false;
 	// 집기 실패 시 기존 상품을 그대로 유지하여 회수 중 재고가 사라지지 않게 합니다.
+	const int32 ProductSlotIndex = IsQuickbarItem(First) ? QuickbarInventory->GetSelectedSlotIndex() : INDEX_NONE;
+	RemoveHeldItemFromQuickbar();
 	HeldActor = nullptr;
-	if (!TryPickUp(Crate)) { HeldActor = First; Crate->Destroy(); return false; }
+	if (!TryPickUp(Crate))
+	{
+		HeldActor = First;
+		if (ProductSlotIndex != INDEX_NONE)
+		{
+			QuickbarInventory->TryAddItem(First);
+			QuickbarInventory->MoveItemToSlot(First, ProductSlotIndex);
+		}
+		Crate->Destroy();
+		return false;
+	}
+	if (ProductSlotIndex != INDEX_NONE)
+	{
+		QuickbarInventory->MoveItemToSlot(Crate, ProductSlotIndex);
+		QuickbarInventory->SelectSlot(ProductSlotIndex);
+	}
 	PrepareInventoryForPlayerPickup(Product);
 	ACSDeliveryCrateActor::RemovePackedSource(First);
 	ACSDeliveryCrateActor::RemovePackedSource(Product);
@@ -5047,6 +5090,11 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 		Crate->SetHeldByPlayerForFreshness(true);
 	}
 	else if (ACSTrashActor* Trash = Cast<ACSTrashActor>(SelectedItem)) Trash->PrepareForPickupPhysics();
+	else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(SelectedItem))
+	{
+		Product->PrepareForPickupPhysics();
+		Product->SetHeldByPlayerForFreshness(true);
+	}
 	USceneComponent* AttachTarget = GetHeldItemAttachTarget(SelectedItem);
 	if (!IsValid(AttachTarget))
 	{
@@ -5062,6 +5110,7 @@ void ACSPlayerCharacter::EquipSelectedQuickbarTool()
 		Crate->SetActorRelativeLocation(Crate->GetHeldRelativeLocation());
 		CreatePlacementPreviewFromCrate(Crate);
 	}
+	else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(SelectedItem)) CreatePlacementPreview(Product);
 	else DestroyPlacementPreview();
 	if (ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(SelectedItem)) Tool->OnEquipped(this);
 	HeldActor = SelectedItem;
@@ -5085,9 +5134,11 @@ void ACSPlayerCharacter::StoreHeldQuickbarItem()
 	Item->AttachToComponent(QuickbarStorageAnchor,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 	Item->SetActorHiddenInGame(true);
-	// 상자 액터의 신선도 타이머는 유지하고 냉장·냉동 보호만 받지 않습니다.
+	// 보관 중에도 신선도 타이머는 유지하고 냉장·냉동 보호만 받지 않습니다.
 	if (ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Item))
 		Crate->SetHeldByPlayerForFreshness(true);
+	else if (ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Item))
+		Product->SetHeldByPlayerForFreshness(true);
 }
 
 void ACSPlayerCharacter::RemoveHeldItemFromQuickbar()
@@ -5162,7 +5213,13 @@ void ACSPlayerCharacter::UpdateQuickbarHUD()
 		{
 			// 제조 실패물은 종류 이름으로 보여 준다
 			ToolNames.Add(Trash->GetTrashDisplayName());
-			ToolIcons.Add(nullptr);
+			ToolIcons.Add(TrashQuickbarIcon);
+		}
+		else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Item))
+		{
+			ToolNames.Add(Product->GetProductDisplayName());
+			const UCSProductVisualRegistry* Registry = Product->GetVisualRegistry();
+			ToolIcons.Add(IsValid(Registry) ? Registry->GetProductIcon(Product->GetProductId()).LoadSynchronous() : nullptr);
 		}
 		else
 		{

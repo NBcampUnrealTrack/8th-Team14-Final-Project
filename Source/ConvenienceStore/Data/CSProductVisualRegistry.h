@@ -32,4 +32,5 @@ public:
 	TMap<FName, FCSProductVisualData> ProductVisuals;
 
 	const FCSProductVisualData* FindVisualData(FName ProductId) const;
+	TSoftObjectPtr<UTexture2D> GetProductIcon(FName ProductId) const;
 };

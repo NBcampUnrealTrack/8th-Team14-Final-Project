@@ -7,7 +7,7 @@
 class ACSUsableToolActor;
 class AActor;
 
-// 퀵바 슬롯 하나에 보관되는 도구·상자·쓰레기입니다.
+// 퀵바 슬롯 하나에 보관되는 도구·상자·쓰레기·낱개 상품입니다.
 USTRUCT(BlueprintType)
 struct FCSQuickbarSlot
 {
@@ -21,7 +21,7 @@ struct FCSQuickbarSlot
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSOnQuickbarChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnQuickbarSelectionChanged, int32, SelectedSlotIndex);
 
-// 플레이어가 도구·상자·쓰레기를 보관하는 퀵바입니다.
+// 플레이어가 도구·상자·쓰레기·낱개 상품을 보관하는 퀵바입니다.
 UCLASS(ClassGroup = (Player), meta = (BlueprintSpawnableComponent))
 class CONVENIENCESTORE_API UCSQuickbarInventoryComponent : public UActorComponent
 {
@@ -34,6 +34,9 @@ public:
 	void InitializeQuickbar();
 	void SetSlotCount(int32 NewSlotCount);
 	int32 TryAddItem(AActor* ItemActor);
+	bool CanAddItem(const AActor* ItemActor) const;
+	// 포장 전 상품의 슬롯을 유지합니다. 다른 항목은 교환해 보존합니다.
+	bool MoveItemToSlot(AActor* ItemActor, int32 TargetSlotIndex);
 	bool RemoveItem(AActor* ItemActor);
 	AActor* GetItemAt(int32 SlotIndex) const;
 	bool ContainsItem(const AActor* ItemActor) const;
