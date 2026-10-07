@@ -31,7 +31,7 @@ constexpr const TCHAR* JournalPageTitles[] = {TEXT("지도"),
 											  TEXT("달력 · 사건 기록"),
 											  TEXT("배달 기록"),
 											  TEXT("아티팩트 도감")};
-
+//록담님 수정부탁드립니다.
 FString GetRaceLifeDescription(ECSJournalRace Race)
 {
 	static const TCHAR* Descriptions[] = {
