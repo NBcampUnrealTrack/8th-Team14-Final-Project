@@ -25,6 +25,7 @@ FText GetLedgerCategoryText(ECSProductCategory Category)
 	case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
 	case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
 	case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
+	case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
 	default: return FText::GetEmpty();
 	}
 }

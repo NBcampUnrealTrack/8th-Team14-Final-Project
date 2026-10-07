@@ -195,7 +195,8 @@ bool UCSStoreLedgerWidget::BuildProductViewData(
 	OutData.PurchasePrice = ProductData->PurchasePrice;
 	OutData.ShelfLifeDays = ProductData->ShelfLifeDays;
 	OutData.bPerishable = ProductData->bPerishable;
-	// 기존 WBP 데이터 핀은 유지하되 장부에 잠금 상태를 전달하지 않습니다.
+	// 일반 상품의 옛 레벨/평판 잠금은 사용하지 않습니다. 제조 전용 상품만
+	// 아직 발견하지 못했고 재고도 없을 때 장부에서 미제조 상태로 표시합니다.
 	OutData.bUnlocked = true;
 	OutData.RequiredStoreLevel = 1;
 	OutData.RequiredReputationGrade = ECSReputationGrade::VeryBad;
@@ -211,10 +212,20 @@ bool UCSStoreLedgerWidget::BuildProductViewData(
 	}
 
 	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
 	if (const UCSStoreStockSubsystem* StockSubsystem =
 		World ? World->GetSubsystem<UCSStoreStockSubsystem>() : nullptr)
 	{
 		OutData.CurrentStock = StockSubsystem->GetProductStock(ProductId).TotalQuantity;
+	}
+
+	if (IsValid(Crafting))
+	{
+		FCSCraftLedgerInfo CraftInfo;
+		if (Crafting->BuildLedgerInfo(ProductId, CraftInfo))
+		{
+			OutData.bUnlocked = CraftInfo.bDiscovered || OutData.CurrentStock > 0;
+		}
 	}
 
 	if (const UCSStorePricingSubsystem* PricingSubsystem =
@@ -241,7 +252,9 @@ bool UCSStoreLedgerWidget::MatchesSelectedCategory(ECSProductCategory ProductCat
 	switch (SelectedCategory)
 	{
 	case ECSLedgerCategoryFilter::Alcohol: return ProductCategory == ECSProductCategory::Alcohol;
-	case ECSLedgerCategoryFilter::Beverage: return ProductCategory == ECSProductCategory::Beverage;
+	case ECSLedgerCategoryFilter::Beverage:
+		return ProductCategory == ECSProductCategory::Beverage ||
+			ProductCategory == ECSProductCategory::HangoverCure;
 	case ECSLedgerCategoryFilter::FreshFood: return ProductCategory == ECSProductCategory::FreshFood;
 	case ECSLedgerCategoryFilter::FrozenFood: return ProductCategory == ECSProductCategory::FrozenFood;
 	case ECSLedgerCategoryFilter::Potion: return ProductCategory == ECSProductCategory::Potion;
