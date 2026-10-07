@@ -899,6 +899,12 @@ struct CONVENIENCESTORE_API FCSCrateRecord
 	// 복원 후 물리를 다시 켜서 바닥에 안착
 	UPROPERTY()
 	bool bWorldDropPhysics = false;
+
+	// [백무송]
+	// 실려 있던 소환 수레의 식별자
+	// 비어 있거나 수레를 찾지 못하면 바닥 상자로 복원
+	UPROPERTY()
+	FGuid CartSaveId;
 };
 
 // 설치형 시설 한 개의 레코드
@@ -1067,6 +1073,27 @@ struct CONVENIENCESTORE_API FCSGachaSealRecord
 	FSoftClassPath ArtifactPickupClass;
 };
 
+// 아티팩트로 소환한 수레 한 개의 레코드
+// 레벨 배치 수레는 레벨이 다시 생성하므로 기록하지 않음
+USTRUCT()
+struct CONVENIENCESTORE_API FCSSummonedCartRecord
+{
+	GENERATED_BODY()
+
+	// 다시 생성한 수레가 이어받을 식별자
+	UPROPERTY()
+	FGuid SaveId;
+
+	// 수레를 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 수레의 월드 트랜스폼
+	// 복원 시 위치·회전만 사용하고 크기는 클래스 기본값을 사용
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+};
+
 // 퀵바 슬롯 한 칸의 레코드
 // 도구는 클래스 경로, 상자·쓰레기·봉인석은 각 레코드로 저장
 USTRUCT()
@@ -1160,6 +1187,11 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 	// 월드에 놓인 아티팩트 픽업 레코드 목록
 	UPROPERTY()
 	TArray<FCSArtifactPickupRecord> ArtifactPickups;
+
+	// 아티팩트로 소환한 수레 레코드 목록
+	// 레벨 배치 수레는 제외
+	UPROPERTY()
+	TArray<FCSSummonedCartRecord> SummonedCarts;
 
 	// 플레이어 퀵바 레코드
 	UPROPERTY()

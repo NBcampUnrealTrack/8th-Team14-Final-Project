@@ -5,6 +5,9 @@
 #include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSWorldStateSaveHandler.generated.h"
 
+// [백무송]
+// 소환 수레 수집 선언에 사용
+class ACSCartActor;
 class ACSDeliveryCrateActor;
 class ACSFreshnessSafeZoneActor;
 class ACSGachaSeal;
@@ -52,6 +55,10 @@ private:
 	void CaptureTrash(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureGachaSeals(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const;
+
+	// 아티팩트로 소환한 수레만 기록하고 레벨 배치 수레는 제외
+	void CaptureSummonedCarts(FCSWorldSaveRecord& OutRecord) const;
+
 	void CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const;
 
 	// 자금 복원 후 엔딩 조건이 다시 충족되므로 엔딩 진행 상태를 함께 기록
@@ -78,6 +85,11 @@ private:
 	void RestoreTrash(const FCSWorldSaveRecord& InRecord);
 	void RestoreGachaSeals(const FCSWorldSaveRecord& InRecord);
 	void RestoreArtifactPickups(const FCSWorldSaveRecord& InRecord);
+
+	// 남아 있는 런타임 소환 수레를 제거하고 레코드로 다시 생성
+	// 수레 위 상자가 수레 자리에 떨어지도록 상자 복원보다 먼저 호출
+	void RestoreSummonedCarts(const FCSWorldSaveRecord& InRecord);
+
 	void RestoreQuickbar(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 
 	// 월드의 플레이어 캐릭터를 조회
@@ -85,6 +97,11 @@ private:
 
 	// 창고 액터를 이름 기준으로 수집
 	void CollectStoragesByName(TMap<FName, ACSFreshnessSafeZoneActor*>& OutStorages) const;
+
+	// [백무송]
+	// 런타임 식별자를 가진 소환 수레를 식별자 기준으로 수집
+	// 레벨 배치 수레는 식별자가 없으므로 제외
+	void CollectSummonedCartsBySaveId(TMap<FGuid, ACSCartActor*>& OutCarts) const;
 
 	// 테이블 경로 해석 실패 시 사용할 상품 테이블을 조회
 	// 월드 상품과 진열대 단 설정에서 찾으므로 상품 제거 전에 호출

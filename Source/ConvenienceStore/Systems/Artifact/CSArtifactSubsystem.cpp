@@ -17,6 +17,7 @@
 #include "Systems/Weather/CSWeatherSubsystem.h"
 #include "Data/CSWeatherTypes.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
+#include "Features/Facilities/CSSaveIdComponent.h"
 
 UCSArtifactSubsystem::UCSArtifactSubsystem()
 {
@@ -272,8 +273,11 @@ bool UCSArtifactSubsystem::TryUse(FName Id, ACSPlayerCharacter* Player, int32 Co
 					{
 						continue;
 					}
-					if (IsValid(World->SpawnActor<ACSCartActor>(ActorClass, Location, Rotation, Params)))
+					if (ACSCartActor* Cart = World->SpawnActor<ACSCartActor>(ActorClass, Location, Rotation, Params); IsValid(Cart))
 					{
+						// [백무송]
+						// 세이브 시 레벨 배치 수레와 구분하도록 런타임 식별자를 발급
+						UCSSaveIdComponent::FindOrAddComponent(Cart);
 						bSucceeded = true;
 						break;
 					}

@@ -6,6 +6,7 @@
 #include "GameFramework/Pawn.h"
 
 #include "Data/CSSaveTypes.h"
+#include "Features/Cart/CSCartActor.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Ending/CSEndingActors.h"
 #include "Features/Facilities/CSBuildableFacility.h"
@@ -38,11 +39,14 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 	CaptureTrash(Record);
 	CaptureGachaSeals(Record);
 	CaptureArtifactPickups(Record);
+	// 아티팩트로 소환한 수레를 기록
+	CaptureSummonedCarts(Record);
 	CaptureQuickbar(Record);
 	CaptureEnding(OutSave);
 
+	// 요약 로그에 소환 수레 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
@@ -50,6 +54,7 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 		Record.Trash.Num(),
 		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
+		Record.SummonedCarts.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -202,11 +207,23 @@ void UCSWorldStateSaveHandler::CaptureCrates(FCSWorldSaveRecord& OutRecord) cons
 		else if (IsValid(ParentActor))
 		{
 			// 운반자·수레에 실린 상자는 부착 상태 대신 현재 위치의 바닥 상자로 기록
+			// 소환 수레에 다시 싣지 못할 때의 폴백으로도 사용
 			CrateRecord.Transform = FTransform(
 				Crate->GetActorRotation(),
 				Crate->GetActorLocation(),
 				Crate->GetActorScale3D());
 			CrateRecord.bWorldDropPhysics = true;
+
+			// 소환 수레에 실린 상자는 복원 시 같은 수레에 다시 싣도록 수레 식별자를 기록
+			// 레벨 배치 수레는 식별자가 없으므로 바닥 상자로만 복원
+			if (const ACSCartActor* Cart = Cast<ACSCartActor>(ParentActor))
+			{
+				const UCSSaveIdComponent* CartSaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+				if (CartSaveIdComponent != nullptr && CartSaveIdComponent->WasSpawnedAtRuntime())
+				{
+					CrateRecord.CartSaveId = CartSaveIdComponent->GetSaveId();
+				}
+			}
 		}
 
 		OutRecord.Crates.Add(CrateRecord);
@@ -375,6 +392,41 @@ void UCSWorldStateSaveHandler::CaptureArtifactPickups(FCSWorldSaveRecord& OutRec
 	}
 }
 
+void UCSWorldStateSaveHandler::CaptureSummonedCarts(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		// 제거 중인 수레는 기록에서 제외
+		const ACSCartActor* Cart = *It;
+		if (!IsValid(Cart) || Cart->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 레벨 배치 수레는 식별자 컴포넌트가 없거나 런타임 발급이 아니므로 제외
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent == nullptr
+			|| !SaveIdComponent->WasSpawnedAtRuntime()
+			|| !SaveIdComponent->GetSaveId().IsValid())
+		{
+			continue;
+		}
+
+		// 수레는 물리를 쓰지 않으므로 플레이어가 밀고 있어도 액터 트랜스폼을 그대로 기록
+		FCSSummonedCartRecord CartRecord;
+		CartRecord.SaveId = SaveIdComponent->GetSaveId();
+		CartRecord.ActorClass = FSoftClassPath(Cart->GetClass());
+		CartRecord.Transform = Cart->GetActorTransform();
+		OutRecord.SummonedCarts.Add(CartRecord);
+	}
+}
+
 void UCSWorldStateSaveHandler::CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const
 {
 	if (const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter())
@@ -425,6 +477,8 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 	DestroyAllArtifactPickups();
 
 	RestoreFacilities(Record);
+	// 수레 위 상자가 수레 자리에 떨어지도록 상자 복원보다 먼저 소환 수레를 복원
+	RestoreSummonedCarts(Record);
 	RestoreShelves(Record, FallbackProductTable);
 	RestoreLooseProducts(Record, FallbackProductTable);
 	RestoreCrates(Record, FallbackProductTable);
@@ -434,8 +488,9 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 	RestoreQuickbar(Record, FallbackProductTable);
 	RestoreEnding(InSave);
 
+	// 요약 로그에 소환 수레 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
@@ -443,6 +498,7 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 		Record.Trash.Num(),
 		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
+		Record.SummonedCarts.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -851,6 +907,11 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 	TMap<FName, ACSFreshnessSafeZoneActor*> StoragesByName;
 	CollectStoragesByName(StoragesByName);
 
+	// 소환 수레에 실려 있던 상자를 다시 싣도록 복원된 소환 수레를 수집
+	// RestoreSummonedCarts가 먼저 실행되므로 저장 당시 식별자로 조회 가능
+	TMap<FGuid, ACSCartActor*> SummonedCartsBySaveId;
+	CollectSummonedCartsBySaveId(SummonedCartsBySaveId);
+
 	for (const FCSCrateRecord& CrateRecord : InRecord.Crates)
 	{
 		ACSDeliveryCrateActor* Crate =
@@ -873,6 +934,23 @@ void UCSWorldStateSaveHandler::RestoreCrates(
 			UE_LOG(LogTemp, Warning,
 				TEXT("[CSSave] 창고 %s에 상자를 다시 보관하지 못해 바닥에 둡니다."),
 				*CrateRecord.StorageActorName.ToString());
+		}
+
+		// 소환 수레에 실려 있던 상자는 저장 위치와 가장 가까운 빈 적재 칸에 다시 적재
+		// 수레가 저장 당시 위치에 복원되므로 저장 당시와 같은 칸을 선택
+		if (CrateRecord.CartSaveId.IsValid())
+		{
+			ACSCartActor** Cart = SummonedCartsBySaveId.Find(CrateRecord.CartSaveId);
+			if (Cart != nullptr
+				&& ICSShelfPlaceable::Execute_TryPlaceItem(*Cart, Crate, CrateRecord.Transform.GetLocation()))
+			{
+				continue;
+			}
+
+			// 수레를 찾지 못하거나 빈 적재 칸이 없으면 저장 위치의 바닥 상자로 유지
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 소환 수레 %s에 상자를 다시 싣지 못해 바닥에 둡니다."),
+				*CrateRecord.CartSaveId.ToString());
 		}
 
 		if (CrateRecord.bWorldDropPhysics)
@@ -1096,6 +1174,73 @@ void UCSWorldStateSaveHandler::RestoreFacilities(const FCSWorldSaveRecord& InRec
 	}
 }
 
+void UCSWorldStateSaveHandler::RestoreSummonedCarts(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 같은 월드에 다시 적용될 때 소환 수레가 중복되지 않도록 런타임 수레를 먼저 수집
+	// 레벨 배치 수레는 식별자 컴포넌트가 없으므로 유지
+	TArray<ACSCartActor*> RuntimeSpawnedCarts;
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		ACSCartActor* Cart = *It;
+		if (!IsValid(Cart))
+		{
+			continue;
+		}
+
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent != nullptr && SaveIdComponent->WasSpawnedAtRuntime())
+		{
+			RuntimeSpawnedCarts.Add(Cart);
+		}
+	}
+
+	for (ACSCartActor* Cart : RuntimeSpawnedCarts)
+	{
+		if (IsValid(Cart))
+		{
+			Cart->Destroy();
+		}
+	}
+
+	for (const FCSSummonedCartRecord& CartRecord : InRecord.SummonedCarts)
+	{
+		// 저장된 수레 클래스를 조회하고 실패하면 경고 후 생성을 생략
+		UClass* CartClass = CartRecord.ActorClass.TryLoadClass<ACSCartActor>();
+		if (CartClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 소환 수레 클래스를 불러오지 못했습니다: %s"),
+				*CartRecord.ActorClass.ToString());
+			continue;
+		}
+
+		// 생성 시 클래스 기본 크기에 전달한 크기가 곱해지므로 위치·회전만 사용
+		// 소환 시와 같은 방식으로 생성해 크기가 중복 적용되는 것을 방지
+		const FTransform SpawnTransform(CartRecord.Transform.GetRotation(), CartRecord.Transform.GetLocation());
+
+		// 저장 당시 자리에 그대로 두도록 다른 액터와 겹쳐도 생성
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ACSCartActor* Cart = World->SpawnActor<ACSCartActor>(CartClass, SpawnTransform, SpawnParameters);
+		if (!IsValid(Cart))
+		{
+			continue;
+		}
+
+		// 다음 저장에서도 소환 수레로 기록되도록 저장 당시 식별자와 런타임 표시를 이어받음
+		if (UCSSaveIdComponent* SaveIdComponent = UCSSaveIdComponent::FindOrAddComponent(Cart))
+		{
+			SaveIdComponent->OverrideSaveId(CartRecord.SaveId, true);
+		}
+	}
+}
+
 void UCSWorldStateSaveHandler::RestoreQuickbar(
 	const FCSWorldSaveRecord& InRecord,
 	const UDataTable* FallbackProductTable)
@@ -1162,6 +1307,34 @@ void UCSWorldStateSaveHandler::CollectStoragesByName(
 		if (ACSFreshnessSafeZoneActor* Storage = *It; IsValid(Storage))
 		{
 			OutStorages.Add(Storage->GetFName(), Storage);
+		}
+	}
+}
+
+void UCSWorldStateSaveHandler::CollectSummonedCartsBySaveId(TMap<FGuid, ACSCartActor*>& OutCarts) const
+{
+	OutCarts.Reset();
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (TActorIterator<ACSCartActor> It(World); It; ++It)
+	{
+		// RestoreSummonedCarts에서 제거한 이전 수레는 제외
+		ACSCartActor* Cart = *It;
+		if (!IsValid(Cart) || Cart->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		const UCSSaveIdComponent* SaveIdComponent = Cart->FindComponentByClass<UCSSaveIdComponent>();
+		if (SaveIdComponent != nullptr
+			&& SaveIdComponent->WasSpawnedAtRuntime()
+			&& SaveIdComponent->GetSaveId().IsValid())
+		{
+			OutCarts.Add(SaveIdComponent->GetSaveId(), Cart);
 		}
 	}
 }
