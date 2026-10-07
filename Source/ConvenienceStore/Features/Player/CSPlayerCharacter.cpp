@@ -29,6 +29,7 @@
 #include "Data/CSProductTypes.h"
 #include "Data/CSSaveTypes.h"
 #include "Systems/SaveLoad/CSWorldStateSaveHandler.h"
+#include "Features/Gacha/CSGachaSeal.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 
@@ -1176,7 +1177,20 @@ void ACSPlayerCharacter::CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) con
 	{
 		const AActor* Item = QuickbarInventory->GetItemAt(SlotIndex);
 		FCSQuickbarSlotRecord& SlotRecord = OutRecord.Slots[SlotIndex];
-		if (const ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(Item))
+		// 봉인석은 도구이므로 도구 분기보다 먼저 확인해 보상 정보까지 기록
+		// 보상이 없거나 개봉 중인 봉인석은 복원해도 개봉할 수 없으므로 빈 칸으로 기록
+		if (const ACSGachaSeal* Seal = Cast<ACSGachaSeal>(Item))
+		{
+			if (Seal->HasSealedReward())
+			{
+				SlotRecord.bHasGachaSeal = true;
+				Seal->CaptureSaveRecord(SlotRecord.GachaSeal);
+
+				// 복원 시 퀵바에 다시 보관하므로 바닥 물리 상태는 기록하지 않음
+				SlotRecord.GachaSeal.bWorldDropPhysics = false;
+			}
+		}
+		else if (const ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(Item))
 		{
 			SlotRecord.ToolClass = FSoftClassPath(Tool->GetClass());
 		}
@@ -1210,13 +1224,33 @@ void ACSPlayerCharacter::RestoreQuickbarRecord(
 	{
 		AActor* RestoredItem = nullptr;
 		bool bSpawned = false;
-		if (SlotRecord.ToolClass.IsValid())
+		// 봉인석 레코드로 보상이 설정된 봉인석을 생성하고 아래 공통 처리로 퀵바에 다시 보관
+		// 보상 행을 찾지 못하면 nullptr을 받아 이 칸을 생략
+		if (SlotRecord.bHasGachaSeal)
+		{
+			RestoredItem = UCSWorldStateSaveHandler::SpawnGachaSealFromRecord(
+				*World,
+				SlotRecord.GachaSeal,
+				GetActorTransform());
+			bSpawned = true;
+		}
+		else if (SlotRecord.ToolClass.IsValid())
 		{
 			UClass* ToolClass = SlotRecord.ToolClass.TryLoadClass<ACSUsableToolActor>();
 			if (ToolClass == nullptr)
 			{
 				UE_LOG(LogTemp, Warning,
 					TEXT("[CSSave] 퀵바 도구 클래스를 불러오지 못했습니다: %s"),
+					*SlotRecord.ToolClass.ToString());
+				continue;
+			}
+
+			// 이전 세이브의 퀵바 봉인석은 클래스만 기록되어 보상 없이 생성되므로 복원을 생략
+			// 열거나 다시 주울 수 없는 빈 봉인석이 퀵바에 생기는 것을 방지
+			if (ToolClass->IsChildOf(ACSGachaSeal::StaticClass()))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[CSSave] 보상 정보가 없는 퀵바 봉인석은 복원하지 않습니다: %s"),
 					*SlotRecord.ToolClass.ToString());
 				continue;
 			}

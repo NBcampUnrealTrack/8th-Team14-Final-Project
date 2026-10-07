@@ -8,6 +8,7 @@
 #include "Data/CSWeatherTypes.h"
 #include "Data/CSEmployeeHiringTypes.h"
 #include "Data/CSDeliveryOrderTypes.h"
+#include "Data/CSGachaDataTypes.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "CSSaveTypes.generated.h"
 
@@ -1007,8 +1008,67 @@ struct CONVENIENCESTORE_API FCSArtifactPickupRecord
 	bool bSimulatingPhysics = false;
 };
 
+// 개봉하지 않은 가챠 봉인석 한 개의 레코드
+// 보상 행 전체 대신 개봉 시 보상 생성에 필요한 값만 기록
+USTRUCT()
+struct CONVENIENCESTORE_API FCSGachaSealRecord
+{
+	GENERATED_BODY()
+
+	// 봉인석을 다시 생성할 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ActorClass;
+
+	// 봉인석의 월드 트랜스폼
+	// 루트인 표시 메시가 물리로 움직인 위치까지 포함
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 바닥 물리 상태로 놓여 있던 봉인석 여부
+	// 복원 후 물리를 다시 켜서 바닥에 안착
+	UPROPERTY()
+	bool bWorldDropPhysics = false;
+
+	// 보상 종류
+	UPROPERTY()
+	ECSGachaRewardType RewardType = ECSGachaRewardType::Product;
+
+	// 개봉 알림과 경고 로그에 사용하는 보상 식별자
+	UPROPERTY()
+	FName RewardId;
+
+	// 보상 표시 이름
+	UPROPERTY()
+	FText DisplayName;
+
+	// 상품 보상의 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ProductRow;
+
+	// 아티팩트 보상의 데이터 행
+	UPROPERTY()
+	FCSSaveRowRef ArtifactRow;
+
+	// 보상 행이 지정한 상품 액터 클래스
+	// 비어 있으면 ProductPickupClass로 상품을 생성
+	UPROPERTY()
+	FSoftClassPath RewardActorClass;
+
+	// 보상 수량
+	UPROPERTY()
+	int32 Quantity = 1;
+
+	// 상품 보상을 생성할 기본 상품 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ProductPickupClass;
+
+	// 아티팩트 보상을 생성할 픽업 액터 클래스
+	UPROPERTY()
+	FSoftClassPath ArtifactPickupClass;
+};
+
 // 퀵바 슬롯 한 칸의 레코드
-// 도구는 클래스 경로, 상자는 상자 레코드, 쓰레기는 쓰레기 레코드로 저장
+// 도구는 클래스 경로, 상자·쓰레기·봉인석은 각 레코드로 저장
 USTRUCT()
 struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 {
@@ -1036,6 +1096,18 @@ struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 	// 표시 이름과 메시를 함께 기록해 퀵바 복원 후에도 유지
 	UPROPERTY()
 	FCSTrashRecord Trash;
+
+	// [백무송]
+	// 가챠 봉인석 보관 여부
+	// 이전 세이브는 false로 읽혀 클래스만 기록된 봉인석과 구분
+	UPROPERTY()
+	bool bHasGachaSeal = false;
+
+	// [백무송]
+	// 보관 중인 가챠 봉인석의 보상 정보
+	// 퀵바에 다시 보관하므로 위치와 바닥 물리 상태는 사용하지 않음
+	UPROPERTY()
+	FCSGachaSealRecord GachaSeal;
 };
 
 // 퀵바 전체 레코드
@@ -1079,6 +1151,11 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 	// 월드에 놓인 쓰레기 레코드 목록
 	UPROPERTY()
 	TArray<FCSTrashRecord> Trash;
+
+	// 월드에 놓인 미개봉 가챠 봉인석 레코드 목록
+	// 퀵바에 보관하거나 손에 든 봉인석은 제외
+	UPROPERTY()
+	TArray<FCSGachaSealRecord> GachaSeals;
 
 	// 월드에 놓인 아티팩트 픽업 레코드 목록
 	UPROPERTY()

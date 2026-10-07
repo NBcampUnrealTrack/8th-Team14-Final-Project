@@ -7,11 +7,13 @@
 
 class ACSDeliveryCrateActor;
 class ACSFreshnessSafeZoneActor;
+class ACSGachaSeal;
 class ACSPlayerCharacter;
 class ACSTrashActor;
 class UCSSaveGame;
 class UDataTable;
 struct FCSCrateRecord;
+struct FCSGachaSealRecord;
 struct FCSTrashRecord;
 struct FCSWorldSaveRecord;
 
@@ -38,12 +40,17 @@ public:
 	// 월드 복원과 퀵바 복원이 같은 생성 순서를 사용하도록 공개
 	static ACSTrashActor* SpawnTrashFromRecord(UWorld& InWorld,const FCSTrashRecord& InRecord,const FTransform& InSpawnTransform);
 
+	// 봉인석 레코드로 미개봉 봉인석을 생성해 반환하고 보상을 해석하지 못하면 nullptr을 반환
+	// 월드 복원과 퀵바 복원이 같은 생성 순서를 사용하도록 공개
+	static ACSGachaSeal* SpawnGachaSealFromRecord(UWorld& InWorld, const FCSGachaSealRecord& InRecord, const FTransform& InSpawnTransform);
+
 private:
 	void CaptureShelves(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureLooseProducts(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureCrates(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureFacilities(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureTrash(FCSWorldSaveRecord& OutRecord) const;
+	void CaptureGachaSeals(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const;
 	void CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const;
 
@@ -58,6 +65,9 @@ private:
 	// 레벨이 다시 열리며 생성된 배치 쓰레기를 포함해 월드의 모든 쓰레기를 제거
 	void DestroyAllTrash();
 
+	// 레코드로 다시 생성하기 전에 월드의 모든 가챠 봉인석을 제거
+	void DestroyAllGachaSeals();
+
 	// 획득한 레벨 배치 픽업이 다시 나타나지 않도록 배치분을 포함해 월드의 모든 아티팩트 픽업을 제거
 	void DestroyAllArtifactPickups();
 
@@ -66,6 +76,7 @@ private:
 	void RestoreCrates(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 	void RestoreFacilities(const FCSWorldSaveRecord& InRecord);
 	void RestoreTrash(const FCSWorldSaveRecord& InRecord);
+	void RestoreGachaSeals(const FCSWorldSaveRecord& InRecord);
 	void RestoreArtifactPickups(const FCSWorldSaveRecord& InRecord);
 	void RestoreQuickbar(const FCSWorldSaveRecord& InRecord, const UDataTable* FallbackProductTable);
 

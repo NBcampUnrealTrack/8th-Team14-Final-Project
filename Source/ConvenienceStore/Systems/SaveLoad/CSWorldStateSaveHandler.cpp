@@ -11,6 +11,7 @@
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Facilities/CSSaveIdComponent.h"
 #include "Features/Gacha/CSGachaArtifactPickup.h"
+#include "Features/Gacha/CSGachaSeal.h"
 #include "Features/Interaction/CSShelfPlaceable.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -35,17 +36,19 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 	CaptureCrates(Record);
 	CaptureFacilities(Record);
 	CaptureTrash(Record);
+	CaptureGachaSeals(Record);
 	CaptureArtifactPickups(Record);
 	CaptureQuickbar(Record);
 	CaptureEnding(OutSave);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
 		Record.Quickbar.Slots.Num());
 }
@@ -298,6 +301,48 @@ void UCSWorldStateSaveHandler::CaptureTrash(FCSWorldSaveRecord& OutRecord) const
 	}
 }
 
+void UCSWorldStateSaveHandler::CaptureGachaSeals(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 퀵바 봉인석 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
+	for (TActorIterator<ACSGachaSeal> It(World); It; ++It)
+	{
+		// 개봉했거나 보상이 없는 봉인석은 복원해도 개봉할 수 없으므로 기록에서 제외
+		const ACSGachaSeal* Seal = *It;
+		if (!IsValid(Seal) || Seal->IsActorBeingDestroyed() || !Seal->HasSealedReward())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 봉인석은 퀵바 레코드가 담당하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(Seal))
+		{
+			continue;
+		}
+
+		FCSGachaSealRecord SealRecord;
+		Seal->CaptureSaveRecord(SealRecord);
+
+		// 퀵바에 등록되지 않은 채 운반 중인 봉인석은 부착 상태 대신 운반자 위치의 바닥 봉인석으로 기록
+		if (const APawn* CarrierPawn = Cast<APawn>(Seal->GetAttachParentActor()))
+		{
+			SealRecord.Transform = FTransform(
+				Seal->GetActorRotation(),
+				CarrierPawn->GetActorLocation(),
+				Seal->GetActorScale3D());
+			SealRecord.bWorldDropPhysics = true;
+		}
+
+		OutRecord.GachaSeals.Add(SealRecord);
+	}
+}
+
 void UCSWorldStateSaveHandler::CaptureArtifactPickups(FCSWorldSaveRecord& OutRecord) const
 {
 	UWorld* World = GetWorld();
@@ -375,6 +420,8 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 
 	DestroyAllProductsAndCrates();
 	DestroyAllTrash();
+	// 퀵바로 복원한 봉인석까지 제거되지 않도록 퀵바 복원 전에 제거
+	DestroyAllGachaSeals();
 	DestroyAllArtifactPickups();
 
 	RestoreFacilities(Record);
@@ -382,17 +429,19 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 	RestoreLooseProducts(Record, FallbackProductTable);
 	RestoreCrates(Record, FallbackProductTable);
 	RestoreTrash(Record);
+	RestoreGachaSeals(Record);
 	RestoreArtifactPickups(Record);
 	RestoreQuickbar(Record, FallbackProductTable);
 	RestoreEnding(InSave);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
 		Record.Facilities.Num(),
 		Record.Trash.Num(),
+		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
 		Record.Quickbar.Slots.Num());
 }
@@ -487,6 +536,33 @@ void UCSWorldStateSaveHandler::DestroyAllTrash()
 	}
 }
 
+void UCSWorldStateSaveHandler::DestroyAllGachaSeals()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 반복 중 액터 목록이 바뀌지 않도록 제거 대상을 먼저 수집
+	TArray<ACSGachaSeal*> SealsToDestroy;
+	for (TActorIterator<ACSGachaSeal> It(World); It; ++It)
+	{
+		if (ACSGachaSeal* Seal = *It; IsValid(Seal))
+		{
+			SealsToDestroy.Add(Seal);
+		}
+	}
+
+	for (ACSGachaSeal* Seal : SealsToDestroy)
+	{
+		if (IsValid(Seal))
+		{
+			Seal->Destroy();
+		}
+	}
+}
+
 void UCSWorldStateSaveHandler::DestroyAllArtifactPickups()
 {
 	UWorld* World = GetWorld();
@@ -526,6 +602,32 @@ void UCSWorldStateSaveHandler::RestoreTrash(const FCSWorldSaveRecord& InRecord)
 	{
 		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
 		SpawnTrashFromRecord(*World, TrashRecord, TrashRecord.Transform);
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreGachaSeals(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const FCSGachaSealRecord& SealRecord : InRecord.GachaSeals)
+	{
+		// 퀵바 복원과 같은 생성 순서를 사용하도록 공용 생성 함수로 복원
+		ACSGachaSeal* Seal = SpawnGachaSealFromRecord(*World, SealRecord, SealRecord.Transform);
+		if (!IsValid(Seal))
+		{
+			continue;
+		}
+
+		// 바닥에 놓여 있던 봉인석은 충격량 없이 물리를 다시 켜 바닥에 안착
+		// Launch는 개봉 대기를 켜지 않으므로 복원 직후 개봉을 방지
+		if (SealRecord.bWorldDropPhysics)
+		{
+			Seal->Launch(FVector::ZeroVector);
+		}
 	}
 }
 
@@ -850,6 +952,49 @@ ACSTrashActor* UCSWorldStateSaveHandler::SpawnTrashFromRecord(UWorld& InWorld,co
 	// 저장 시점의 이름·메시·충돌·물리 상태를 적용
 	Trash->RestoreSaveRecord(InRecord);
 	return Trash;
+}
+
+ACSGachaSeal* UCSWorldStateSaveHandler::SpawnGachaSealFromRecord(UWorld& InWorld, const FCSGachaSealRecord& InRecord, const FTransform& InSpawnTransform)
+{
+	// 저장된 봉인석 클래스를 조회하고 실패하면 경고 후 생성을 생략
+	UClass* SealClass = InRecord.ActorClass.TryLoadClass<ACSGachaSeal>();
+	if (SealClass == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 봉인석 클래스를 불러오지 못했습니다: %s"),
+			*InRecord.ActorClass.ToString());
+		return nullptr;
+	}
+
+	// 생성 시 클래스 기본 크기에 전달한 크기가 곱해지므로 위치·회전만 사용
+	// 저장된 크기를 그대로 전달하면 기본 크기가 두 번 적용되어 봉인석이 작아지는 것을 방지
+	const FTransform SpawnTransform(InSpawnTransform.GetRotation(), InSpawnTransform.GetLocation());
+
+	// 가챠 우물과 같이 BeginPlay 전에 보상을 설정하도록 지연 생성
+	// 다른 액터와 겹쳐도 생성되도록 충돌 처리 방식을 설정
+	ACSGachaSeal* Seal = InWorld.SpawnActorDeferred<ACSGachaSeal>(
+		SealClass,
+		SpawnTransform,
+		nullptr,
+		nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!IsValid(Seal))
+	{
+		return nullptr;
+	}
+
+	// 보상 행을 해석하지 못하면 개봉할 수 없는 봉인석이 남지 않도록 제거
+	if (!Seal->RestoreSaveRecord(InRecord))
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 봉인석 보상 %s의 행을 불러오지 못해 봉인석을 생성하지 않습니다."),
+			*InRecord.RewardId.ToString());
+		Seal->Destroy();
+		return nullptr;
+	}
+
+	Seal->FinishSpawning(SpawnTransform);
+	return Seal;
 }
 
 void UCSWorldStateSaveHandler::RestoreFacilities(const FCSWorldSaveRecord& InRecord)
