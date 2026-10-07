@@ -11,6 +11,7 @@ class UCSCraftingSubsystem;
 class UImage;
 class UPanelWidget;
 class UTextBlock;
+class UTexture2D;
 class UWidgetSwitcher;
 
 // 클로즈업에서 Tab으로 여는 레시피 도감. 입력 잠금과 닫기는 제조대가 맡는다
@@ -75,6 +76,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
 	TSubclassOf<UCSCraftListRowWidget> RowClass;
 
+	// 발견 전 레시피 줄은 상품 아이콘 대신 이것을 보여 준다. 비워 두면 상품 아이콘 그대로
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TObjectPtr<UTexture2D> UnknownRecipeIcon;
+
+	// 목록의 "최근 시도" 줄과 기록 카드에 붙는 장식 아이콘. 비워 두면 아이콘 칸을 접는다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI")
+	TObjectPtr<UTexture2D> RecentAttemptsIcon;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Crafting|UI", meta = (ClampMin = "0.0"))
+	float AttemptCardSpacing = 10.0f;
+
 private:
 	const UCSCraftingSubsystem* GetCrafting() const;
 	void ShowRecipeDetail(FName RecipeRowName);
@@ -83,8 +95,9 @@ private:
 	FText GetHeatName(ECSCraftHeat Heat) const;
 	FText FormatIngredientLine(FName MessageRowName, const FFormatNamedArguments& Extra,
 		FName IngredientA, int32 CountA, FName IngredientB, int32 CountB, ECSCraftHeat Heat, int32 Stir) const;
+	// IconProductId가 있으면 그 상품 아이콘, 없으면 FallbackIcon
 	UCSCraftListRowWidget* AddRow(UPanelWidget* Panel, FName Key, const FText& Name, const FText& Detail,
-		FName IconProductId, bool bSelectable);
+		FName IconProductId, bool bSelectable, UTexture2D* FallbackIcon = nullptr);
 
 	TWeakObjectPtr<ACSCraftStationActor> Station;
 };
