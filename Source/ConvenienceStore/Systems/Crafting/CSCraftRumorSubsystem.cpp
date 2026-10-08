@@ -141,26 +141,56 @@ const TArray<FText>& UCSCraftRumorSubsystem::GetDailyRumors(int32 BusinessDay)
 		return CachedDailyRumors;
 	}
 
-	TArray<FCSCraftRumorLine> Pool = Crafting->GetMaterialRumorLines();
+	// 재료 성질은 조합을 추리하는 단서라, 제조 전용을 다 찾기 전에 보이면 무엇을 하라는 건지 안 읽힌다
+	bool bAllCraftOnlyDiscovered = true;
+	for (const FName RecipeRow : Crafting->GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
+	{
+		if (!Crafting->GetDiscoveredRecipeRows().Contains(RecipeRow))
+		{
+			bAllCraftOnlyDiscovered = false;
+			break;
+		}
+	}
+
+	// 같은 결과물을 가리키는 문장은 한 묶음이고 하루에 하나만 쓴다. 안 그러면 같은 힌트가 말만 바꿔 여러 번 뜬다
+	// 결과물이 없는 잡담·성질은 문장마다 따로 묶는다
+	TMap<FName, TArray<FCSCraftRumorLine>> Groups;
+	for (const FCSCraftRumorLine& Line : Crafting->GetMaterialRumorLines())
+	{
+		const FCSCraftRecipeRow* Recipe = Crafting->FindRecipeByRowName(Line.Key);
+		Groups.FindOrAdd(Recipe != nullptr ? Recipe->ResultProduct : Line.Key).Add(Line);
+	}
 	if (const UDataTable* RumorTable = Crafting->GetRumorTable())
 	{
 		for (const TPair<FName, uint8*>& Pair : RumorTable->GetRowMap())
 		{
 			const FCSCraftRumorRow* Row = reinterpret_cast<const FCSCraftRumorRow*>(Pair.Value);
-			if (Row != nullptr && Row->Kind != ECSCraftRumorKind::WeatherVariant && Row->Kind != ECSCraftRumorKind::None &&
-				!Row->Text.IsEmpty())
+			if (Row == nullptr || Row->Text.IsEmpty())
 			{
-				Pool.Add({ Pair.Key, Row->Text });
+				continue;
+			}
+			const bool bExcluded = Row->Kind == ECSCraftRumorKind::None ||
+				Row->Kind == ECSCraftRumorKind::WeatherVariant ||
+				(Row->Kind == ECSCraftRumorKind::Property && !bAllCraftOnlyDiscovered);
+			if (!bExcluded)
+			{
+				Groups.FindOrAdd(Row->TargetProduct.IsNone() ? Pair.Key : Row->TargetProduct).Add({ Pair.Key, Row->Text });
 			}
 		}
 	}
-	// 표 행 순서가 바뀌어도 같은 시드면 같은 결과가 나오게 키로 정렬한다
-	Pool.Sort([](const FCSCraftRumorLine& A, const FCSCraftRumorLine& B) { return A.Key.LexicalLess(B.Key); });
 
 	// 결정적 계산이라 영업일 시작, 1일차, 불러오기 어느 경로로 와도 같은 날은 같은 소문이 나온다.
-	// 난수 호출 횟수는 풀 크기로만 정해진다
+	// 표 행 순서가 바뀌어도 같은 결과가 나오게 묶음과 문장을 키로 정렬한 뒤 굴린다
 	const uint32 DaySeed = HashCombine(HashCombine(GetTypeHash(GetRumorBaseSeed()), RumorSeedSalt), GetTypeHash(BusinessDay));
 	FRandomStream Stream(static_cast<int32>(DaySeed));
+	Groups.KeySort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
+	TArray<FCSCraftRumorLine> Pool;
+	for (TPair<FName, TArray<FCSCraftRumorLine>>& Group : Groups)
+	{
+		Group.Value.Sort([](const FCSCraftRumorLine& A, const FCSCraftRumorLine& B) { return A.Key.LexicalLess(B.Key); });
+		Pool.Add(Group.Value.Num() > 1 ? Group.Value[Stream.RandRange(0, Group.Value.Num() - 1)] : Group.Value[0]);
+	}
+
 	for (int32 Index = Pool.Num() - 1; Index > 0; --Index)
 	{
 		Pool.Swap(Index, Stream.RandRange(0, Index));
