@@ -4,6 +4,8 @@
 #include "Data/CSWeatherSettingsDataAsset.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
+#include "Features/Weather/CSWeatherBlockerComponent.h"
+#include "Features/Weather/CSWeatherCoverageComponent.h"
 #include "Features/Weather/CSWeatherEffectActor.h"
 #include "Features/Weather/CSWeatherIndoorArea.h"
 #include "Features/Weather/CSWeatherZoneActor.h"
@@ -96,6 +98,8 @@ void UCSWeatherSubsystem::Deinitialize()
 {
 	Zones.Reset();
 	IndoorAreas.Reset();
+	WeatherBlockers.Reset();
+	WeatherCoverages.Reset();
 	WeatherDemandRuleCache.Reset();
 	ActiveZoneSystem = nullptr;
 
@@ -1009,6 +1013,11 @@ void UCSWeatherSubsystem::ApplyWeatherEffect(ECSWeatherType NewWeather, bool bFa
 	SpawnEffectActor(Row);
 	ApplyZoneSystem(Row);
 
+	// 보호 상태를 적용하기 전에 커버 영역, 블로커 목록과 실내 숨김 설정을 새 이펙트에 전달
+	// 블로커가 있는 맵에서 실내 진입 시 파티클이 한 번 숨겨지는 상황을 방지
+	// 커버 컴포넌트를 먼저 생성해야 블로커가 커버 컴포넌트에도 전달되므로 커버 전달 안에서 블로커를 전달
+	PushWeatherCoveragesToEffect();
+
 	// 새 이펙트에 현재 보호 상태를 즉시 적용
 	// 판정 결과가 이전과 같아도 표시 여부를 다시 설정
 	UpdateShelterState(true);
@@ -1198,4 +1207,133 @@ void UCSWeatherSubsystem::ApplyShelterState()
 			Zone->SetZoneVisible(bSheltered);
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 날씨 블로커
+// ---------------------------------------------------------------------------
+
+void UCSWeatherSubsystem::RegisterWeatherBlocker(UCSWeatherBlockerComponent* Blocker)
+{
+	if (!IsValid(Blocker))
+	{
+		return;
+	}
+	// 같은 블로커가 중복 등록되지 않도록 약한 참조로 추가
+	WeatherBlockers.AddUnique(TWeakObjectPtr<UCSWeatherBlockerComponent>(Blocker));
+
+	// 날씨 이펙트가 먼저 생성된 경우에도 새 블로커를 반영하도록 다시 전달
+	PushWeatherBlockersToEffect();
+}
+
+void UCSWeatherSubsystem::UnregisterWeatherBlocker(UCSWeatherBlockerComponent* Blocker)
+{
+	WeatherBlockers.RemoveAll([Blocker](const TWeakObjectPtr<UCSWeatherBlockerComponent>& Item)
+	{
+		return !Item.IsValid() || Item.Get() == Blocker;
+	});
+
+	// 제거된 박스에서 파티클이 계속 소멸되지 않도록 다시 전달
+	PushWeatherBlockersToEffect();
+}
+
+void UCSWeatherSubsystem::PushWeatherBlockersToEffect()
+{
+	// 맑음처럼 이펙트 액터가 없으면 다음 이펙트 스폰 시 전달
+	if (!IsValid(ActiveEffectActor))
+	{
+		return;
+	}
+
+	// 유효한 블로커의 월드 박스 정보를 같은 인덱스로 수집
+	TArray<FVector> Centers;
+	TArray<FVector> HalfExtents;
+	TArray<float> Yaws;
+	Centers.Reserve(WeatherBlockers.Num());
+	HalfExtents.Reserve(WeatherBlockers.Num());
+	Yaws.Reserve(WeatherBlockers.Num());
+
+	for (const TWeakObjectPtr<UCSWeatherBlockerComponent>& Blocker : WeatherBlockers)
+	{
+		if (!Blocker.IsValid())
+		{
+			continue;
+		}
+
+		// 액터 Scale을 반영한 절반 크기를 사용
+		// 회전은 Yaw만 라디안으로 전달하고 Pitch·Roll은 무시
+		Centers.Add(Blocker->GetComponentLocation());
+		HalfExtents.Add(Blocker->GetScaledBoxExtent());
+		Yaws.Add(FMath::DegreesToRadians(Blocker->GetComponentRotation().Yaw));
+	}
+
+	// 블로커가 없는 맵은 실내에서 캐릭터 주위 파티클을 숨기는 기존 방식을 유지
+	// 블로커가 있는 맵은 박스 안 파티클만 소멸시키므로 실내에서도 파티클을 표시
+	ActiveEffectActor->SetHideParticlesWhenSheltered(Centers.Num() == 0);
+	ActiveEffectActor->ApplyWeatherBlockers(Centers, HalfExtents, Yaws);
+}
+
+// ---------------------------------------------------------------------------
+// 날씨 커버 영역
+// ---------------------------------------------------------------------------
+
+void UCSWeatherSubsystem::RegisterWeatherCoverage(UCSWeatherCoverageComponent* Coverage)
+{
+	if (!IsValid(Coverage))
+	{
+		return;
+	}
+	// 같은 커버 영역이 중복 등록되지 않도록 약한 참조로 추가
+	WeatherCoverages.AddUnique(TWeakObjectPtr<UCSWeatherCoverageComponent>(Coverage));
+
+	// 날씨 이펙트가 먼저 생성된 경우에도 새 커버 영역을 반영하도록 다시 전달
+	PushWeatherCoveragesToEffect();
+}
+
+void UCSWeatherSubsystem::UnregisterWeatherCoverage(UCSWeatherCoverageComponent* Coverage)
+{
+	WeatherCoverages.RemoveAll([Coverage](const TWeakObjectPtr<UCSWeatherCoverageComponent>& Item)
+	{
+		return !Item.IsValid() || Item.Get() == Coverage;
+	});
+
+	// 제거된 영역의 커버 컴포넌트와 제외 영역이 남지 않도록 다시 전달
+	PushWeatherCoveragesToEffect();
+}
+
+void UCSWeatherSubsystem::PushWeatherCoveragesToEffect()
+{
+	// 맑음처럼 이펙트 액터가 없으면 다음 이펙트 스폰 시 전달
+	if (!IsValid(ActiveEffectActor))
+	{
+		return;
+	}
+
+	// 유효한 커버 영역의 월드 박스 정보를 같은 인덱스로 수집
+	TArray<FVector> TopCenters;
+	TArray<FVector2D> Sizes;
+	TArray<float> Yaws;
+	TopCenters.Reserve(WeatherCoverages.Num());
+	Sizes.Reserve(WeatherCoverages.Num());
+	Yaws.Reserve(WeatherCoverages.Num());
+
+	for (const TWeakObjectPtr<UCSWeatherCoverageComponent>& Coverage : WeatherCoverages)
+	{
+		if (!Coverage.IsValid())
+		{
+			continue;
+		}
+
+		// 액터 Scale을 반영한 절반 크기를 사용
+		// 박스 윗면 중심을 파티클 생성 높이로 사용하고 회전은 Yaw만 도 단위로 전달
+		const FVector Extent = Coverage->GetScaledBoxExtent();
+		TopCenters.Add(Coverage->GetComponentLocation() + FVector(0.0f, 0.0f, Extent.Z));
+		Sizes.Add(FVector2D(Extent.X * 2.0f, Extent.Y * 2.0f));
+		Yaws.Add(Coverage->GetComponentRotation().Yaw);
+	}
+
+	ActiveEffectActor->ApplyCoverageAreas(TopCenters, Sizes, Yaws);
+
+	// 새로 생성된 커버 컴포넌트에도 블로커가 적용되도록 블로커 목록을 다시 전달
+	PushWeatherBlockersToEffect();
 }

@@ -5,6 +5,7 @@
 #include "Data/CSWeatherEnvironmentTypes.h"
 #include "CSWeatherEffectActor.generated.h"
 
+class UNiagaraComponent;
 class UPostProcessComponent;
 class USceneComponent;
 
@@ -48,6 +49,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather")
 	bool IsLocalEffectActive() const { return bLocalEffectActive; }
 
+	// 실내에 있을 때 캐릭터 주위 파티클을 숨길지 설정하고 현재 표시 상태에 반영
+	// 블로커가 있는 맵은 false로 설정해 실내에서도 파티클을 표시
+	void SetHideParticlesWhenSheltered(bool bHide);
+
+	// 블로커 박스 목록을 모든 나이아가라 컴포넌트의 User 배열 파라미터로 전달
+	// BlockerCenters 파라미터가 없는 나이아가라 컴포넌트는 제외
+	// Yaws는 라디안 단위
+	void ApplyWeatherBlockers(const TArray<FVector>& Centers, const TArray<FVector>& HalfExtents, const TArray<float>& Yaws);
+
+	// 커버 영역마다 원본 나이아가라 컴포넌트와 같은 에셋의 컴포넌트를 월드 고정 위치에 생성
+	// 이전에 생성한 커버 컴포넌트는 제거하고 다시 생성
+	// 원본 컴포넌트에는 커버 박스를 제외 영역으로 전달해 그 안에서 생성된 입자를 소멸
+	// SpawnRateScale 파라미터가 없는 에셋은 제외
+	// TopCenters는 박스 윗면 중심(생성 높이), Sizes는 XY 전체 크기, Yaws는 도 단위
+	void ApplyCoverageAreas(const TArray<FVector>& TopCenters, const TArray<FVector2D>& Sizes, const TArray<float>& Yaws);
+
 	// 이 날씨에서 레벨 환경 액터에 적용할 배수와 틴트를 반환
 	const FCSWeatherEnvironmentProfile& GetEnvironmentProfile() const { return EnvironmentProfile; }
 
@@ -85,6 +102,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Environment")
 	FCSWeatherEnvironmentProfile EnvironmentProfile;
 
+	// 나이아가라 에셋의 User.SpawnAreaSize 기본값 (캐릭터 주위 파티클 생성 범위)
+	// 커버 컴포넌트 스폰 레이트 배수 = 영역 면적 / 이 면적
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Coverage")
+	FVector2D ReferenceSpawnAreaSize = FVector2D(4000.0f, 4000.0f);
+
 	// StopEffect가 두 번 불려도 Destroy를 두 번 부르지 않게 합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	bool bStopRequested = false;
@@ -101,6 +123,18 @@ private:
 
 	// 목표 가중치를 다시 계산해 즉시 적용하거나 페이드가 필요하면 Tick을 활성화
 	void RefreshPostProcessWeight(bool bFade);
+
+	// 실내외 상태와 숨김 설정에 맞춰 나이아가라 컴포넌트의 표시 여부를 갱신
+	void RefreshParticleVisibility();
+
+	// 실내에 있을 때 캐릭터 주위 파티클을 숨길지 여부
+	// 블로커가 없는 맵은 기존 문 앞 영역 방식을 유지하도록 true로 초기화
+	bool bHideParticlesWhenSheltered = true;
+
+	// ApplyCoverageAreas가 생성한 월드 고정 나이아가라 컴포넌트
+	// 실내 숨김 대상에서 제외하고 다시 적용할 때 제거
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UNiagaraComponent>> CoverageComponents;
 
 	// ActivatePostProcess 호출 여부
 	// 호출 전에는 실내외 전환이 발생해도 색감 가중치를 0으로 유지
