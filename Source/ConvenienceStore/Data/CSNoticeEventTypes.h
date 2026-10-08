@@ -15,7 +15,9 @@ UENUM(BlueprintType)
 enum class ECSNoticeEventTargetType : uint8
 {
 	Product,
-	Category
+	Category,
+	// TargetId에 손님 Archetype 에셋 이름을 넣으면 그날 그 종족의 스폰 가중치를 바꾼다. 수요에는 영향 없음
+	Race
 };
 
 USTRUCT(BlueprintType)
@@ -103,4 +105,8 @@ struct CONVENIENCESTORE_API FCSNoticeBoardDemandChange
 
 	UPROPERTY(BlueprintReadOnly, Category = "Notice Event|UI")
 	bool bIsIncrease = false;
+
+	// 뉴스와 기념일 효과가 한 목록에 같이 나와서 어느 쪽 효과인지 구분하려고 둔다
+	UPROPERTY(BlueprintReadOnly, Category = "Notice Event|UI")
+	ECSNoticeEventSourceType SourceType = ECSNoticeEventSourceType::News;
 };
