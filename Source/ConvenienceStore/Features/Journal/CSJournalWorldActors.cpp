@@ -3,6 +3,7 @@
 #include "Systems/Journal/CSJournalSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
@@ -106,17 +107,19 @@ TArray<FString> ACSJournalDiscoveryPoint::GetEntryIdOptions() const
 // 발견 지점의 조준 판정과 임시 외형을 구성합니다. 외형은 블루프린트 자식에서 변경하실 수 있습니다.
 ACSJournalDiscoveryPoint::ACSJournalDiscoveryPoint()
 {
-	auto* Box = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
-	SetRootComponent(Box);
-	Box->SetBoxExtent(FVector(35, 35, 65));
-	Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	Box->SetCollisionResponseToAllChannels(ECR_Ignore);
-	Box->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-	auto* DisplayMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DiscoveryMesh"));
-	DisplayMesh->SetupAttachment(Box);
-	DisplayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	DisplayMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
-	DisplayMesh->SetRelativeScale3D(FVector(.12, .6, .9));
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
+	InteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
+	InteractionBox->SetupAttachment(SceneRoot);
+	InteractionBox->SetBoxExtent(FVector(35, 35, 65));
+	InteractionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	DiscoveryMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DiscoveryMesh"));
+	DiscoveryMesh->SetupAttachment(SceneRoot);
+	DiscoveryMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DiscoveryMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+	DiscoveryMesh->SetRelativeScale3D(FVector(.12, .6, .9));
 	InteractionText = FText::FromString(TEXT("기록 조사하기"));
 }
 FText ACSJournalDiscoveryPoint::GetInteractionText_Implementation() const
