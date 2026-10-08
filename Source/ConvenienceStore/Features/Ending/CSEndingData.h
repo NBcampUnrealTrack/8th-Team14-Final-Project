@@ -33,6 +33,8 @@ public:
 	// 배열 순서대로 하나씩 판매합니다. ID는 비어 있거나 중복되면 안 됩니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TArray<FCSEndingItemDefinition> Items;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "0")) int32 ActivationGold = 300000;
+	// 재료를 모두 제출하셔도 이 레벨에 도달하신 뒤 최종 자금을 제출하셔야 귀환합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (ClampMin = "1")) int32 ActivationStoreLevel = 10;
 	// 비워 두면 코드로 만든 임시 전체 화면 위젯을 사용합니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly) TSubclassOf<UUserWidget> EndingWidgetClass;
 	bool IsConfigurationValid() const;

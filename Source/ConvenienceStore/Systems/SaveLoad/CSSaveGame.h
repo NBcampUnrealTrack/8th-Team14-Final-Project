@@ -64,6 +64,15 @@ public:
 	UPROPERTY()
 	FCSArtifactSaveRecord Artifacts;
 
+	// 해금 안내의 확인 상태와 미확인 목록을 저장하며, 구버전에는 현재 레벨을 기준으로 적용합니다.
+	UPROPERTY() int32 UnlockGuideObservedLevel = INDEX_NONE;
+	UPROPERTY() TArray<FName> UnlockGuideSeen;
+	UPROPERTY() TArray<FName> UnlockGuidePending;
+	UPROPERTY() bool bUnlockGuideDeferred = false;
+	// 대기 중인 레벨업은 순서대로 재생하며, 완료된 스토리는 중복 재생하지 않습니다.
+	UPROPERTY() TArray<int32> PendingLevelStories;
+	UPROPERTY() TArray<int32> CompletedLevelStories;
+
 	// 확정 날씨와 기간제 날씨 확률
 	// UCSWeatherSubsystem이 기록하고 복원
 	UPROPERTY()
