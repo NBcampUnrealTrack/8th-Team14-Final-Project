@@ -1,4 +1,4 @@
-#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
+﻿#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
 #include "Engine/GameInstance.h"
 
@@ -19,6 +19,8 @@ void UCSNoticeEventSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
 
 	// 로드 직후 ProcessBusinessDay()가 다시 실행되어 뉴스를 재추첨하는 상황을 방지
 	Record.LastProcessedBusinessDay = LastProcessedBusinessDay;
+	Record.PreparedNewsRowName = PreparedNewsRowName;
+	Record.PreparedNewsDay = PreparedNewsDay;
 }
 
 void UCSNoticeEventSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
@@ -27,6 +29,8 @@ void UCSNoticeEventSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
 	CurrentNewsRowName = Record.CurrentNewsRowName;
 	ActiveHolidayRowNames = Record.ActiveHolidayRowNames;
 	LastProcessedBusinessDay = Record.LastProcessedBusinessDay;
+	PreparedNewsRowName = Record.PreparedNewsRowName;
+	PreparedNewsDay = Record.PreparedNewsDay;
 
 	OnNoticeEventsChanged.Broadcast();
 }
@@ -52,6 +56,9 @@ namespace
 {
 constexpr float NewsOccurrenceProbability = 0.5f;
 constexpr int32 DaysPerMonth = 28;
+
+// 처음 며칠은 진열·판매·가격만 익히게 뉴스와 기념일을 띄우지 않는다
+constexpr int32 QuietOpeningDays = 2;
 
 // 뉴스와 기념일이 같은 종족을 겹쳐 올려도 한 종족이 손님을 독차지하지 않게 막는 상한.
 // 하한은 0이 되면 그 종족이 아예 안 나와서 둔다
@@ -97,6 +104,8 @@ void UCSNoticeEventSubsystem::Deinitialize()
 	CurrentNewsRowName = NAME_None;
 	ActiveHolidayRowNames.Reset();
 	LastProcessedBusinessDay = INDEX_NONE;
+	PreparedNewsRowName = NAME_None;
+	PreparedNewsDay = INDEX_NONE;
 
 	Super::Deinitialize();
 }
@@ -438,23 +447,17 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 	}
 
 	LastProcessedBusinessDay = SafeBusinessDay;
-	CurrentNewsRowName = NAME_None;
-	ActiveHolidayRowNames.Reset();
 
-	// 굴림을 건너뛰지 않고 결과만 덮어씀
-	SelectDailyNews();
-	const bool bNewsForced = ApplyForcedNewsOverride();
+	// 내일 뉴스는 오늘 미리 굴려 둬야 소문으로 예고할 수 있다. 영업일마다 굴리는 순서는 그대로라
+	// 같은 시드면 예전과 같은 날 같은 뉴스가 나온다. 첫날이나 불러온 직후처럼 준비된 게 없으면 오늘 것도 굴린다
+	const FName RolledTodayNews = PreparedNewsDay == SafeBusinessDay ? PreparedNewsRowName : RollNewsForDay(SafeBusinessDay);
+	PreparedNewsRowName = RollNewsForDay(SafeBusinessDay + 1);
+	PreparedNewsDay = SafeBusinessDay + 1;
 
-	const int32 DayOfMonth = ((SafeBusinessDay - 1) % DaysPerMonth) + 1;
-	CollectDailyHolidays(DayOfMonth);
-	const bool bHolidayForced = ApplyForcedHolidayOverride();
-
-	// 기념일에 뉴스까지 겹치면 날씨와 합쳐 수요가 오르는 상품이 너무 많아진다. 뉴스 굴림은 위에서 이미 했으니 결과만 버린다
-	// cs.news로 강제한 뉴스는 겹침을 검증하려는 것이라 남긴다
-	if (!ActiveHolidayRowNames.IsEmpty() && !bNewsForced)
-	{
-		CurrentNewsRowName = NAME_None;
-	}
+	bool bHolidayForced = false;
+	ActiveHolidayRowNames = GetHolidayRowNamesForDay(SafeBusinessDay, bHolidayForced, true);
+	bool bNewsForced = false;
+	CurrentNewsRowName = ResolveNewsForDay(SafeBusinessDay, RolledTodayNews, !ActiveHolidayRowNames.IsEmpty(), bNewsForced, true);
 
 	{
 		TArray<FString> HolidayNames;
@@ -465,12 +468,13 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 		}
 
 		UE_LOG(LogCSNoticeEvents, Log,
-			TEXT("[NoticeEvents] %d일차 뉴스=%s%s 기념일=[%s]%s"),
+			TEXT("[NoticeEvents] %d일차 뉴스=%s%s 기념일=[%s]%s 내일뉴스=%s"),
 			SafeBusinessDay,
 			CurrentNewsRowName.IsNone() ? TEXT("없음") : *CurrentNewsRowName.ToString(),
 			bNewsForced ? TEXT(" (cs.news 강제)") : TEXT(""),
 			HolidayNames.IsEmpty() ? TEXT("없음") : *FString::Join(HolidayNames, TEXT(", ")),
-			bHolidayForced ? TEXT(" (cs.holiday 강제)") : TEXT(""));
+			bHolidayForced ? TEXT(" (cs.holiday 강제)") : TEXT(""),
+			*GetTomorrowNewsRowName().ToString());
 	}
 
 	// 오늘의 뉴스와 기념일을 날짜별 수첩 기록으로 남겨 이후에도 확인하실 수 있도록 합니다.
@@ -489,8 +493,118 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 	OnNoticeEventsChanged.Broadcast();
 }
 
-bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
+FName UCSNoticeEventSubsystem::ResolveNewsForDay(const int32 Day, const FName RolledNews, const bool bHasHoliday, bool& bOutForced, const bool bLogMismatch) const
 {
+	FName ForcedNews;
+	bOutForced = TryGetForcedNews(ForcedNews, bLogMismatch);
+	if (bOutForced)
+	{
+		// 강제 명령은 겹침이나 첫날 검증용이라 아래 규칙을 거치지 않는다
+		return ForcedNews;
+	}
+
+	// 기념일에 뉴스까지 겹치면 날씨와 합쳐 수요가 오르는 상품이 너무 많아진다
+	if (bHasHoliday || Day <= QuietOpeningDays)
+	{
+		return NAME_None;
+	}
+	return RolledNews;
+}
+
+TArray<FName> UCSNoticeEventSubsystem::GetHolidayRowNamesForDay(const int32 Day, bool& bOutForced, const bool bLogMismatch) const
+{
+	TArray<FName> HolidayRowNames;
+	bOutForced = TryGetForcedHolidays(HolidayRowNames, bLogMismatch);
+	if (bOutForced)
+	{
+		return HolidayRowNames;
+	}
+	if (Day <= QuietOpeningDays || !IsValid(HolidayEventDataTable))
+	{
+		return HolidayRowNames;
+	}
+
+	const int32 DayOfMonth = ((FMath::Max(1, Day) - 1) % DaysPerMonth) + 1;
+	for (const FName RowName : HolidayEventDataTable->GetRowNames())
+	{
+		const FCSHolidayEventDataRow* HolidayRow = HolidayEventDataTable->FindRow<FCSHolidayEventDataRow>(
+			RowName,
+			TEXT("UCSNoticeEventSubsystem::GetHolidayRowNamesForDay"),
+			false);
+		if (HolidayRow != nullptr && HolidayRow->bEnabled && HolidayRow->DayOfMonth == DayOfMonth)
+		{
+			HolidayRowNames.Add(RowName);
+		}
+	}
+	return HolidayRowNames;
+}
+
+FName UCSNoticeEventSubsystem::GetTomorrowNewsRowName() const
+{
+	const int32 Tomorrow = LastProcessedBusinessDay + 1;
+	bool bForced = false;
+	const bool bHasHoliday = !GetHolidayRowNamesForDay(Tomorrow, bForced, false).IsEmpty();
+	const FName Rolled = PreparedNewsDay == Tomorrow ? PreparedNewsRowName : NAME_None;
+	return ResolveNewsForDay(Tomorrow, Rolled, bHasHoliday, bForced, false);
+}
+
+FName UCSNoticeEventSubsystem::GetTomorrowHolidayRowName() const
+{
+	bool bForced = false;
+	const TArray<FName> HolidayRowNames = GetHolidayRowNamesForDay(LastProcessedBusinessDay + 1, bForced, false);
+	return HolidayRowNames.IsEmpty() ? NAME_None : HolidayRowNames[0];
+}
+
+bool UCSNoticeEventSubsystem::GetNewsRow(const FName NewsRowName, FCSNewsEventDataRow& OutNews) const
+{
+	const FCSNewsEventDataRow* NewsRow = IsValid(NewsEventDataTable) && !NewsRowName.IsNone()
+		? NewsEventDataTable->FindRow<FCSNewsEventDataRow>(NewsRowName, TEXT("UCSNoticeEventSubsystem::GetNewsRow"), false)
+		: nullptr;
+	if (NewsRow == nullptr)
+	{
+		return false;
+	}
+	OutNews = *NewsRow;
+	return true;
+}
+
+void UCSNoticeEventSubsystem::GetPositiveDemandTargets(const ECSNoticeEventSourceType SourceType, const FName SourceId,
+	TArray<FCSNoticeEventEffectRuleRow>& OutTargets) const
+{
+	OutTargets.Reset();
+	if (!IsValid(EffectRuleDataTable) || SourceId.IsNone())
+	{
+		return;
+	}
+
+	for (const TPair<FName, uint8*>& Pair : EffectRuleDataTable->GetRowMap())
+	{
+		const FCSNoticeEventEffectRuleRow* Rule = reinterpret_cast<const FCSNoticeEventEffectRuleRow*>(Pair.Value);
+		if (Rule != nullptr && Rule->bEnabled && Rule->SourceType == SourceType && Rule->SourceId == SourceId &&
+			Rule->TargetType != ECSNoticeEventTargetType::Race && Rule->DemandModifier > 0.0f)
+		{
+			OutTargets.Add(*Rule);
+		}
+	}
+
+	// 많이 오르는 순. 같으면 카테고리를 앞에 둔다. 카테고리 전체가 오르는 게 플레이어에게 더 큰 소식이다
+	OutTargets.Sort([](const FCSNoticeEventEffectRuleRow& A, const FCSNoticeEventEffectRuleRow& B)
+	{
+		if (!FMath::IsNearlyEqual(A.DemandModifier, B.DemandModifier))
+		{
+			return A.DemandModifier > B.DemandModifier;
+		}
+		if (A.TargetType != B.TargetType)
+		{
+			return A.TargetType == ECSNoticeEventTargetType::Category;
+		}
+		return A.TargetId.LexicalLess(B.TargetId);
+	});
+}
+
+bool UCSNoticeEventSubsystem::TryGetForcedNews(FName& OutNewsRowName, const bool bLogMismatch) const
+{
+	OutNewsRowName = NAME_None;
 	const FString SearchTerm = CVarCS_ForcedNews.GetValueOnGameThread().TrimStartAndEnd();
 	if (SearchTerm.IsEmpty() || SearchTerm == TEXT("-1"))
 	{
@@ -499,7 +613,6 @@ bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
 	if (SearchTerm.Equals(TEXT("none"), ESearchCase::IgnoreCase) ||
 		SearchTerm.Equals(TEXT("없음"), ESearchCase::CaseSensitive))
 	{
-		CurrentNewsRowName = NAME_None;
 		return true;
 	}
 
@@ -508,13 +621,13 @@ bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
 		return false;
 	}
 
-	// SelectDailyNews와 같은 후보 조건 사용
+	// RollNewsForDay와 같은 후보 조건 사용
 	TArray<FName> MatchedRowNames;
 	for (const FName RowName : NewsEventDataTable->GetRowNames())
 	{
 		const FCSNewsEventDataRow* NewsRow = NewsEventDataTable->FindRow<FCSNewsEventDataRow>(
 			RowName,
-			TEXT("UCSNoticeEventSubsystem::ApplyForcedNewsOverride"),
+			TEXT("UCSNoticeEventSubsystem::TryGetForcedNews"),
 			false);
 		if (NewsRow == nullptr || !NewsRow->bEnabled || NewsRow->SelectionWeight <= 0.0f)
 		{
@@ -529,40 +642,38 @@ bool UCSNoticeEventSubsystem::ApplyForcedNewsOverride()
 
 	if (MatchedRowNames.Num() == 1)
 	{
-		CurrentNewsRowName = MatchedRowNames[0];
+		OutNewsRowName = MatchedRowNames[0];
 		return true;
 	}
 
-	if (MatchedRowNames.IsEmpty())
+	if (bLogMismatch)
 	{
+		TArray<FString> MatchedNames;
+		MatchedNames.Reserve(MatchedRowNames.Num());
+		for (const FName RowName : MatchedRowNames)
+		{
+			MatchedNames.Add(RowName.ToString());
+		}
 		UE_LOG(LogCSNoticeEvents, Warning,
-			TEXT("[NoticeEvents] cs.news \"%s\"와 일치하는 뉴스가 없어 랜덤 선택을 유지합니다."),
-			*SearchTerm);
-		return false;
+			TEXT("[NoticeEvents] cs.news \"%s\"와 일치하는 뉴스가 %d개입니다: [%s]. 딱 1개가 되게 입력하세요. 랜덤 선택을 유지합니다."),
+			*SearchTerm,
+			MatchedRowNames.Num(),
+			*FString::Join(MatchedNames, TEXT(", ")));
 	}
-
-	TArray<FString> MatchedNames;
-	MatchedNames.Reserve(MatchedRowNames.Num());
-	for (const FName RowName : MatchedRowNames)
-	{
-		MatchedNames.Add(RowName.ToString());
-	}
-
-	UE_LOG(LogCSNoticeEvents, Warning,
-		TEXT("[NoticeEvents] cs.news \"%s\"에 %d개가 일치합니다: [%s]. 더 길게 입력하세요. 랜덤 선택을 유지합니다."),
-		*SearchTerm,
-		MatchedRowNames.Num(),
-		*FString::Join(MatchedNames, TEXT(", ")));
 	return false;
 }
 
-void UCSNoticeEventSubsystem::SelectDailyNews()
+FName UCSNoticeEventSubsystem::RollNewsForDay(const int32 Day)
 {
+	// 조용한 첫 며칠 다음 날은 처음 변화를 확실히 보여 주려고 뉴스를 반드시 띄운다.
+	// 그날도 발생 굴림은 똑같이 한 번 소비해서 다른 날과 굴림 순서를 맞춘다
+	const bool bGuaranteedDay = Day == QuietOpeningDays + 1;
+
 	// 매 영업일 첫 굴림의 절반은 DataTable Row가 없는 명시적 "소식 없음" 상태입니다.
-	if (NoticeEventRandomStream.FRand() >= NewsOccurrenceProbability ||
-		!IsValid(NewsEventDataTable))
+	const bool bOccurs = NoticeEventRandomStream.FRand() < NewsOccurrenceProbability;
+	if ((!bOccurs && !bGuaranteedDay) || !IsValid(NewsEventDataTable))
 	{
-		return;
+		return NAME_None;
 	}
 
 	struct FWeightedNewsCandidate
@@ -573,15 +684,26 @@ void UCSNoticeEventSubsystem::SelectDailyNews()
 
 	TArray<FWeightedNewsCandidate> Candidates;
 	float TotalWeight = 0.0f;
+	TArray<FCSNoticeEventEffectRuleRow> RaisedTargets;
 	for (const FName RowName : NewsEventDataTable->GetRowNames())
 	{
 		const FCSNewsEventDataRow* NewsRow = NewsEventDataTable->FindRow<FCSNewsEventDataRow>(
 			RowName,
-			TEXT("UCSNoticeEventSubsystem::SelectDailyNews"),
+			TEXT("UCSNoticeEventSubsystem::RollNewsForDay"),
 			false);
 		if (NewsRow == nullptr || !NewsRow->bEnabled || NewsRow->SelectionWeight <= 0.0f)
 		{
 			continue;
+		}
+
+		// 수요를 깎기만 하는 뉴스는 처음 보는 플레이어에게 할 일을 주지 않아서 보장하는 날에는 뺀다
+		if (bGuaranteedDay && IsValid(EffectRuleDataTable))
+		{
+			GetPositiveDemandTargets(ECSNoticeEventSourceType::News, RowName, RaisedTargets);
+			if (RaisedTargets.IsEmpty())
+			{
+				continue;
+			}
 		}
 
 		Candidates.Add({RowName, NewsRow->SelectionWeight});
@@ -590,7 +712,7 @@ void UCSNoticeEventSubsystem::SelectDailyNews()
 
 	if (Candidates.IsEmpty() || TotalWeight <= 0.0f)
 	{
-		return;
+		return NAME_None;
 	}
 
 	const float SelectionValue = NoticeEventRandomStream.FRand() * TotalWeight;
@@ -600,37 +722,17 @@ void UCSNoticeEventSubsystem::SelectDailyNews()
 		AccumulatedWeight += Candidate.Weight;
 		if (SelectionValue < AccumulatedWeight)
 		{
-			CurrentNewsRowName = Candidate.RowName;
-			return;
+			return Candidate.RowName;
 		}
 	}
 
 	// 부동소수점 누적 오차가 생겨도 마지막 유효 후보가 선택되도록 보장합니다.
-	CurrentNewsRowName = Candidates.Last().RowName;
+	return Candidates.Last().RowName;
 }
 
-void UCSNoticeEventSubsystem::CollectDailyHolidays(const int32 DayOfMonth)
+bool UCSNoticeEventSubsystem::TryGetForcedHolidays(TArray<FName>& OutHolidayRowNames, const bool bLogMismatch) const
 {
-	if (!IsValid(HolidayEventDataTable))
-	{
-		return;
-	}
-
-	for (const FName RowName : HolidayEventDataTable->GetRowNames())
-	{
-		const FCSHolidayEventDataRow* HolidayRow = HolidayEventDataTable->FindRow<FCSHolidayEventDataRow>(
-			RowName,
-			TEXT("UCSNoticeEventSubsystem::CollectDailyHolidays"),
-			false);
-		if (HolidayRow != nullptr && HolidayRow->bEnabled && HolidayRow->DayOfMonth == DayOfMonth)
-		{
-			ActiveHolidayRowNames.Add(RowName);
-		}
-	}
-}
-
-bool UCSNoticeEventSubsystem::ApplyForcedHolidayOverride()
-{
+	OutHolidayRowNames.Reset();
 	const FString SearchTerm = CVarCS_ForcedHoliday.GetValueOnGameThread().TrimStartAndEnd();
 	if (SearchTerm.IsEmpty() || SearchTerm == TEXT("-1"))
 	{
@@ -638,7 +740,6 @@ bool UCSNoticeEventSubsystem::ApplyForcedHolidayOverride()
 	}
 	if (SearchTerm.Equals(TEXT("none"), ESearchCase::IgnoreCase))
 	{
-		ActiveHolidayRowNames.Reset();
 		return true;
 	}
 	if (!IsValid(HolidayEventDataTable))
@@ -650,7 +751,7 @@ bool UCSNoticeEventSubsystem::ApplyForcedHolidayOverride()
 	for (const FName RowName : HolidayEventDataTable->GetRowNames())
 	{
 		const FCSHolidayEventDataRow* HolidayRow = HolidayEventDataTable->FindRow<FCSHolidayEventDataRow>(
-			RowName, TEXT("UCSNoticeEventSubsystem::ApplyForcedHolidayOverride"), false);
+			RowName, TEXT("UCSNoticeEventSubsystem::TryGetForcedHolidays"), false);
 		if (HolidayRow != nullptr && HolidayRow->bEnabled &&
 			RowName.ToString().Contains(SearchTerm, ESearchCase::IgnoreCase))
 		{
@@ -660,13 +761,16 @@ bool UCSNoticeEventSubsystem::ApplyForcedHolidayOverride()
 
 	if (MatchedRowNames.Num() != 1)
 	{
-		UE_LOG(LogCSNoticeEvents, Warning,
-			TEXT("[NoticeEvents] cs.holiday \"%s\"와 일치하는 기념일이 %d개라 날짜대로 둡니다."),
-			*SearchTerm, MatchedRowNames.Num());
+		if (bLogMismatch)
+		{
+			UE_LOG(LogCSNoticeEvents, Warning,
+				TEXT("[NoticeEvents] cs.holiday \"%s\"와 일치하는 기념일이 %d개라 날짜대로 둡니다."),
+				*SearchTerm, MatchedRowNames.Num());
+		}
 		return false;
 	}
 
-	ActiveHolidayRowNames = MatchedRowNames;
+	OutHolidayRowNames = MatchedRowNames;
 	return true;
 }
 

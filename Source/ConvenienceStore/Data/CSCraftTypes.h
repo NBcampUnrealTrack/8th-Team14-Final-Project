@@ -63,7 +63,10 @@ enum class ECSCraftRumorKind : uint8
 	Property UMETA(DisplayName = "성질"),
 	BasicMethod UMETA(DisplayName = "기본 조리법"),
 	Chatter UMETA(DisplayName = "잡담"),
-	WeatherVariant UMETA(DisplayName = "날씨 변형")
+	WeatherVariant UMETA(DisplayName = "날씨 변형"),
+	// {EventName}에 내일 뉴스 제목, {Demand}에 많이 오르는 상품을 채운다
+	NewsPreview UMETA(DisplayName = "뉴스 예고"),
+	HolidayPreview UMETA(DisplayName = "기념일 예고")
 };
 
 // 재료·결과는 DT_ProductMaster RowName. 실제로 있는지는 제조 서브시스템 초기화 때 검사한다
@@ -164,7 +167,8 @@ struct CONVENIENCESTORE_API FCSCraftKeyHintRow : public FTableRowBase
 	FCSTutorialHintEntry Hint;
 };
 
-// 레시피에 붙지 않는 소문(조합, 성질, 기본 조리법, 잡담, 날씨 변형)
+// 레시피에 붙지 않는 소문(조합, 성질, 기본 조리법, 잡담, 날씨·뉴스·기념일 예고)
+// 같은 TargetProduct를 가진 행은 한 묶음이라 하루에 하나만 뜨고, 예고는 시간대마다 다음 행으로 바뀐다
 USTRUCT(BlueprintType)
 struct CONVENIENCESTORE_API FCSCraftRumorRow : public FTableRowBase
 {
@@ -176,7 +180,7 @@ struct CONVENIENCESTORE_API FCSCraftRumorRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Rumor", meta = (MultiLine = "true"))
 	FText Text;
 
-	// 날씨 변형일 때만 쓴다. 내일 날씨로 수요가 오르는 상품 RowName
+	// 날씨 변형은 내일 날씨로 수요가 오르는 상품, 조합은 결과 상품, 기념일 예고는 기념일 RowName
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft|Rumor")
 	FName TargetProduct;
 };
