@@ -2,6 +2,8 @@
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Customers/CSPurchaseDecisionComponent.h"
+#include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Data/CSProductTypes.h"
 
 void UCSPurchaseVerificationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -59,6 +61,8 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 
 	// 같은 배열을 순회해 카테고리별로도 집계 - 짝이 없는 카테고리가 연관구매에 밀려 덜 팔려도
 	// 합계만으로는 드러나지 않아서 필요
+	// 술 없이 숙취해소제만 산 손님처럼 합계로는 안 보이는 조합을 로그에서 세려고 손님별 목록도 남긴다
+	TArray<FString> BoughtCategories;
 	for (const FCSSelectProduct& Selected : State->SelectProducts)
 	{
 		const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(
@@ -66,13 +70,20 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 		if (Row == nullptr)
 		{
 			++UnknownCategoryPurchases;
+			BoughtCategories.Add(TEXT("Unknown"));
 			continue;
 		}
 		CategoryPurchaseCounts.FindOrAdd(Row->Category)++;
+		BoughtCategories.Add(StaticEnum<ECSProductCategory>()->GetNameStringByValue(static_cast<int64>(Row->Category)));
 	}
 
+	const UCSPurchaseDecisionComponent* Decision = Customer->FindComponentByClass<UCSPurchaseDecisionComponent>();
+	const FString RaceName = Decision != nullptr && Decision->Archetype != nullptr
+		? Decision->Archetype->DisplayName.ToString() : TEXT("?");
+
 	// 개별 손님 로그는 Log 레벨로 아래 요약과 구분되게 표시
-	UE_LOG(LogTemp, Log, TEXT("[구매검증] %s 계산 완료 | 담은 개수=%d"), *Customer->GetName(), ItemCount);
+	UE_LOG(LogTemp, Log, TEXT("[구매검증] %s 계산 완료 | 담은 개수=%d | 종족=%s | 카테고리=%s"),
+		*Customer->GetName(), ItemCount, *RaceName, *FString::Join(BoughtCategories, TEXT(",")));
 
 	// LogIntervalCount명마다 한 번씩 누적 요약을 찍음
 	if (TotalCheckouts % LogIntervalCount == 0)
@@ -83,6 +94,13 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 
 void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone)
 {
+	const UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
+	// 마감으로 끊긴 손님은 결제도 빈손도 아니다. 평판 집계와 같은 기준으로 뺀다
+	if (IsValid(State) && State->IsForcedToLeave())
+	{
+		return;
+	}
+
 	++TotalCustomersLeft;
 
 	if (bCheckoutDone)
@@ -90,7 +108,6 @@ void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharac
 		return;
 	}
 
-	const UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
 	if (IsValid(State) && State->bCheckoutAbandoned)
 	{
 		++CheckoutAbandonedDepartures;

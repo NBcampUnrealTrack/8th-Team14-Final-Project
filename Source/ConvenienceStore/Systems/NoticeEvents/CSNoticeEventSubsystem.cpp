@@ -41,10 +41,22 @@ TAutoConsoleVariable<FString> CVarCS_ForcedNews(
 	TEXT("cs.news <검색어> — RowName에 검색어가 들어간 뉴스가 딱 1개면 매 영업일 그 뉴스를 강제한다. none이면 소식 없음, -1이면 해제. PIE 시작 전에 입력"),
 	ECVF_Default);
 
+// 기념일은 매월 같은 날이라 검증하려면 그 날짜까지 영업일을 넘겨야 해서 둔 디버그 스위치
+TAutoConsoleVariable<FString> CVarCS_ForcedHoliday(
+	TEXT("cs.holiday"),
+	TEXT("-1"),
+	TEXT("cs.holiday <검색어> — RowName에 검색어가 들어간 기념일이 딱 1개면 매 영업일 그 기념일만 연다. none이면 기념일 없음, -1이면 해제. PIE 시작 전에 입력"),
+	ECVF_Default);
+
 namespace
 {
 constexpr float NewsOccurrenceProbability = 0.5f;
 constexpr int32 DaysPerMonth = 28;
+
+// 뉴스와 기념일이 같은 종족을 겹쳐 올려도 한 종족이 손님을 독차지하지 않게 막는 상한.
+// 하한은 0이 되면 그 종족이 아예 안 나와서 둔다
+constexpr float MinRaceSpawnMultiplier = 0.1f;
+constexpr float MaxRaceSpawnMultiplier = 3.0f;
 }
 
 void UCSNoticeEventSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -119,7 +131,7 @@ void UCSNoticeEventSubsystem::GetTodayNewsDemandChanges(
 	TArray<FCSNoticeBoardDemandChange>& OutChanges) const
 {
 	OutChanges.Reset();
-	if (!IsValid(EffectRuleDataTable) || CurrentNewsRowName.IsNone())
+	if (!IsValid(EffectRuleDataTable))
 	{
 		return;
 	}
@@ -136,9 +148,10 @@ void UCSNoticeEventSubsystem::GetTodayNewsDemandChanges(
 
 	for (const FCSNoticeEventEffectRuleRow* Rule : EffectRules)
 	{
+		// 종족 효과는 상품 행으로 보여줄 수 없어서 기념일·뉴스 설명 문장으로 알린다
 		if (Rule == nullptr || !Rule->bEnabled ||
-			Rule->SourceType != ECSNoticeEventSourceType::News ||
-			Rule->SourceId != CurrentNewsRowName ||
+			Rule->TargetType == ECSNoticeEventTargetType::Race ||
+			!IsEffectSourceActive(*Rule) ||
 			FMath::IsNearlyZero(Rule->DemandModifier))
 		{
 			continue;
@@ -149,6 +162,7 @@ void UCSNoticeEventSubsystem::GetTodayNewsDemandChanges(
 		Change.TargetId = Rule->TargetId;
 		Change.DemandModifier = Rule->DemandModifier;
 		Change.bIsIncrease = Rule->DemandModifier > 0.0f;
+		Change.SourceType = Rule->SourceType;
 
 		if (Rule->TargetType == ECSNoticeEventTargetType::Product &&
 			IsValid(ProductDataTable))
@@ -352,6 +366,30 @@ bool UCSNoticeEventSubsystem::GetStrongestPositiveDemandSource(
 	return bFound;
 }
 
+float UCSNoticeEventSubsystem::GetRaceSpawnMultiplier(const FName ArchetypeId) const
+{
+	if (!IsValid(EffectRuleDataTable) || ArchetypeId.IsNone())
+	{
+		return 1.0f;
+	}
+
+	TArray<FCSNoticeEventEffectRuleRow*> EffectRules;
+	EffectRuleDataTable->GetAllRows(TEXT("UCSNoticeEventSubsystem::GetRaceSpawnMultiplier"), EffectRules);
+
+	// 수요 보정과 같은 방식으로 더한다. 곱하면 뉴스와 기념일이 겹친 날 배수가 너무 빨리 커진다
+	float TotalModifier = 0.0f;
+	for (const FCSNoticeEventEffectRuleRow* Rule : EffectRules)
+	{
+		if (Rule != nullptr && Rule->bEnabled && Rule->TargetType == ECSNoticeEventTargetType::Race &&
+			Rule->TargetId == ArchetypeId && IsEffectSourceActive(*Rule))
+		{
+			TotalModifier += Rule->DemandModifier;
+		}
+	}
+
+	return FMath::Clamp(1.0f + TotalModifier, MinRaceSpawnMultiplier, MaxRaceSpawnMultiplier);
+}
+
 void UCSNoticeEventSubsystem::HandleBusinessDayStarted(const int32 NewBusinessDay)
 {
 	ProcessBusinessDay(NewBusinessDay);
@@ -400,6 +438,7 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 
 	const int32 DayOfMonth = ((SafeBusinessDay - 1) % DaysPerMonth) + 1;
 	CollectDailyHolidays(DayOfMonth);
+	const bool bHolidayForced = ApplyForcedHolidayOverride();
 
 	{
 		TArray<FString> HolidayNames;
@@ -410,11 +449,12 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 		}
 
 		UE_LOG(LogCSNoticeEvents, Log,
-			TEXT("[NoticeEvents] %d일차 뉴스=%s%s 기념일=[%s]"),
+			TEXT("[NoticeEvents] %d일차 뉴스=%s%s 기념일=[%s]%s"),
 			SafeBusinessDay,
 			CurrentNewsRowName.IsNone() ? TEXT("없음") : *CurrentNewsRowName.ToString(),
 			bNewsForced ? TEXT(" (cs.news 강제)") : TEXT(""),
-			HolidayNames.IsEmpty() ? TEXT("없음") : *FString::Join(HolidayNames, TEXT(", ")));
+			HolidayNames.IsEmpty() ? TEXT("없음") : *FString::Join(HolidayNames, TEXT(", ")),
+			bHolidayForced ? TEXT(" (cs.holiday 강제)") : TEXT(""));
 	}
 
 	// 오늘의 뉴스와 기념일을 날짜별 수첩 기록으로 남겨 이후에도 확인하실 수 있도록 합니다.
@@ -571,6 +611,47 @@ void UCSNoticeEventSubsystem::CollectDailyHolidays(const int32 DayOfMonth)
 			ActiveHolidayRowNames.Add(RowName);
 		}
 	}
+}
+
+bool UCSNoticeEventSubsystem::ApplyForcedHolidayOverride()
+{
+	const FString SearchTerm = CVarCS_ForcedHoliday.GetValueOnGameThread().TrimStartAndEnd();
+	if (SearchTerm.IsEmpty() || SearchTerm == TEXT("-1"))
+	{
+		return false;
+	}
+	if (SearchTerm.Equals(TEXT("none"), ESearchCase::IgnoreCase))
+	{
+		ActiveHolidayRowNames.Reset();
+		return true;
+	}
+	if (!IsValid(HolidayEventDataTable))
+	{
+		return false;
+	}
+
+	TArray<FName> MatchedRowNames;
+	for (const FName RowName : HolidayEventDataTable->GetRowNames())
+	{
+		const FCSHolidayEventDataRow* HolidayRow = HolidayEventDataTable->FindRow<FCSHolidayEventDataRow>(
+			RowName, TEXT("UCSNoticeEventSubsystem::ApplyForcedHolidayOverride"), false);
+		if (HolidayRow != nullptr && HolidayRow->bEnabled &&
+			RowName.ToString().Contains(SearchTerm, ESearchCase::IgnoreCase))
+		{
+			MatchedRowNames.Add(RowName);
+		}
+	}
+
+	if (MatchedRowNames.Num() != 1)
+	{
+		UE_LOG(LogCSNoticeEvents, Warning,
+			TEXT("[NoticeEvents] cs.holiday \"%s\"와 일치하는 기념일이 %d개라 날짜대로 둡니다."),
+			*SearchTerm, MatchedRowNames.Num());
+		return false;
+	}
+
+	ActiveHolidayRowNames = MatchedRowNames;
+	return true;
 }
 
 bool UCSNoticeEventSubsystem::IsEffectSourceActive(

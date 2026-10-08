@@ -321,15 +321,33 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 	{
 		// 정확 일치를 못 찾은 경우 - 연관구매 대상 + 남은 계획 카테고리 + 선호 카테고리를 하드 필터로 합친다
 		// (장바구니가 비어있으면 연관구매 대상이 없어 사실상 선호 카테고리로 직행하게 됨)
-		TSet<ECSProductCategory> PullTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		const TSet<ECSProductCategory> AffinityTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		TSet<ECSProductCategory> PullTargets = AffinityTargets;
 		PullTargets.Append(RemainingPlannedCategories);
 		if (Decision != nullptr)
 		{
 			PullTargets.Append(Decision->GetPreferredCategories());
 		}
 
-		const TMap<ECSProductCategory, float> AttractionWeights =
+		TMap<ECSProductCategory, float> AttractionWeights =
 			Decision != nullptr ? Decision->GetCategoryAttractionWeights() : TMap<ECSProductCategory, float>();
+
+		// 장바구니 때문에 끌리는 카테고리는 손님이 가장 좋아하는 카테고리만큼 끌리게 한다
+		// 평소 선호도로 뽑으면 비선호인 숙취해소제는 술을 담아도 매대를 거의 안 찾아간다
+		// 차단된 카테고리는 0이라 그대로 둔다
+		float TopWeight = 0.0f;
+		for (const TPair<ECSProductCategory, float>& Pair : AttractionWeights)
+		{
+			TopWeight = FMath::Max(TopWeight, Pair.Value);
+		}
+		for (const ECSProductCategory Category : AffinityTargets)
+		{
+			float* Weight = AttractionWeights.Find(Category);
+			if (Weight != nullptr && *Weight > 0.0f)
+			{
+				*Weight = FMath::Max(*Weight, TopWeight);
+			}
+		}
 
 		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, PullTargets, AttractionWeights, Data.Actor);
 	}

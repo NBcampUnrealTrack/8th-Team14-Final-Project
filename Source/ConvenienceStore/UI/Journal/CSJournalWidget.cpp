@@ -31,16 +31,17 @@ constexpr const TCHAR* JournalPageTitles[] = {TEXT("지도"),
 											  TEXT("달력 · 사건 기록"),
 											  TEXT("배달 기록"),
 											  TEXT("아티팩트 도감")};
-//록담님 수정부탁드립니다.
+// 종족 건물, 상호작용 물품, 종족 이름이 붙은 상품과 Archetype 선호가 서로 맞게 쓴 글이다
+// 선호 카테고리를 바꾸면 이 글과 CSJournalSubsystem의 폴백 글도 같이 고쳐야 한다
 FString GetRaceLifeDescription(ECSJournalRace Race)
 {
 	static const TCHAR* Descriptions[] = {
-		TEXT("고블린은 작고 민첩하며 실용적인 생활을 한다. 값비싼 물건보다는 당장 사용할 수 있는 물건을 선호하며, 시장이나 상점 근처에서 자주 모습을 드러낸다. 새로운 먹거리와 눈에 띄는 상품에도 관심이 많다."),
-		TEXT("오크는 강인한 체력을 바탕으로 육체적인 일을 하며 생활한다. 복잡한 장식이나 격식보다는 튼튼하고 실용적인 물건을 중요하게 생각한다. 일과를 마친 뒤에는 충분한 식사와 휴식을 즐긴다."),
-		TEXT("모험가는 여러 지역을 돌아다니며 의뢰를 수행하고 새로운 장소를 탐험한다. 언제 다시 길을 떠날지 모르기 때문에 식량과 회복용품, 여행에 필요한 물건을 미리 준비하는 편이다."),
-		TEXT("마법사는 마법을 연구하거나 새로운 주문을 익히며 많은 시간을 보낸다. 연구에 몰두하면 식사나 휴식을 잊기도 하며, 마법 실험에 사용할 물약과 두루마리 같은 물건에 익숙하다."),
-		TEXT("드워프는 광산과 공방에서 일하며 물건을 만들고 수리하는 생활에 익숙하다. 오래 사용할 수 있는 튼튼한 물건을 높게 평가하며, 일을 마친 뒤 동료들과 함께 쉬는 시간을 중요하게 여긴다."),
-		TEXT("엘프는 자연과 조화를 이루며 차분한 생활을 한다. 주변 환경을 세심하게 관리하고 깨끗한 상태를 유지하는 것을 중요하게 생각한다. 인공적인 물건보다는 신선하고 자연에 가까운 상품에 관심을 보인다.")};
+		TEXT("고블린 학교에 다니는 꼬마 고블린들은 수업이 끝나면 공부 석판을 옆구리에 끼고 가게로 몰려온다. 바삭칩 같은 간식과 시원한 아이스크림, 달콤한 음료를 한 아름 고르지만, 아직 어려서 술과 숙취해소제는 살 수 없다."),
+		TEXT("오크들은 하루 일을 마치면 오크 주점에 모여 엄니 축배잔을 부딪친다. 술은 늘 넉넉히 사 가고, 고향 생각이 날 때면 고향 만두 같은 냉동식품을 함께 챙긴다. 술을 산 날에는 다음 날을 위해 숙취해소제도 잊지 않는다."),
+		TEXT("모험가들은 길을 떠나기 전 모험가의 포션 상점에 들러 여정의 포션 수통을 채운다. 이 가게에서는 회복 포션과 횃불, 화살 같은 여행 용품, 그리고 길에서 먹을 도시락을 챙겨 간다."),
+		TEXT("마법사들은 마법 교습소에서 주문을 익히고, 밤이면 별자리 관측구 앞에서 하늘을 읽으며 시간을 보낸다. 연구에 쓸 포션과 주문서를 꾸준히 사 가고, 밤샘 관측을 버티려고 레드뿔이나 밀크티 같은 음료도 챙긴다."),
+		TEXT("드워프들은 드워프 공방에서 팔각 각인 망치를 두드리며 하루를 보낸다. 곡괭이나 채집가위 같은 튼튼한 도구를 고르는 눈이 까다롭고, 일을 마치면 흑맥주 같은 술 한 잔으로 피로를 푼다."),
+		TEXT("엘프들은 엘프의 검술 수련장에서 숲지기 수련검을 들고 오랜 시간 수련한다. 수련을 마치면 허브 비누로 몸을 씻고, 숲에서 난 것처럼 신선한 음식을 먹은 뒤 찬이슬 같은 술 한 잔으로 하루를 마무리한다.")};
 	const int32 Index = static_cast<int32>(Race);
 	return Index >= 0 && Index < UE_ARRAY_COUNT(Descriptions) ? Descriptions[Index] : TEXT("");
 }
@@ -53,17 +54,27 @@ FString BuildRacePreferenceDescription(const UCSCustomerArchetypeDataAsset* Arch
 	if (!Archetype)
 		return Result;
 
+	// 주력 선호는 보통 2~3개가 같은 값이라 최고값과 같은 카테고리를 전부 적는다
 	float Best = -1.f;
-	int32 BestCategory = INDEX_NONE;
 	for (const auto& Pair : Archetype->CategoryPreference)
-		if (Pair.Value > Best && !Archetype->BlockedCategories.Contains(Pair.Key))
-		{
-			Best = Pair.Value;
-			BestCategory = static_cast<int32>(Pair.Key);
-		}
+		if (!Archetype->BlockedCategories.Contains(Pair.Key))
+			Best = FMath::Max(Best, Pair.Value);
 
-	if (BestCategory >= 0 && BestCategory < UE_ARRAY_COUNT(Categories))
-		Result += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), Categories[BestCategory]);
+	TArray<int32> BestIndices;
+	for (const auto& Pair : Archetype->CategoryPreference)
+	{
+		const int32 Index = static_cast<int32>(Pair.Key);
+		if (FMath::IsNearlyEqual(Pair.Value, Best) && !Archetype->BlockedCategories.Contains(Pair.Key)
+			&& Index < UE_ARRAY_COUNT(Categories))
+			BestIndices.Add(Index);
+	}
+	BestIndices.Sort();
+
+	TArray<FString> BestNames;
+	for (const int32 Index : BestIndices)
+		BestNames.Add(Categories[Index]);
+	if (!BestNames.IsEmpty())
+		Result += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), *FString::Join(BestNames, TEXT(", ")));
 
 	TArray<FString> Blocked;
 	for (const auto Category : Archetype->BlockedCategories)

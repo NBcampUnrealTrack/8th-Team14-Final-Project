@@ -37,7 +37,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
 
-	/** 오늘 뉴스에 직접 연결된 활성 수요 효과를 게시판 Row용 배열로 반환합니다. */
+	/** 오늘 뉴스와 기념일의 활성 수요 효과를 게시판 Row용 배열로 반환합니다. 종족 효과는 빠집니다. */
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	void GetTodayNewsDemandChanges(TArray<FCSNoticeBoardDemandChange>& OutChanges) const;
 
@@ -68,6 +68,9 @@ public:
 		const FDataTableRowHandle& ProductRow,
 		ECSNoticeEventSourceType& OutSource) const;
 
+	// 오늘 뉴스와 기념일이 이 종족 스폰 가중치에 곱할 배수. ArchetypeId는 Archetype 에셋 이름
+	float GetRaceSpawnMultiplier(FName ArchetypeId) const;
+
 private:
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);
@@ -79,6 +82,9 @@ private:
 	// 디버그용 강제 뉴스(cs.news)를 적용. 덮어썼으면 true
 	bool ApplyForcedNewsOverride();
 	void CollectDailyHolidays(int32 DayOfMonth);
+
+	// 디버그용 강제 기념일(cs.holiday)을 적용. 덮어썼으면 true
+	bool ApplyForcedHolidayOverride();
 	bool IsEffectSourceActive(const FCSNoticeEventEffectRuleRow& Rule) const;
 
 	UPROPERTY(Transient)

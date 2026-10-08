@@ -26,6 +26,27 @@ namespace
 			&& Info.Severity >= PriceUpsetSeverityFloor;
 	}
 
+	// 숙취해소제는 술을 산 손님만 산다. 술 없이 숙취해소제만 사 가는 손님은 어색하다
+	bool IsMissingRequiredAnchor(ECSProductCategory Category, const UCSCustomerStateComponent* State)
+	{
+		if (Category != ECSProductCategory::HangoverCure)
+		{
+			return false;
+		}
+		if (State != nullptr)
+		{
+			for (const FCSSelectProduct& Selected : State->SelectProducts)
+			{
+				const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(TEXT("IsMissingRequiredAnchor"));
+				if (Row != nullptr && Row->Category == ECSProductCategory::Alcohol)
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
 	// PreferredCategoryMissing 속마음의 {Category} 자리표시자용 한글 카테고리명
 	// UI/Store/CSLedgerProductRowWidget.cpp에 같은 목적의 매핑이 이미 있지만 다른 파트 파일이라 여기 따로 둔다
 	FText GetProductCategoryDisplayName(ECSProductCategory Category)
@@ -57,6 +78,10 @@ UCSPurchaseDecisionComponent::UCSPurchaseDecisionComponent()
 
 	// 잎 우산은 내구재라 한 방문에 하나면 충분하다. 에디터에서 목록을 늘릴 수 있다
 	SingleUnitProductIds.Add(TEXT("SUP_RainUmbrella"));
+	// 도구는 매장에서 가장 비싼 상품이라 여러 개 담으면 하루 매출이 한 손님에게 쏠린다
+	SingleUnitProductIds.Add(TEXT("TOOL_ArtisanGatheringShears"));
+	SingleUnitProductIds.Add(TEXT("TOOL_ArtisanPickaxe"));
+	SingleUnitProductIds.Add(TEXT("TOOL_DwarvenMultiTool"));
 
 	static ConstructorHelpers::FObjectFinder<UDataTable> ProductMasterDataTableFinder(
 		TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster"));
@@ -177,6 +202,13 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// (ScoreAndSelectTopCandidates가 Reason=None인 -1.0 후보를 대표 사유 집계에서 빼주므로
 	//  이 후보 때문에 엉뚱한 거절 문구가 뜨지 않는다)
 	if (IsSingleUnitLimitReached(Candidate.ProductRowHandle))
+	{
+		return -1.0f;
+	}
+
+	// 위와 같이 거절 사유를 안 채운다. 카테고리 차단으로 채우면 그 말풍선이 최우선이라
+	// 같은 매대에서 술이 비싸 안 산 경우에도 "비싸다" 대신 그 말풍선이 뜬다
+	if (IsMissingRequiredAnchor(ProductRow->Category, GetCustomerState()))
 	{
 		return -1.0f;
 	}
@@ -877,6 +909,11 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 		{
 			continue;
 		}
+		// 계획은 장바구니가 빈 스폰 시점에 세우는데, 술이 있어야 사는 상품은 그때 살 수 없다
+		if (IsMissingRequiredAnchor(Row->Category, nullptr))
+		{
+			continue;
+		}
 
 		// 음수 보정(뉴스로 기피하게 된 상품)은 계획 대상이 아니다 - 사러 올 이유가 없다
 		const float Modifier = GetPlannedDemandModifier(Pair.Key);
@@ -1372,7 +1409,10 @@ float UCSPurchaseDecisionComponent::GetPlannedDemandModifier(FName ProductRowNam
 	Handle.DataTable = ProductMasterDataTable;
 	Handle.RowName = ProductRowName;
 
-	return GetNewsDemandModifier(Handle) + GetWeatherDemandModifier(Handle);
+	// 뉴스, 기념일, 날씨가 한 상품에 다 겹치면 손님 대부분이 그 상품만 사러 와서 바로 품절되고
+	// 못 찾은 손님이 쇼핑을 그만둔다. 올리는 쪽만 막고 내리는 쪽은 그대로 둔다
+	constexpr float MaxPlannedDemandModifier = 1.5f;
+	return FMath::Min(GetNewsDemandModifier(Handle) + GetWeatherDemandModifier(Handle), MaxPlannedDemandModifier);
 }
 
 float UCSPurchaseDecisionComponent::GetPlannedDemandMultiplier(float DemandModifier) const
