@@ -2,6 +2,7 @@
 #include "Data/CSProductTypes.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Items/CSProductPickupActor.h"
 #include "GameFramework/Actor.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
@@ -26,6 +27,26 @@ namespace
 			&& Info.Severity >= PriceUpsetSeverityFloor;
 	}
 
+	// 같은 상품을 한 손님이 이만큼 담으면 더 담지 않는다.
+	// 제한이 없으면 앞 손님 몇 명이 인기 상품을 쓸어 가서 뒤 손님이 전부 "없네"로 돌아간다
+	constexpr int32 MaxSameProductPerVisit = 2;
+
+	int32 CountInBasket(FName ProductId, const UCSCustomerStateComponent* State)
+	{
+		int32 Count = 0;
+		if (State != nullptr)
+		{
+			for (const FCSSelectProduct& Selected : State->SelectProducts)
+			{
+				if (Selected.ProductRow.RowName == ProductId)
+				{
+					++Count;
+				}
+			}
+		}
+		return Count;
+	}
+
 	// 숙취해소제는 술을 산 손님만 산다. 술 없이 숙취해소제만 사 가는 손님은 어색하다
 	bool IsMissingRequiredAnchor(ECSProductCategory Category, const UCSCustomerStateComponent* State)
 	{
@@ -45,27 +66,6 @@ namespace
 			}
 		}
 		return true;
-	}
-
-	// PreferredCategoryMissing 속마음의 {Category} 자리표시자용 한글 카테고리명
-	// UI/Store/CSLedgerProductRowWidget.cpp에 같은 목적의 매핑이 이미 있지만 다른 파트 파일이라 여기 따로 둔다
-	FText GetProductCategoryDisplayName(ECSProductCategory Category)
-	{
-		switch (Category)
-		{
-		case ECSProductCategory::Alcohol: return FText::FromString(TEXT("주류"));
-		case ECSProductCategory::Beverage: return FText::FromString(TEXT("음료"));
-		case ECSProductCategory::FreshFood: return FText::FromString(TEXT("신선식품"));
-		case ECSProductCategory::FrozenFood: return FText::FromString(TEXT("냉동식품"));
-		case ECSProductCategory::Potion: return FText::FromString(TEXT("포션"));
-		case ECSProductCategory::Scroll: return FText::FromString(TEXT("두루마리"));
-		case ECSProductCategory::Snack: return FText::FromString(TEXT("간식"));
-		case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
-		case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
-		case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
-		case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
-		default: return FText::GetEmpty();
-		}
 	}
 }
 
@@ -201,7 +201,8 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// OutRejectionInfo를 채우지 않는 이유: 거절 연출 대상이 아니라 조용한 미구매다
 	// (ScoreAndSelectTopCandidates가 Reason=None인 -1.0 후보를 대표 사유 집계에서 빼주므로
 	//  이 후보 때문에 엉뚱한 거절 문구가 뜨지 않는다)
-	if (IsSingleUnitLimitReached(Candidate.ProductRowHandle))
+	if (IsSingleUnitLimitReached(Candidate.ProductRowHandle) ||
+		CountInBasket(Candidate.ProductRowHandle.RowName, GetCustomerState()) >= MaxSameProductPerVisit)
 	{
 		return -1.0f;
 	}
@@ -892,10 +893,30 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 		}
 	}
 
+	// 가챠·제조 전용 상품은 플레이어가 발주로 채울 수 없어서 지금 매대에 있을 때만 사러 온다
+	TSet<FName> StockedProductIds;
+	if (const UCSCustomerRuntimeSubsystem* Runtime = World ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
+	{
+		for (const TObjectPtr<AActor>& Shelf : Runtime->GetShelves())
+		{
+			for (const AActor* ProductActor : Runtime->GetProductsOnShelf(Shelf))
+			{
+				if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(ProductActor))
+				{
+					StockedProductIds.Add(Product->GetProductId());
+				}
+			}
+		}
+	}
+
 	for (const TPair<FName, uint8*>& Pair : ProductMasterDataTable->GetRowMap())
 	{
 		const FCSProductDataRow* Row = reinterpret_cast<const FCSProductDataRow*>(Pair.Value);
 		if (Row == nullptr)
+		{
+			continue;
+		}
+		if (!Row->bOrderable && !StockedProductIds.Contains(Pair.Key))
 		{
 			continue;
 		}
@@ -1219,7 +1240,7 @@ FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejec
 	if (Info.Reason == ECSPurchaseRejectReason::PreferredCategoryMissing)
 	{
 		FFormatNamedArguments CategoryArgs;
-		CategoryArgs.Add(TEXT("Category"), GetProductCategoryDisplayName(Info.BlockedCategory));
+		CategoryArgs.Add(TEXT("Category"), CSGetProductCategoryDisplayName(Info.BlockedCategory));
 		return FText::Format(GetEffectivePreferredCategoryMissingTemplate(), CategoryArgs);
 	}
 

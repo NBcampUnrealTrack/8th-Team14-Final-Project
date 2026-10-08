@@ -30,6 +30,26 @@ enum class ECSProductCategory : uint8
 	HangoverCure
 };
 
+// 화면에 보이는 카테고리 이름은 전부 여기서 가져간다. 화면마다 따로 적으면 같은 카테고리가 다른 이름으로 보인다
+inline FText CSGetProductCategoryDisplayName(ECSProductCategory Category)
+{
+	switch (Category)
+	{
+	case ECSProductCategory::Alcohol: return NSLOCTEXT("ProductCategory", "Alcohol", "주류");
+	case ECSProductCategory::Beverage: return NSLOCTEXT("ProductCategory", "Beverage", "음료");
+	case ECSProductCategory::FreshFood: return NSLOCTEXT("ProductCategory", "FreshFood", "신선식품");
+	case ECSProductCategory::FrozenFood: return NSLOCTEXT("ProductCategory", "FrozenFood", "냉동식품");
+	case ECSProductCategory::Potion: return NSLOCTEXT("ProductCategory", "Potion", "포션");
+	case ECSProductCategory::Scroll: return NSLOCTEXT("ProductCategory", "Scroll", "두루마리");
+	case ECSProductCategory::Snack: return NSLOCTEXT("ProductCategory", "Snack", "간식");
+	case ECSProductCategory::Supply: return NSLOCTEXT("ProductCategory", "Supply", "보급품");
+	case ECSProductCategory::Toiletry: return NSLOCTEXT("ProductCategory", "Toiletry", "위생용품");
+	case ECSProductCategory::Tool: return NSLOCTEXT("ProductCategory", "Tool", "도구");
+	case ECSProductCategory::HangoverCure: return NSLOCTEXT("ProductCategory", "HangoverCure", "숙취해소제");
+	default: return FText::GetEmpty();
+	}
+}
+
 UENUM(BlueprintType)
 enum class ECSProductShelfType : uint8
 {

@@ -122,12 +122,9 @@ void UCSNoticeBoardNewsTabWidget::SetupDemandRow(
 	}
 	if (UTextBlock* DirectionText = Cast<UTextBlock>(RowWidget->GetWidgetFromName(TEXT("Text_DemandDirection"))))
 	{
-		const bool bHoliday = Change.SourceType == ECSNoticeEventSourceType::Holiday;
 		DirectionText->SetText(Change.bIsIncrease
-			? (bHoliday ? NSLOCTEXT("NoticeBoard", "HolidayDemandIncrease", "기념일 수요 상승")
-						: NSLOCTEXT("NoticeBoard", "DemandIncrease", "수요 상승"))
-			: (bHoliday ? NSLOCTEXT("NoticeBoard", "HolidayDemandDecrease", "기념일 수요 하락")
-						: NSLOCTEXT("NoticeBoard", "DemandDecrease", "수요 하락")));
+			? NSLOCTEXT("NoticeBoard", "DemandIncrease", "수요 상승")
+			: NSLOCTEXT("NoticeBoard", "DemandDecrease", "수요 하락"));
 	}
 	if (UImage* Background = Cast<UImage>(RowWidget->GetWidgetFromName(TEXT("Image_DemandBackground"))))
 	{

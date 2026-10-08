@@ -181,13 +181,22 @@ void UCSNoticeEventSubsystem::GetTodayNewsDemandChanges(
 			const int64 CategoryValue = ProductCategoryEnum->GetValueByName(Rule->TargetId);
 			if (CategoryValue != INDEX_NONE)
 			{
-				Change.TargetDisplayName = ProductCategoryEnum->GetDisplayNameTextByValue(CategoryValue);
+				// 카테고리 행이 상품 한 개로 읽히지 않게 "전체"를 붙인다
+				Change.TargetDisplayName = FText::Format(NSLOCTEXT("NoticeBoard", "CategoryAll", "{0} 전체"),
+					CSGetProductCategoryDisplayName(static_cast<ECSProductCategory>(CategoryValue)));
 			}
 		}
 
 		if (Change.TargetDisplayName.IsEmpty())
 		{
 			Change.TargetDisplayName = FText::FromName(Rule->TargetId);
+		}
+
+		// 수요 칸은 좁아서 기념일 표시는 이름 쪽에 붙인다
+		if (Rule->SourceType == ECSNoticeEventSourceType::Holiday)
+		{
+			Change.TargetDisplayName = FText::Format(NSLOCTEXT("NoticeBoard", "HolidayTarget", "{0} (기념일)"),
+				Change.TargetDisplayName);
 		}
 	}
 }
@@ -439,6 +448,13 @@ void UCSNoticeEventSubsystem::ProcessBusinessDay(const int32 BusinessDay)
 	const int32 DayOfMonth = ((SafeBusinessDay - 1) % DaysPerMonth) + 1;
 	CollectDailyHolidays(DayOfMonth);
 	const bool bHolidayForced = ApplyForcedHolidayOverride();
+
+	// 기념일에 뉴스까지 겹치면 날씨와 합쳐 수요가 오르는 상품이 너무 많아진다. 뉴스 굴림은 위에서 이미 했으니 결과만 버린다
+	// cs.news로 강제한 뉴스는 겹침을 검증하려는 것이라 남긴다
+	if (!ActiveHolidayRowNames.IsEmpty() && !bNewsForced)
+	{
+		CurrentNewsRowName = NAME_None;
+	}
 
 	{
 		TArray<FString> HolidayNames;

@@ -36,20 +36,18 @@ constexpr const TCHAR* JournalPageTitles[] = {TEXT("지도"),
 FString GetRaceLifeDescription(ECSJournalRace Race)
 {
 	static const TCHAR* Descriptions[] = {
-		TEXT("고블린 학교에 다니는 꼬마 고블린들은 수업이 끝나면 공부 석판을 옆구리에 끼고 가게로 몰려온다. 바삭칩 같은 간식과 시원한 아이스크림, 달콤한 음료를 한 아름 고르지만, 아직 어려서 술과 숙취해소제는 살 수 없다."),
-		TEXT("오크들은 하루 일을 마치면 오크 주점에 모여 엄니 축배잔을 부딪친다. 술은 늘 넉넉히 사 가고, 고향 생각이 날 때면 고향 만두 같은 냉동식품을 함께 챙긴다. 술을 산 날에는 다음 날을 위해 숙취해소제도 잊지 않는다."),
-		TEXT("모험가들은 길을 떠나기 전 모험가의 포션 상점에 들러 여정의 포션 수통을 채운다. 이 가게에서는 회복 포션과 횃불, 화살 같은 여행 용품, 그리고 길에서 먹을 도시락을 챙겨 간다."),
-		TEXT("마법사들은 마법 교습소에서 주문을 익히고, 밤이면 별자리 관측구 앞에서 하늘을 읽으며 시간을 보낸다. 연구에 쓸 포션과 주문서를 꾸준히 사 가고, 밤샘 관측을 버티려고 레드뿔이나 밀크티 같은 음료도 챙긴다."),
-		TEXT("드워프들은 드워프 공방에서 팔각 각인 망치를 두드리며 하루를 보낸다. 곡괭이나 채집가위 같은 튼튼한 도구를 고르는 눈이 까다롭고, 일을 마치면 흑맥주 같은 술 한 잔으로 피로를 푼다."),
-		TEXT("엘프들은 엘프의 검술 수련장에서 숲지기 수련검을 들고 오랜 시간 수련한다. 수련을 마치면 허브 비누로 몸을 씻고, 숲에서 난 것처럼 신선한 음식을 먹은 뒤 찬이슬 같은 술 한 잔으로 하루를 마무리한다.")};
+		TEXT("고블린 학교 꼬마들은 수업이 끝나면 공부 석판을 끼고 가게로 몰려온다. 바삭칩 같은 간식과 아이스크림, 달콤한 음료를 고르지만 술은 아직 못 산다."),
+		TEXT("오크들은 일을 마치면 오크 주점에서 엄니 축배잔을 부딪친다. 술과 고향 만두 같은 냉동식품을 챙기고, 술을 산 날엔 숙취해소제도 잊지 않는다."),
+		TEXT("모험가들은 길을 떠나기 전 포션 상점에서 여정의 포션 수통을 채운다. 회복 포션과 횃불 같은 여행 용품, 길에서 먹을 도시락을 챙겨 간다."),
+		TEXT("마법사들은 마법 교습소에서 주문을 익히고, 밤이면 별자리 관측구에서 하늘을 읽는다. 포션과 두루마리, 밤샘을 버틸 음료를 꾸준히 찾는다."),
+		TEXT("드워프들은 공방에서 팔각 각인 망치를 두드리며 하루를 보낸다. 곡괭이 같은 튼튼한 도구를 고르는 눈이 까다롭고, 일을 마치면 흑맥주 같은 술을 즐긴다."),
+		TEXT("엘프들은 검술 수련장에서 숲지기 수련검으로 수련한다. 수련 뒤에는 허브 비누로 씻고, 신선한 음식과 찬이슬 같은 술로 하루를 마무리한다.")};
 	const int32 Index = static_cast<int32>(Race);
 	return Index >= 0 && Index < UE_ARRAY_COUNT(Descriptions) ? Descriptions[Index] : TEXT("");
 }
 
 FString BuildRacePreferenceDescription(const UCSCustomerArchetypeDataAsset* Archetype)
 {
-	static const TCHAR* Categories[] = {TEXT("주류"), TEXT("음료"), TEXT("신선 식품"), TEXT("냉동 식품"),
-		TEXT("물약"), TEXT("두루마리"), TEXT("간식"), TEXT("생활용품"), TEXT("위생용품"), TEXT("도구"), TEXT("숙취 해소제")};
 	FString Result = TEXT("관련 장소를 방문하며 이 종족의 생활과 상품 취향을 조사했다.");
 	if (!Archetype)
 		return Result;
@@ -64,25 +62,20 @@ FString BuildRacePreferenceDescription(const UCSCustomerArchetypeDataAsset* Arch
 	for (const auto& Pair : Archetype->CategoryPreference)
 	{
 		const int32 Index = static_cast<int32>(Pair.Key);
-		if (FMath::IsNearlyEqual(Pair.Value, Best) && !Archetype->BlockedCategories.Contains(Pair.Key)
-			&& Index < UE_ARRAY_COUNT(Categories))
+		if (FMath::IsNearlyEqual(Pair.Value, Best) && !Archetype->BlockedCategories.Contains(Pair.Key))
 			BestIndices.Add(Index);
 	}
 	BestIndices.Sort();
 
 	TArray<FString> BestNames;
 	for (const int32 Index : BestIndices)
-		BestNames.Add(Categories[Index]);
+		BestNames.Add(CSGetProductCategoryDisplayName(static_cast<ECSProductCategory>(Index)).ToString());
 	if (!BestNames.IsEmpty())
 		Result += FString::Printf(TEXT("\n\n상품 중에서는 %s에 가장 높은 관심을 보인다."), *FString::Join(BestNames, TEXT(", ")));
 
 	TArray<FString> Blocked;
 	for (const auto Category : Archetype->BlockedCategories)
-	{
-		const int32 Index = static_cast<int32>(Category);
-		if (Index >= 0 && Index < UE_ARRAY_COUNT(Categories))
-			Blocked.Add(Categories[Index]);
-	}
+		Blocked.Add(CSGetProductCategoryDisplayName(Category).ToString());
 	Blocked.Sort();
 	if (!Blocked.IsEmpty())
 	{
