@@ -37,7 +37,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	bool GetTodayNews(FCSNewsEventDataRow& OutNews) const;
 
-	/** 오늘 뉴스에 직접 연결된 활성 수요 효과를 게시판 Row용 배열로 반환합니다. */
+	/** 오늘 뉴스와 기념일의 활성 수요 효과를 게시판 Row용 배열로 반환합니다. 종족 효과는 빠집니다. */
 	UFUNCTION(BlueprintCallable, Category = "Notice Events|News")
 	void GetTodayNewsDemandChanges(TArray<FCSNoticeBoardDemandChange>& OutChanges) const;
 
@@ -68,17 +68,34 @@ public:
 		const FDataTableRowHandle& ProductRow,
 		ECSNoticeEventSourceType& OutSource) const;
 
+	// 오늘 뉴스와 기념일이 이 종족 스폰 가중치에 곱할 배수. ArchetypeId는 Archetype 에셋 이름
+	float GetRaceSpawnMultiplier(FName ArchetypeId) const;
+
+	// 소문 예고용. 내일 뜰 뉴스(기념일·첫 며칠 규칙까지 반영)와 내일 기념일. 없으면 None
+	FName GetTomorrowNewsRowName() const;
+	FName GetTomorrowHolidayRowName() const;
+
+	bool GetNewsRow(FName NewsRowName, FCSNewsEventDataRow& OutNews) const;
+
+	// 이 뉴스·기념일이 수요를 올리는 상품·카테고리 규칙을 많이 오르는 순으로 돌려준다. 종족 규칙은 뺀다
+	void GetPositiveDemandTargets(ECSNoticeEventSourceType SourceType, FName SourceId,
+		TArray<FCSNoticeEventEffectRuleRow>& OutTargets) const;
+
 private:
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);
 
 	void LoadEventDataTables();
 	void ProcessBusinessDay(int32 BusinessDay);
-	void SelectDailyNews();
 
-	// 디버그용 강제 뉴스(cs.news)를 적용. 덮어썼으면 true
-	bool ApplyForcedNewsOverride();
-	void CollectDailyHolidays(int32 DayOfMonth);
+	// 그 영업일 뉴스를 굴린다. 기념일·강제 명령 같은 규칙은 ResolveNewsForDay에서 적용한다
+	FName RollNewsForDay(int32 Day);
+	FName ResolveNewsForDay(int32 Day, FName RolledNews, bool bHasHoliday, bool& bOutForced, bool bLogMismatch) const;
+	TArray<FName> GetHolidayRowNamesForDay(int32 Day, bool& bOutForced, bool bLogMismatch) const;
+
+	// 디버그용 강제 뉴스(cs.news)·기념일(cs.holiday). 강제 중이면 true
+	bool TryGetForcedNews(FName& OutNewsRowName, bool bLogMismatch) const;
+	bool TryGetForcedHolidays(TArray<FName>& OutHolidayRowNames, bool bLogMismatch) const;
 	bool IsEffectSourceActive(const FCSNoticeEventEffectRuleRow& Rule) const;
 
 	UPROPERTY(Transient)
@@ -102,5 +119,10 @@ private:
 	TArray<FName> ActiveHolidayRowNames;
 
 	int32 LastProcessedBusinessDay = INDEX_NONE;
+
+	// 하루 먼저 굴려 둔 뉴스와 그 영업일
+	FName PreparedNewsRowName = NAME_None;
+	int32 PreparedNewsDay = INDEX_NONE;
+
 	FRandomStream NoticeEventRandomStream;
 };

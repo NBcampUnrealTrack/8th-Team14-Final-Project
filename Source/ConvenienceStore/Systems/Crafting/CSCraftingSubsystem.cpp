@@ -157,6 +157,39 @@ FAutoConsoleCommandWithWorldAndArgs CmdCraftTest(
 			Result.Quantity);
 	}));
 #endif
+
+#if !UE_BUILD_SHIPPING
+// 소문이 제조 전용 힌트에서 조합 힌트로 넘어가는지 보려면 6종을 다 만들어야 해서 둔 디버그 스위치
+FAutoConsoleCommandWithWorldAndArgs CmdCraftDiscoverAll(
+	TEXT("cs.CraftDiscoverAll"),
+	TEXT("제조 전용 레시피를 전부 성공한 것으로 기록합니다. 게시판 소문은 다음 영업일부터 바뀝니다."),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic([](const TArray<FString>& Args, UWorld* World)
+	{
+		UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+		if (!IsValid(Crafting) || !Crafting->IsCraftingAvailable())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[제조] 플레이 중인 게임에서 실행하세요."));
+			return;
+		}
+
+		int32 Count = 0;
+		for (const FName RecipeRow : Crafting->GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
+		{
+			const FCSCraftRecipeRow* Recipe = Crafting->FindRecipeByRowName(RecipeRow);
+			if (Recipe == nullptr)
+			{
+				continue;
+			}
+			FCSCraftAttemptRecord Attempt;
+			Attempt.RecipeRowName = RecipeRow;
+			Attempt.ResultProduct = Recipe->ResultProduct;
+			Attempt.Outcome = ECSCraftOutcome::Success;
+			Crafting->RecordManualCraft(Attempt);
+			++Count;
+		}
+		UE_LOG(LogTemp, Display, TEXT("[제조] 제조 전용 레시피 %d개를 발견한 것으로 기록했습니다."), Count);
+	}));
+#endif
 }
 
 bool UCSCraftingSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
@@ -369,10 +402,12 @@ void UCSCraftingSubsystem::ValidateTables() const
 
 		// 게시판 풀 크기와 날씨 고정 자리 수가 이 개수를 기준으로 맞춰져 있다
 		const UEnum* KindEnum = StaticEnum<ECSCraftRumorKind>();
+		// 조합은 결과물마다 3문장(제조 전용은 레시피 1단계 소문이 첫 문장이라 2문장), 예고는 시간대마다 1문장
 		const TPair<ECSCraftRumorKind, int32> ExpectedCounts[] = {
-			{ ECSCraftRumorKind::Combination, 7 }, { ECSCraftRumorKind::Property, 6 },
-			{ ECSCraftRumorKind::BasicMethod, 1 }, { ECSCraftRumorKind::Chatter, 5 },
-			{ ECSCraftRumorKind::WeatherVariant, 3 } };
+			{ ECSCraftRumorKind::Combination, 33 }, { ECSCraftRumorKind::Property, 6 },
+			{ ECSCraftRumorKind::BasicMethod, 1 }, { ECSCraftRumorKind::Chatter, 16 },
+			{ ECSCraftRumorKind::WeatherVariant, 9 }, { ECSCraftRumorKind::NewsPreview, 3 },
+			{ ECSCraftRumorKind::HolidayPreview, 12 } };
 		for (const TPair<ECSCraftRumorKind, int32>& Expected : ExpectedCounts)
 		{
 			const int32 Actual = KindCounts.FindRef(Expected.Key);

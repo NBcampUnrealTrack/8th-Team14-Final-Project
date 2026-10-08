@@ -9,30 +9,6 @@
 #include "Systems/Crafting/CSCraftingSubsystem.h"
 #include "UI/Crafting/CSLedgerCraftInfoWidget.h"
 
-namespace
-{
-FText GetLedgerCategoryText(ECSProductCategory Category)
-{
-	switch (Category)
-	{
-	case ECSProductCategory::Alcohol: return FText::FromString(TEXT("주류"));
-	case ECSProductCategory::Beverage: return FText::FromString(TEXT("음료"));
-	case ECSProductCategory::FreshFood: return FText::FromString(TEXT("신선식품"));
-	case ECSProductCategory::FrozenFood: return FText::FromString(TEXT("냉동식품"));
-	case ECSProductCategory::Potion: return FText::FromString(TEXT("포션"));
-	case ECSProductCategory::Scroll: return FText::FromString(TEXT("두루마리"));
-	case ECSProductCategory::Snack: return FText::FromString(TEXT("간식"));
-	case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
-	case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
-	case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
-	case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
-	default: return FText::GetEmpty();
-	}
-}
-
-
-}
-
 void UCSLedgerRightPageWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -138,7 +114,7 @@ void UCSLedgerRightPageWidget::HandleSalePriceCommitted(float Value, ETextCommit
 void UCSLedgerRightPageWidget::RefreshProductHeader(const FCSLedgerProductViewData& ProductData)
 {
 	if (IsValid(Txt_ProductName)) Txt_ProductName->SetText(ProductData.ProductName);
-	if (IsValid(Txt_Category)) Txt_Category->SetText(GetLedgerCategoryText(ProductData.Category));
+	if (IsValid(Txt_Category)) Txt_Category->SetText(CSGetProductCategoryDisplayName(ProductData.Category));
 	if (IsValid(Img_Product))
 	{
 		Img_Product->SetBrushFromTexture(ProductData.ProductIcon, true);

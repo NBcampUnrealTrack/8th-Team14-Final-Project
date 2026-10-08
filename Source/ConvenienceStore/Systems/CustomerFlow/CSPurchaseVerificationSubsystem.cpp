@@ -83,6 +83,13 @@ void UCSPurchaseVerificationSubsystem::HandleCheckoutCompleted(ACSCustomerCharac
 
 void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone)
 {
+	const UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
+	// 마감으로 끊긴 손님은 결제도 빈손도 아니다. 평판 집계와 같은 기준으로 뺀다
+	if (IsValid(State) && State->IsForcedToLeave())
+	{
+		return;
+	}
+
 	++TotalCustomersLeft;
 
 	if (bCheckoutDone)
@@ -90,7 +97,6 @@ void UCSPurchaseVerificationSubsystem::HandleCustomerDespawned(ACSCustomerCharac
 		return;
 	}
 
-	const UCSCustomerStateComponent* State = IsValid(Customer) ? Customer->GetCustomerState() : nullptr;
 	if (IsValid(State) && State->bCheckoutAbandoned)
 	{
 		++CheckoutAbandonedDepartures;

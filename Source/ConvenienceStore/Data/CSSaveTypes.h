@@ -318,11 +318,11 @@ struct CONVENIENCESTORE_API FCSReputationDailySaveRecord
 	UPROPERTY()
 	int32 DailyNormalCheckouts = 0;
 
-	// 추첨을 통과해 카운트에 반영된 계산 포기 횟수
+	// 계산 포기 횟수
 	UPROPERTY()
 	int32 DailyCheckoutAbandoned = 0;
 
-	// 추첨을 통과해 카운트에 반영된 빈손 퇴장 횟수
+	// 빈손 퇴장 횟수
 	UPROPERTY()
 	int32 DailyEmptyHandedDepartures = 0;
 
@@ -695,6 +695,14 @@ struct CONVENIENCESTORE_API FCSNoticeEventSaveRecord
 	// 복원하지 않으면 로드 직후 뉴스를 재추첨
 	UPROPERTY()
 	int32 LastProcessedBusinessDay = INDEX_NONE;
+
+	// 소문으로 예고하려고 미리 굴려 둔 내일 뉴스와 그 영업일
+	// 복원하지 않으면 불러온 다음 날 뉴스가 예고와 달라진다
+	UPROPERTY()
+	FName PreparedNewsRowName;
+
+	UPROPERTY()
+	int32 PreparedNewsDay = INDEX_NONE;
 };
 
 // -----------------------------------------------------------------------------

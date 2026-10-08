@@ -168,28 +168,39 @@ void CSConfigureJournalWorld(UWorld* World)
 			}
 			else if (Asset == TEXT("ElfTraining"))
 			{
-				B.Name = TEXT("엘프 훈련장");
+				B.Name = TEXT("엘프의 검술 수련장");
 				B.Race = ECSJournalRace::Elf;
 			}
 			else if (Asset == TEXT("MagicSchool"))
 			{
-				B.Name = TEXT("마법 학교");
+				B.Name = TEXT("마법사의 마법 교습소");
 				B.Race = ECSJournalRace::Wizard;
 			}
 			else if (Asset == TEXT("Recruitment"))
 			{
-				B.Name = TEXT("고용소");
+				B.Name = TEXT("알바지옥");
 				B.Race = ECSJournalRace::Human;
 			}
 			else if (Asset == TEXT("potion_shop"))
 			{
-				B.Name = TEXT("물약 상점");
-				B.Race = ECSJournalRace::Wizard;
+				B.Name = TEXT("모험가의 포션 상점");
+				B.Race = ECSJournalRace::Human;
 			}
+			// 엔딩 물품을 받는 마법사가 있는 곳이라 마법사로 둔다
 			else if (Asset == TEXT("AstroShop"))
 			{
-				B.Name = TEXT("AstroShop");
-				B.Race = ECSJournalRace::Human;
+				B.Name = TEXT("귀환의 보관소");
+				B.Race = ECSJournalRace::Wizard;
+			}
+			else if (Asset == TEXT("DwarfWorkShop"))
+			{
+				B.Name = TEXT("드워프 공방");
+				B.Race = ECSJournalRace::Dwarf;
+			}
+			else if (Asset == TEXT("OrcTavern"))
+			{
+				B.Name = TEXT("오크 주점");
+				B.Race = ECSJournalRace::Orc;
 			}
 			else
 				continue;
