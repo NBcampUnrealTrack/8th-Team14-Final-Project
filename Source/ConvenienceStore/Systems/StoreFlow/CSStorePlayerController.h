@@ -24,6 +24,11 @@ class UTexture2D;
 class UInputAction;
 class UInputMappingContext;
 class ACSStoreOpeningDirector;
+class UCSUnlockGuideData;
+class UCSUnlockGuideWidget;
+class UDataTable;
+class UCSLevelPresentationWidget;
+class UCSWakeUpWidget;
 enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
@@ -52,6 +57,15 @@ class CONVENIENCESTORE_API ACSStorePlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	// 카메라가 없는 항목은 카탈로그에 등록하시고, UI 외형은 이 위젯 클래스로 교체해 주세요.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Unlock Guide") TObjectPtr<UCSUnlockGuideData> UnlockGuideCatalog;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Unlock Guide") TSubclassOf<UCSUnlockGuideWidget> UnlockGuideWidgetClass;
+	// 팀원분들은 스토리 데이터와 연출 WBP를 이곳에 지정해 주세요.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story", meta = (RequiredAssetDataTags = "RowStructure=/Script/ConvenienceStore.CSLevelStoryEvent")) TObjectPtr<UDataTable> LevelStoryTable;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story") TSubclassOf<UCSLevelPresentationWidget> LevelPresentationWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story") TSubclassOf<UCSWakeUpWidget> OpeningEyeWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Unlock Guide|Input") FKey UnlockGuideHistoryKey = EKeys::F10;
+	bool CanStartUnlockGuide() const;
 	UFUNCTION(BlueprintCallable, Category = "UI|Summary")
 	void ToggleDailySummary();
 	bool IsDailySummaryReadOnly() const { return bDailySummaryReadOnly; }

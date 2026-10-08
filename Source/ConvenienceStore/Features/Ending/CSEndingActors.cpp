@@ -168,6 +168,8 @@ FText ACSEndingManager::GetWizardPrompt() const
 	if (SubmittedItemIds.Num() == Data->Items.Num())
 	{
 		const ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
+		if (!State || State->GetStoreLevel() < Data->ActivationStoreLevel)
+			return FText::Format(NSLOCTEXT("Ending", "ActivationLevelLocked", "귀환은 상점 {0}레벨부터 가능합니다"), FText::AsNumber(Data->ActivationStoreLevel));
 		return FText::Format(NSLOCTEXT("Ending", "Activate", "귀환 실행 — {0}G 제출 / 보유 {1}G"),
 			FText::AsNumber(Data->ActivationGold), FText::AsNumber(State ? State->GetCurrentFunds() : 0));
 	}
@@ -231,7 +233,7 @@ void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)
 
 	ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
 	ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(Player->GetController());
-	if (!State || !Controller || !Controller->IsLocalController() || !State->CanAfford(Data->ActivationGold)) return;
+	if (!State || State->GetStoreLevel() < Data->ActivationStoreLevel || !Controller || !Controller->IsLocalController() || !State->CanAfford(Data->ActivationGold)) return;
 	TSubclassOf<UUserWidget> WidgetClass = Data->EndingWidgetClass;
 	if (!WidgetClass) WidgetClass = UCSEndingWidget::StaticClass();
 	UUserWidget* Widget = CreateWidget<UUserWidget>(Controller, WidgetClass);

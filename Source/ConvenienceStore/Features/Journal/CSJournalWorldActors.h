@@ -5,6 +5,10 @@
 #include "Data/CSJournalTypes.h"
 #include "CSJournalWorldActors.generated.h"
 
+class UBoxComponent;
+class USceneComponent;
+class UStaticMeshComponent;
+
 // 레벨에 배치하여 종족 기록을 해금하는 독립 상호작용 지점입니다.
 // 자식 블루프린트에서 게시판, 유물, 비석 등 원하는 외형으로 구성하실 수 있습니다.
 UCLASS(Blueprintable)
@@ -25,6 +29,17 @@ public:
 
 	// 에디터에서 Entry Ids를 선택할 때 공용 카탈로그의 ID를 제공합니다.
 	UFUNCTION() TArray<FString> GetEntryIdOptions() const;
+
+protected:
+	// 자식 블루프린트에서 상호작용 범위와 외형 메시를 조정할 수 있도록 노출합니다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Journal|Components")
+	TObjectPtr<USceneComponent> SceneRoot;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Journal|Components")
+	TObjectPtr<UBoxComponent> InteractionBox;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Journal|Components")
+	TObjectPtr<UStaticMeshComponent> DiscoveryMesh;
 };
 
 // 건물의 위치와 이름을 지도에 표시하며 구현 예정 건물은 회색으로 구분합니다.
