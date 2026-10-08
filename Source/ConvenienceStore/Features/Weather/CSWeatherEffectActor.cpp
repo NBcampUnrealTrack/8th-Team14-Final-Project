@@ -2,13 +2,18 @@
 
 #include "Components/PostProcessComponent.h"
 #include "Components/SceneComponent.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialParameterCollectionInstance.h"
 #include "NiagaraComponent.h"
 #include "NiagaraDataInterfaceArrayFloat.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 
 ACSWeatherEffectActor::ACSWeatherEffectActor()
 {
-	// 색감 페이드 중에만 Tick을 활성화하도록 시작 시 비활성화
+	// 색감 페이드 중이거나 커버 박스 판정이 필요할 때만 Tick을 활성화하도록 시작 시 비활성화
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = false;
 
@@ -29,10 +34,35 @@ void ACSWeatherEffectActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// 컴포넌트가 없거나 페이드 시간이 0이면 Tick을 중지
+	// 색감 페이드와 커버 박스 판정은 서로 독립적으로 처리
+	if (bPostProcessFading)
+	{
+		TickPostProcessFade(DeltaSeconds);
+	}
+
+	if (IsCoverageFadeEnabled())
+	{
+		UpdateCoverageFadeBypass();
+	}
+
+	// 둘 다 필요 없어지면 Tick을 중지
+	UpdateTickEnabled();
+}
+
+void ACSWeatherEffectActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// MPC 값은 월드에 남으므로 다음 날씨 액터가 이전 값을 물려받지 않도록 페이드 켬 상태로 복원
+	SetCoverageFadeBypass(0.0f);
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void ACSWeatherEffectActor::TickPostProcessFade(float DeltaSeconds)
+{
+	// 컴포넌트가 없거나 페이드 시간이 0이면 색감 페이드를 중지
 	if (!IsValid(WeatherPostProcess) || PostProcessFadeSeconds <= KINDA_SMALL_NUMBER)
 	{
-		SetActorTickEnabled(false);
+		bPostProcessFading = false;
 		return;
 	}
 
@@ -43,12 +73,80 @@ void ACSWeatherEffectActor::Tick(float DeltaSeconds)
 	const float Current = WeatherPostProcess->BlendWeight;
 	WeatherPostProcess->BlendWeight = Current + FMath::Clamp(Target - Current, -MaxStep, MaxStep);
 
-	// 목표 가중치에 도달하면 값을 고정하고 Tick을 중지
+	// 목표 가중치에 도달하면 값을 고정하고 색감 페이드를 중지
 	if (FMath::IsNearlyEqual(WeatherPostProcess->BlendWeight, Target))
 	{
 		WeatherPostProcess->BlendWeight = Target;
-		SetActorTickEnabled(false);
+		bPostProcessFading = false;
 	}
+}
+
+void ACSWeatherEffectActor::UpdateCoverageFadeBypass()
+{
+	APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0);
+	if (CameraManager == nullptr)
+	{
+		return;
+	}
+
+	// 카메라와 가장 가까운 커버 박스 경계까지의 XY 거리 (박스 안이면 0)
+	const FVector CameraLocation = CameraManager->GetCameraLocation();
+	const FVector2D CameraXY(CameraLocation.X, CameraLocation.Y);
+	float MinDistance = TNumericLimits<float>::Max();
+	for (int32 Index = 0; Index < CoverageCentersXY.Num(); ++Index)
+	{
+		// 카메라 위치를 박스 중심 기준으로 옮기고 -Yaw만큼 회전해 박스 로컬 좌표로 변환
+		float Sin = 0.0f;
+		float Cos = 1.0f;
+		FMath::SinCos(&Sin, &Cos, CoverageYawsRad[Index]);
+		const FVector2D Delta = CameraXY - CoverageCentersXY[Index];
+		const float LocalX = Delta.X * Cos + Delta.Y * Sin;
+		const float LocalY = -Delta.X * Sin + Delta.Y * Cos;
+
+		// 각 축에서 박스 밖으로 나간 거리만 사용
+		const float OutX = FMath::Max(FMath::Abs(LocalX) - CoverageHalfSizes[Index].X, 0.0f);
+		const float OutY = FMath::Max(FMath::Abs(LocalY) - CoverageHalfSizes[Index].Y, 0.0f);
+		MinDistance = FMath::Min(MinDistance, FMath::Sqrt(OutX * OutX + OutY * OutY));
+	}
+
+	// 박스 안이면 1(페이드 끔), 경계에서 전환 거리 이상 나가면 0(페이드 켬)
+	const float TransitionDistance = FMath::Max(CoverageFadeTransitionDistance, 1.0f);
+	SetCoverageFadeBypass(1.0f - FMath::Clamp(MinDistance / TransitionDistance, 0.0f, 1.0f));
+}
+
+void ACSWeatherEffectActor::SetCoverageFadeBypass(float Value)
+{
+	static const FName FadeBypassName(TEXT("FadeBypass"));
+
+	UWorld* World = GetWorld();
+	if (WeatherParameterCollection == nullptr || World == nullptr)
+	{
+		return;
+	}
+
+	UMaterialParameterCollectionInstance* CollectionInstance = World->GetParameterCollectionInstance(WeatherParameterCollection);
+	if (CollectionInstance == nullptr)
+	{
+		return;
+	}
+
+	// 값이 같으면 MPC 내부에서 렌더 상태를 갱신하지 않음
+	if (!CollectionInstance->SetScalarParameterValue(FadeBypassName, Value) && !bWarnedMissingFadeBypass)
+	{
+		bWarnedMissingFadeBypass = true;
+		UE_LOG(LogTemp, Warning, TEXT("[Weather] %s에 FadeBypass 스칼라 파라미터가 없어 커버 박스 페이드를 적용하지 못했습니다."),
+			*GetNameSafe(WeatherParameterCollection));
+	}
+}
+
+bool ACSWeatherEffectActor::IsCoverageFadeEnabled() const
+{
+	return WeatherParameterCollection != nullptr && CoverageCentersXY.Num() > 0;
+}
+
+void ACSWeatherEffectActor::UpdateTickEnabled()
+{
+	SetActorTickEnabled(bPostProcessFading || IsCoverageFadeEnabled());
 }
 
 void ACSWeatherEffectActor::ActivatePostProcess(bool bFade)
@@ -82,12 +180,14 @@ void ACSWeatherEffectActor::RefreshPostProcessWeight(bool bFade)
 	if (!bFade || PostProcessFadeSeconds <= KINDA_SMALL_NUMBER)
 	{
 		WeatherPostProcess->BlendWeight = Target;
-		SetActorTickEnabled(false);
+		bPostProcessFading = false;
+		UpdateTickEnabled();
 		return;
 	}
 
-	// 현재 값이 목표와 다를 때만 Tick을 활성화해 페이드를 처리
-	SetActorTickEnabled(!FMath::IsNearlyEqual(WeatherPostProcess->BlendWeight, Target));
+	// 현재 값이 목표와 다를 때만 Tick에서 페이드를 처리
+	bPostProcessFading = !FMath::IsNearlyEqual(WeatherPostProcess->BlendWeight, Target);
+	UpdateTickEnabled();
 }
 
 void ACSWeatherEffectActor::StartEffect_Implementation()
@@ -246,6 +346,30 @@ void ACSWeatherEffectActor::ApplyCoverageAreas(const TArray<FVector>& TopCenters
 		ExcludeHalfExtents.Add(FVector(Sizes[Index].X * 0.5f, Sizes[Index].Y * 0.5f, 100000.0f));
 		ExcludeYaws.Add(FMath::DegreesToRadians(Yaws[Index]));
 	}
+
+	// 카메라 거리 페이드를 끌지 판정할 커버 박스 XY 범위 저장
+	CoverageCentersXY.Reset(AreaCount);
+	CoverageHalfSizes.Reset(AreaCount);
+	CoverageYawsRad.Reset(AreaCount);
+	for (int32 Index = 0; Index < AreaCount; ++Index)
+	{
+		CoverageCentersXY.Add(FVector2D(TopCenters[Index].X, TopCenters[Index].Y));
+		CoverageHalfSizes.Add(Sizes[Index] * 0.5f);
+		CoverageYawsRad.Add(ExcludeYaws[Index]);
+	}
+
+	if (AreaCount > 0 && WeatherParameterCollection == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Weather] %s에 WeatherParameterCollection이 지정되지 않아 커버 박스 안에서도 카메라 거리 페이드가 적용됩니다."),
+			*GetClass()->GetName());
+	}
+
+	// 커버 박스가 없어지면 페이드 켬 상태로 되돌리고, 있으면 Tick에서 판정
+	if (!IsCoverageFadeEnabled())
+	{
+		SetCoverageFadeBypass(0.0f);
+	}
+	UpdateTickEnabled();
 
 	// 커버 영역을 지원하는 에셋인지 확인할 Float 변수
 	const FNiagaraVariableBase RateScaleVariable(FNiagaraTypeDefinition::GetFloatDef(), SpawnRateScaleName);
