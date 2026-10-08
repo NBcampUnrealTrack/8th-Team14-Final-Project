@@ -14,6 +14,8 @@ class ACSStoreGameState;
 class ACSWeatherEffectActor;
 class ACSWeatherIndoorArea;
 class ACSWeatherZoneActor;
+class UCSWeatherBlockerComponent;
+class UCSWeatherCoverageComponent;
 class UCSWeatherSettingsDataAsset;
 class UNiagaraSystem;
 class UCSSaveGame;
@@ -192,6 +194,30 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weather|Shelter")
 	bool IsPlayerSheltered() const { return bSheltered; }
 
+	// -----------------------------------------------------------------------
+	// 날씨 블로커
+	// 등록된 박스 안에 들어온 비·눈 파티클을 나이아가라에서 소멸
+	// 블로커가 하나라도 있으면 실내에서도 캐릭터 주위 파티클을 표시
+	// -----------------------------------------------------------------------
+
+	// 날씨 블로커를 등록하고 현재 이펙트에 블로커 목록을 다시 전달
+	void RegisterWeatherBlocker(UCSWeatherBlockerComponent* Blocker);
+
+	// 날씨 블로커의 등록을 해제하고 유효하지 않은 항목도 정리한 뒤 목록을 다시 전달
+	void UnregisterWeatherBlocker(UCSWeatherBlockerComponent* Blocker);
+
+	// -----------------------------------------------------------------------
+	// 날씨 커버 영역
+	// 캐릭터 주위 파티클 범위 밖에서도 보이는 구간에 같은 날씨 파티클을 월드에 고정해 재생
+	// 캐릭터 주위 파티클은 커버 박스 안에서 생성된 입자만 소멸
+	// -----------------------------------------------------------------------
+
+	// 날씨 커버 영역을 등록하고 현재 이펙트에 커버 영역을 다시 전달
+	void RegisterWeatherCoverage(UCSWeatherCoverageComponent* Coverage);
+
+	// 날씨 커버 영역의 등록을 해제하고 유효하지 않은 항목도 정리한 뒤 다시 전달
+	void UnregisterWeatherCoverage(UCSWeatherCoverageComponent* Coverage);
+
 	// ----- 디버그 (임시) 여기부터 -----
 	// 구현은 전부 Systems/Weather/CSWeatherDebug.cpp에 있습니다.
 	// 제거할 때는 이 블록과 그 파일, CSWeatherSubsystem.cpp의 #if CS_WEATHER_DEBUG 블록을 지웁니다.
@@ -269,6 +295,14 @@ protected:
 	// 등록된 실내 판정 영역 목록
 	// 액터의 수명을 유지하지 않도록 약한 참조로 보관
 	TArray<TWeakObjectPtr<ACSWeatherIndoorArea>> IndoorAreas;
+
+	// 등록된 날씨 블로커 목록
+	// 컴포넌트의 수명을 유지하지 않도록 약한 참조로 보관
+	TArray<TWeakObjectPtr<UCSWeatherBlockerComponent>> WeatherBlockers;
+
+	// 등록된 날씨 커버 영역 목록
+	// 컴포넌트의 수명을 유지하지 않도록 약한 참조로 보관
+	TArray<TWeakObjectPtr<UCSWeatherCoverageComponent>> WeatherCoverages;
 
 	// 플레이어가 실내 또는 문 앞 판정 영역에 걸쳐 있는 상태
 	// 비와 눈의 재생 여부와 관계없이 판정 결과를 관리
@@ -364,6 +398,16 @@ private:
 	// 보호 상태이면 캐릭터 주위 파티클을 숨기고 등록된 모든 문 앞 영역을 표시
 	// 보호 상태가 아니면 캐릭터 주위 파티클을 표시하고 문 앞 영역을 숨김
 	void ApplyShelterState();
+
+	// 등록된 블로커를 중심·절반 크기·Yaw 배열로 변환해 현재 이펙트 액터에 전달
+	// 블로커가 없으면 실내 파티클 숨김을 유지하고 있으면 해제
+	// 이펙트 액터가 없으면 전달을 생략하고 다음 이펙트 스폰 시 다시 전달
+	void PushWeatherBlockersToEffect();
+
+	// 등록된 커버 영역을 윗면 중심·XY 크기·Yaw 배열로 변환해 현재 이펙트 액터에 전달
+	// 새로 생성된 커버 컴포넌트에도 블로커가 적용되도록 마지막에 블로커 목록을 다시 전달
+	// 이펙트 액터가 없으면 전달을 생략하고 다음 이펙트 스폰 시 다시 전달
+	void PushWeatherCoveragesToEffect();
 
 	// ----- 디버그 (임시) 여기부터 -----
 	// 디버그 출력용. 한 엔트리를 한 줄 문자열과 색으로 바꿉니다.
