@@ -28,11 +28,17 @@
 #include "TimerManager.h"
 #include "Engine/GameViewportClient.h"
 #include "Slate/SGameLayerManager.h"
+#include "Systems/Tutorial/CSUnlockGuideSubsystem.h"
 
 // 게임 입력 상태에서는 Tab/C/Esc로 각 화면을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+	// 레벨업은 자동 연출로 진행하며, 다시 읽기 단축키만 유지합니다.
+	if (UCSUnlockGuideSubsystem* Guide = GetWorld()->GetSubsystem<UCSUnlockGuideSubsystem>())
+	{
+		InputComponent->BindKey(UnlockGuideHistoryKey, IE_Pressed, Guide, &UCSUnlockGuideSubsystem::ShowGuideHistory);
+	}
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
 	// P 키로 저장·불러오기 메뉴를 열고 조작을 막는 UI가 열려 있으면 무시
@@ -248,44 +254,18 @@ void ACSStorePlayerController::StartGameFromTemporaryTitle()
 	if (bOpeningPresentationPlayed || bOpeningPresentationActive) return;
 	// 이 버튼은 최초 생성된 월드를 진행하므로 첫날 기록을 유지합니다. 별도의 새 게임 시작 시에는 ResetJournal을 호출해 주시면 됩니다.
 	bOpeningPresentationRequested = true;
-	StartOpeningPresentation();
 	CloseTemporaryTitleScreen();
+	// 타이틀의 일시정지를 해제한 뒤 오프닝이 자신의 정지 상태를 관리하도록 합니다.
+	StartOpeningPresentation();
 }
 
 void ACSStorePlayerController::StartOpeningPresentation()
 {
 	if (!bUseOpeningPresentation || bOpeningPresentationPlayed ||
 		!IsLocalPlayerController() || !IsValid(GetPawn())) return;
-	for (TActorIterator<ACSStoreOpeningDirector> It(GetWorld()); It; ++It)
-	{
-		ActiveOpeningDirector = *It;
-		break;
-	}
-	if (!IsValid(ActiveOpeningDirector))
-	{
-		// 정확한 가게 구도는 레벨에 연출 액터를 배치하여 직접 조정해 주세요.
-		const FVector Forward = FRotator(0.0f, GetControlRotation().Yaw, 0.0f).Vector();
-		const FVector Location = GetPawn()->GetActorLocation() - Forward * 650.0f + FVector(0.0f, 0.0f, 300.0f);
-		const FVector Focus = GetPawn()->GetActorLocation() + Forward * 350.0f;
-		ActiveOpeningDirector = GetWorld()->SpawnActor<ACSStoreOpeningDirector>(
-			ACSStoreOpeningDirector::StaticClass(), Location, (Focus - Location).Rotation());
-	}
-	if (!IsValid(ActiveOpeningDirector)) return;
-	bOpeningPresentationPlayed = true;
-	bOpeningPresentationActive = true;
-	SetStoreHUDHidden(this, true);
-	SetStoreTopBarHidden(this, true);
-	FlushPressedKeys();
-	if (ACharacter* PlayerCharacter = Cast<ACharacter>(GetPawn()))
-	{
-		PlayerCharacter->StopJumping();
-		PlayerCharacter->ConsumeMovementInputVector();
-		PlayerCharacter->GetCharacterMovement()->StopMovementImmediately();
-	}
-	UpdateClosingInputMode();
-	SetOpeningUIHidden(true);
-	ActiveOpeningDirector->OnOpeningFinished.AddDynamic(this, &ThisClass::FinishOpeningPresentation);
-	if (!ActiveOpeningDirector->PlayOpening(this)) FinishOpeningPresentation();
+	// 가게 앞 PlayerStart의 시점을 유지하며 눈뜨기와 대화만 진행합니다.
+	if (UCSUnlockGuideSubsystem* Guide = GetWorld()->GetSubsystem<UCSUnlockGuideSubsystem>())
+		bOpeningPresentationPlayed = Guide->StartOpeningStory();
 }
 
 void ACSStorePlayerController::FinishOpeningPresentation()
@@ -927,6 +907,14 @@ void ACSStorePlayerController::TryShowPendingClosingAnnouncement()
 bool ACSStorePlayerController::IsGameplayUIInputLocked() const
 {
 	return HasGameplayUIInputLock();
+}
+
+bool ACSStorePlayerController::CanStartUnlockGuide() const
+{
+	return IsLocalPlayerController() && !IsPaused() && !IsGameplayUIInputLocked() &&
+		!bCraftCloseupActive && !IsValid(ActiveTemporaryTitleWidget) &&
+		!IsValid(ActiveDailySummaryWidget) && !IsValid(ActiveStatusAnnouncementWidget) &&
+		!IsValid(ActiveClosingWarningWidget);
 }
 
 bool ACSStorePlayerController::HasGameplayUIInputLock() const
