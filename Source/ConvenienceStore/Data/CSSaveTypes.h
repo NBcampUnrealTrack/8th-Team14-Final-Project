@@ -318,11 +318,11 @@ struct CONVENIENCESTORE_API FCSReputationDailySaveRecord
 	UPROPERTY()
 	int32 DailyNormalCheckouts = 0;
 
-	// 추첨을 통과해 카운트에 반영된 계산 포기 횟수
+	// 계산 포기 횟수
 	UPROPERTY()
 	int32 DailyCheckoutAbandoned = 0;
 
-	// 추첨을 통과해 카운트에 반영된 빈손 퇴장 횟수
+	// 빈손 퇴장 횟수
 	UPROPERTY()
 	int32 DailyEmptyHandedDepartures = 0;
 

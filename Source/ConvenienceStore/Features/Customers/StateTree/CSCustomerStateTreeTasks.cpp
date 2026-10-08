@@ -588,6 +588,25 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 	return EStateTreeRunStatus::Running;
 }
 
+// 평판 가격 불쾌가 감점을 시작하는 강도와 같다. 이보다 약한 반응은 띄울 이유가 없다
+static constexpr float CS_MinPriceReactionSeverity = 0.4f;
+
+// 느낌표는 플레이어가 고칠 수 있는 가격 부담과 물건 없음에만 띄운다
+// 카테고리 차단은 도감에, 뉴스는 게시판에 이미 나와서 띄우면 소음만 늘어난다
+static bool CS_ShouldShowReaction(const FCSPurchaseRejectionInfo& Info)
+{
+	switch (Info.Reason)
+	{
+	case ECSPurchaseRejectReason::PriceRejected:
+		return Info.Severity >= CS_MinPriceReactionSeverity;
+	case ECSPurchaseRejectReason::PlannedProductMissing:
+	case ECSPurchaseRejectReason::PreferredCategoryMissing:
+		return true;
+	default:
+		return false;
+	}
+}
+
 // 거절 즉시표시(머리 위 아이콘) + LastRejectionInfo/LastRejectionTime 기록 +
 // NotifyPurchaseRejected 방송을 한 번에 처리하는 공용 절차. 빈 진열대 분기와 정상 거절 분기가 동일하게 씀
 static void CS_HandlePurchaseRejection(
@@ -1000,11 +1019,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// None/ShelfEmpty/HardWalletExceeded는 흔한 사유라 매번 띄우면 소음이라 조용히 미구매 처리
+		// 띄우지 않는 사유는 조용히 미구매 처리
 		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 멈춰 선다
-		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::ShelfEmpty ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::HardWalletExceeded ||
+		if (!CS_ShouldShowReaction(RejectionInfo) ||
 			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
@@ -1021,7 +1038,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
 	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
 	// 이미 반응한 상품이면 멈추지 않고 바로 담는다
-	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+	if (CS_ShouldShowReaction(RejectionInfo) &&
 		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
 		// Hold를 미리 풀지 않는다 - Pick 시작 시 PlayPickAnimation이 덮어쓰고, 아니면 ExitState가 정리한다

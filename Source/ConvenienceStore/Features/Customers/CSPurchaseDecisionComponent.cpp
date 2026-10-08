@@ -328,9 +328,7 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 	TArray<FCSPurchaseCandidate> Viable;
 	Viable.Reserve(Candidates.Num());
 
-	// 대표 거절 사유 집계용. 카테고리 차단이 하나라도 있으면 그게 최우선(bFoundBlocked로 확정 후 더 안 봄)
-	// 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) PriceRejected/HardWalletExceeded를 대표로 삼음
-	bool bFoundBlocked = false;
+	// 대표 거절 사유 집계용. Severity가 가장 낮은(=가장 아깝게 놓친) PriceRejected/HardWalletExceeded를 대표로 삼음
 	bool bFoundAnyRejection = false;
 
 	// 뉴스로 밀려난 후보가 여럿이면 가장 높은 점수(=가장 아깝게 놓친 것)를 대표로 삼는다
@@ -346,20 +344,16 @@ TArray<FCSPurchaseCandidate> UCSPurchaseDecisionComponent::ScoreAndSelectTopCand
 
 		if (Score < 0.f)
 		{
-			// 이미 카테고리 차단 사유로 확정됐거나, 상품 데이터를 못 찾아 사유가 안 채워진(Reason=None)
-			// 데이터 무결성 문제 후보는 대표 사유 집계에서 제외 - Severity 기본값(0.0f)이
-			// 항상 최솟값이라 아무 사유도 없는 후보가 대표로 뽑히는 걸 막기 위함
-			if (bFoundBlocked || CandidateRejection.Reason == ECSPurchaseRejectReason::None)
+			// 상품 데이터를 못 찾아 사유가 안 채워진(Reason=None) 후보는 Severity 기본값(0.0f)이
+			// 항상 최솟값이라 아무 사유도 없는 후보가 대표로 뽑힌다
+			// 카테고리 차단은 띄우지 않는 사유라 대표로 삼으면 같은 진열대의 가격 반응까지 가려진다
+			if (CandidateRejection.Reason == ECSPurchaseRejectReason::None ||
+				CandidateRejection.Reason == ECSPurchaseRejectReason::CategoryBlocked)
 			{
 				continue;
 			}
 
-			if (CandidateRejection.Reason == ECSPurchaseRejectReason::CategoryBlocked)
-			{
-				OutBestRejectionInfo = CandidateRejection;
-				bFoundBlocked = true;
-			}
-			else if (!bFoundAnyRejection || CandidateRejection.Severity < OutBestRejectionInfo.Severity)
+			if (!bFoundAnyRejection || CandidateRejection.Severity < OutBestRejectionInfo.Severity)
 			{
 				OutBestRejectionInfo = CandidateRejection;
 			}
@@ -893,7 +887,8 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 		}
 	}
 
-	// 가챠·제조 전용 상품은 플레이어가 발주로 채울 수 없어서 지금 매대에 있을 때만 사러 온다
+	// 가챠 전용 상품은 플레이어가 채울 방법이 없어서 지금 매대에 있을 때만 사러 온다
+	// 제조 전용은 발주는 막혀도 만들어 채울 수 있어서 후보에 둔다. 빼면 비 오는 날 우산 손님이 안 온다
 	TSet<FName> StockedProductIds;
 	if (const UCSCustomerRuntimeSubsystem* Runtime = World ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
 	{
@@ -916,7 +911,8 @@ TArray<FName> UCSPurchaseDecisionComponent::RollPlannedProducts(FRandomStream& S
 		{
 			continue;
 		}
-		if (!Row->bOrderable && !StockedProductIds.Contains(Pair.Key))
+		const bool bCraftOnly = IsValid(Crafting) && Crafting->IsCraftOnlyResultProduct(Pair.Key);
+		if (!Row->bOrderable && !bCraftOnly && !StockedProductIds.Contains(Pair.Key))
 		{
 			continue;
 		}
@@ -1101,11 +1097,9 @@ FCSPurchaseRejectionTier UCSPurchaseDecisionComponent::GetRejectionDisplayTier(c
 		RowName = TEXT("ShelfEmpty");
 		break;
 	case ECSPurchaseRejectReason::PlannedProductMissing:
-		// 미해금(Severity 1.0)은 원인과 무관하게 "여긴 안 파는구나"로 통일한다.
-		// 플레이어가 취할 행동이 채우기가 아니라 레벨 올리기라, 원인까지 붙이면
-		// 문구만 곱으로 늘고 정작 해야 할 일은 흐려진다
+		// 원인(날씨·뉴스·기념일)을 먼저 찾는다. 아직 만든 적 없는 제조 상품도 플레이어가
+		// 만들어 채울 수 있어서, 원인을 알려 줘야 무엇을 만들지 안다
 		RowName = TEXT("PlannedProductMissing");
-		if (Info.Severity < 1.0f)
 		{
 			const FName CauseRowName = GetPlannedMissingCauseRowName(Info.ProductId);
 			if (!CauseRowName.IsNone() &&
@@ -1232,25 +1226,99 @@ FText UCSPurchaseDecisionComponent::GetProductDisplayName(FName ProductId) const
 	return Row != nullptr ? Row->DisplayName : FText::GetEmpty();
 }
 
-// 위 Tier의 InnerThoughtTemplate에 {ActualPrice}/{ReferencePrice}/{ProductName} 자리표시자를 실제 값으로 채운다
-FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const
+bool UCSPurchaseDecisionComponent::PickInnerThoughtLine(const FCSPurchaseRejectionInfo& Info, FText& OutLine, FText& OutEventName) const
 {
-	// PreferredCategoryMissing은 DT 공용 문구가 아니라 종족별 Archetype 문구를 쓴다 -
-	// 이게 이 사유를 만든 목적(종족 취향을 문구로 드러내기) 그 자체라서 DT로 빼면 의미가 없어진다
-	if (Info.Reason == ECSPurchaseRejectReason::PreferredCategoryMissing)
+	if (!IsValid(InnerThoughtLinesDataTable) || Archetype == nullptr)
 	{
-		FFormatNamedArguments CategoryArgs;
-		CategoryArgs.Add(TEXT("Category"), CSGetProductCategoryDisplayName(Info.BlockedCategory));
-		return FText::Format(GetEffectivePreferredCategoryMissingTemplate(), CategoryArgs);
+		return false;
 	}
 
-	const FCSPurchaseRejectionTier Tier = GetRejectionDisplayTier(Info);
+	FString Situation;
+	switch (Info.Reason)
+	{
+	case ECSPurchaseRejectReason::PriceRejected:
+		// DT_PurchaseRejectionDisplay의 "화남" 단계 문턱과 같다
+		Situation = Info.Severity >= 0.6f ? TEXT("PriceAngry") : TEXT("PriceBurden");
+		break;
+	case ECSPurchaseRejectReason::PlannedProductMissing:
+	{
+		Situation = TEXT("PlannedProductMissing");
+		const FName CauseRowName = GetPlannedMissingCauseRowName(Info.ProductId);
+		const UWorld* World = GetWorld();
+		const UCSNoticeEventSubsystem* Notice = World ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+		if (CauseRowName == TEXT("PlannedMissing_News") || CauseRowName == TEXT("PlannedMissing_Holiday"))
+		{
+			// 제목을 못 얻으면 "뉴스 보고"만 남은 어색한 문장이 되므로 기본 상황으로 둔다
+			FCSNewsEventDataRow News;
+			FCSHolidayEventDataRow Holiday;
+			if (CauseRowName == TEXT("PlannedMissing_News") && IsValid(Notice) && Notice->GetTodayNews(News))
+			{
+				OutEventName = News.Title;
+				Situation = CauseRowName.ToString();
+			}
+			else if (CauseRowName == TEXT("PlannedMissing_Holiday") && IsValid(Notice) && Notice->GetTodayHoliday(Holiday))
+			{
+				OutEventName = Holiday.Title;
+				Situation = CauseRowName.ToString();
+			}
+		}
+		else if (!CauseRowName.IsNone())
+		{
+			Situation = CauseRowName.ToString();
+		}
+		break;
+	}
+	case ECSPurchaseRejectReason::PreferredCategoryMissing:
+		Situation = TEXT("PreferredCategoryMissing");
+		break;
+	default:
+		return false;
+	}
 
+	// 종족은 Archetype 에셋 이름의 마지막 단어다(DA_Archetype_10s_Goblin → Goblin)
+	FString AssetName = Archetype->GetName();
+	FString Race;
+	if (!AssetName.Split(TEXT("_"), nullptr, &Race, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+	{
+		Race = AssetName;
+	}
+
+	const FName RowName(*FString::Printf(TEXT("%s_%s"), *Situation, *Race));
+	const FCSInnerThoughtLinesRow* Row = InnerThoughtLinesDataTable->FindRow<FCSInnerThoughtLinesRow>(RowName, TEXT(""), false);
+	if (Row == nullptr || Row->Lines.IsEmpty())
+	{
+		return false;
+	}
+
+	// 연출 전용이라 손님 시드 스트림을 쓰지 않는다. 쓰면 이후 구매 판단이 밀린다
+	OutLine = Row->Lines[FMath::RandHelper(Row->Lines.Num())];
+	return true;
+}
+
+// 종족별 문장 후보가 있으면 그중 하나를, 없으면 DT_PurchaseRejectionDisplay 문구에 자리표시자를 채운다
+FText UCSPurchaseDecisionComponent::BuildInnerThoughtText(const FCSPurchaseRejectionInfo& Info) const
+{
 	FFormatNamedArguments Args;
 	Args.Add(TEXT("ActualPrice"), FText::AsNumber(FMath::RoundToInt(Info.ActualPrice)));
 	Args.Add(TEXT("ReferencePrice"), FText::AsNumber(FMath::RoundToInt(Info.ReferencePrice)));
 	Args.Add(TEXT("ProductName"), GetProductDisplayName(Info.ProductId));
-	return FText::Format(Tier.InnerThoughtTemplate, Args);
+	Args.Add(TEXT("Category"), CSGetProductCategoryDisplayName(Info.BlockedCategory));
+
+	FText Line;
+	FText EventName;
+	if (PickInnerThoughtLine(Info, Line, EventName))
+	{
+		Args.Add(TEXT("EventName"), EventName);
+		return FText::Format(Line, Args);
+	}
+
+	// PreferredCategoryMissing은 DT 공용 문구가 아니라 종족별 Archetype 문구를 쓴다
+	if (Info.Reason == ECSPurchaseRejectReason::PreferredCategoryMissing)
+	{
+		return FText::Format(GetEffectivePreferredCategoryMissingTemplate(), Args);
+	}
+
+	return FText::Format(GetRejectionDisplayTier(Info).InnerThoughtTemplate, Args);
 }
 
 // 실제가/기준가 조회 + 데드존/기울기 반영 PriceScore 계산까지 한 번에 처리하는 공용 헬퍼

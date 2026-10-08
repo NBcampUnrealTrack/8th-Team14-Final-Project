@@ -1,13 +1,11 @@
 ﻿// 계산 포기 + 빈손 퇴장 + 가격 불쾌 + 쓰레기 목격을 하루 동안 집계했다가 마감 시점에 평판 점수로 반영하는 서브시스템
-// 정상 결제는 카운트만 하고, 계산 포기/빈손 퇴장/가격 불쾌는 각각 확률 추첨을 거쳐서만 카운트한다
-// 쓰레기 목격은 방송 전에 이미 CSCustomerRuntimeSubsystem에서 확률 추첨(하루 1회 캡 + 목격 확률)을 거치므로 여기서는 그대로 누적만 한다
-// 손님 경험이 나쁜 날마다 원인 전부가 매번 깎이면 하루 변동폭이 지나치게 커지기 때문에 이 추첨이 완충 역할을 한다
+// 추첨 없이 손님 한 명당 항목별로 한 번씩 고정 가중치만큼 깎는다. 운에 따라 하루 결과가 출렁이면
+// 플레이어가 무엇 때문에 깎였는지 읽을 수 없고, 실시간 정산창(C) 예상치와 실제 정산도 어긋난다
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "Math/RandomStream.h"
 #include "Data/CSPurchaseDecisionTypes.h"
 #include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "CSStoreReputationSubsystem.generated.h"
@@ -46,28 +44,35 @@ public:
 
 protected:
 	// 만족도 계산에서 계산 포기 1건이 정상 결제 몇 건과 같은 무게로 깎이는지
+	// 결제를 못 했으니 정상 결제 1건은 이미 빠져 있고, 이 값은 그 위에 더 깎는 몫이다
 	UPROPERTY(EditAnywhere, Category = "Reputation")
-	float CheckoutAbandonedWeight = 2.5f;
+	float CheckoutAbandonedWeight = 0.75f;
 
-	// 만족도 계산에서 빈손 퇴장 1건이 정상 결제 몇 건과 같은 무게로 깎이는지
+	// 만족도 계산에서 빈손 퇴장 1건이 정상 결제 몇 건과 같은 무게로 더 깎이는지
 	UPROPERTY(EditAnywhere, Category = "Reputation")
-	float EmptyHandedWeight = 0.5f;
+	float EmptyHandedWeight = 0.15f;
 
 	// 이 만족도를 기준선으로 삼아 위/아래로 평판 상승/하락이 갈린다
+	// 계산을 한두 명 놓친 무난한 날(약 0.93)이 +250 안팎이 되게 맞췄다
 	UPROPERTY(EditAnywhere, Category = "Reputation")
-	float SatisfactionBaseline = 0.775f;
+	float SatisfactionBaseline = 0.83f;
 
-	// 만족도 1단위 차이를 평판 점수 몇 점으로 환산할지
+	// 기준선보다 높을 때 만족도 1단위를 평판 몇 점으로 환산할지
 	UPROPERTY(EditAnywhere, Category = "Reputation")
-	float ReputationDeltaScale = 1500.0f;
+	float ReputationGainScale = 2500.0f;
 
-	// 하루 평판 변화폭 상하한(절대값)
+	// 기준선보다 낮을 때 만족도 1단위를 평판 몇 점으로 환산할지
+	// 오를 때보다 작게 둬서 실수한 하루를 잘한 하루로 거의 되찾을 수 있게 한다
+	UPROPERTY(EditAnywhere, Category = "Reputation")
+	float ReputationLossScale = 1000.0f;
+
+	// 하루 평판 상승 상한
 	UPROPERTY(EditAnywhere, Category = "Reputation", meta = (ClampMin = "0.0"))
-	float MaxDailyReputationDelta = 600.0f;
+	float MaxDailyReputationGain = 400.0f;
 
-	// 계산 포기 / 빈손 퇴장을 실제 카운트에 반영할 확률
-	UPROPERTY(EditAnywhere, Category = "Reputation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float CountRollChance = 0.3f;
+	// 하루 평판 하락 상한(절대값). 시작 등급에서 한 등급 내려가려면 최악의 날이 4일 이어져야 한다
+	UPROPERTY(EditAnywhere, Category = "Reputation", meta = (ClampMin = "0.0"))
+	float MaxDailyReputationLoss = 300.0f;
 
 	// 가격 불쾌 3단 계단식 곡선 - Severity가 이 값 미만이면 가중치 0(무시)
 	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset", meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -90,35 +95,30 @@ protected:
 	float PriceUpsetHighWeight = 0.7f;
 
 	// 만족도 계산에서 가격 불쾌 누적치(DailyPriceUpsetSum) 1단위가 정상 결제 몇 건과 같은 무게로 깎이는지
+	// 너무 비싸면 이미 안 사고 나가서 매출과 빈손 퇴장으로도 깎이므로 크게 두지 않는다
 	UPROPERTY(EditAnywhere, Category = "Reputation|PriceUpset")
-	float PriceUpsetWeight = 1.5f;
+	float PriceUpsetWeight = 0.5f;
 
 	// 만족도 계산에서 쓰레기 목격 1건이 정상 결제 몇 건과 같은 무게로 깎이는지
-	// 배선만 해둔 초기값 - 실제 튜닝은 밸런싱 단계에서 진행
+	// 목격 확률이 30%라 하루 종일 방치해도 손님 셋 중 하나 꼴로만 잡힌다
 	UPROPERTY(EditAnywhere, Category = "Reputation|Trash")
-	float TrashWitnessWeight = 0.5f;
+	float TrashWitnessWeight = 1.0f;
 
 private:
-	// 정상 결제 카운트만 올림(추첨 없음)
 	UFUNCTION()
 	void HandleCheckoutCompleted(ACSCustomerCharacter* Customer);
 
-	// 전용 스트림으로 추첨 후 카운트
 	UFUNCTION()
 	void HandleCheckoutAbandoned(ACSCustomerCharacter* Customer, float WaitedSeconds);
 
-	// 진짜 빈손 퇴장만 골라 추첨
+	// 입장 수, 빈손 퇴장, 가격 불쾌, 쓰레기 목격을 여기서 한꺼번에 센다
+	// 목격과 가격 불쾌를 일어난 순간에 세면 마감 강제 퇴장 손님 몫이 분모에서만 빠져 비율이 부푼다
 	UFUNCTION()
 	void HandleCustomerDespawned(ACSCustomerCharacter* Customer, bool bCheckoutDone);
 
-	// 가격 불쾌 반응(거절이든 반응 후 구매든)을 사유 필터링 + 1일 1회 제한 + 추첨을 거쳐 누적
+	// 가격 불쾌 강도 중 가장 큰 값만 손님에게 기억해 둔다
 	UFUNCTION()
 	void HandlePurchaseRejected(ACSCustomerCharacter* Customer, FCSPurchaseRejectionInfo Info);
-
-	// 쓰레기 목격을 누적. 하루 1회 캡과 30% 목격 확률은 방송 전에 CSCustomerRuntimeSubsystem이
-	// 이미 거쳤으므로, 여기서는 HandlePurchaseRejected와 달리 RollShouldCount()를 다시 거치지 않는다
-	UFUNCTION()
-	void HandleTrashWitnessed(ACSCustomerCharacter* Customer);
 
 	// 마감 종 확정 직후, 정산 위젯이 뜨기 전에 동기 호출된다(RequestDailySummary 안에서 브로드캐스트)
 	UFUNCTION()
@@ -141,9 +141,6 @@ private:
 	// 하루 카운터 5개(입장/정상결제/계산포기/빈손퇴장/가격불쾌)를 0으로 되돌림
 	void ResetDailyCounters();
 
-	// 계산 포기 / 빈손 퇴장 / 가격 불쾌를 카운트에 반영할지 CountRollChance로 추첨
-	bool RollShouldCount() const;
-
 	// 가격 불쾌 Severity(0~1)를 3단 계단식으로 평판 가중치(0~1)로 환산
 	float ComputePriceUpsetWeight(float Severity) const;
 
@@ -153,20 +150,13 @@ private:
 	// 하루 동안 정상 결제를 완료한 횟수
 	int32 DailyNormalCheckouts = 0;
 
-	// 하루 동안 추첨을 통과해 카운트에 반영된 계산 포기 횟수
 	int32 DailyCheckoutAbandoned = 0;
 
-	// 하루 동안 추첨을 통과해 카운트에 반영된 빈손 퇴장 횟수
 	int32 DailyEmptyHandedDepartures = 0;
 
-	// 하루 동안 누적된 가격 불쾌 가중치 합(손님당 최대 1.0씩, 1일 1회 제한 적용됨)
+	// 손님마다 가장 큰 가격 불쾌 가중치(최대 1.0)를 하나씩 더한 합
 	float DailyPriceUpsetSum = 0.0f;
 
-	// 하루 동안 다른 손님의 쓰레기를 목격해 평판에 반영된 횟수(손님당 1일 1회 제한 적용됨)
-	// 목격 판정 자체(하루 1회 캡 + 30% 확률)는 CSCustomerRuntimeSubsystem이 이미 마쳤으므로
-	// 가격 불쾌와 달리 여기서는 별도 추첨 없이 그대로 누적한다
+	// 다른 손님의 쓰레기를 목격한 손님 수
 	int32 DailyTrashWitnessed = 0;
-
-	// 계산 포기 / 빈손 퇴장 / 가격 불쾌 추첨 전용 스트림
-	mutable FRandomStream ReputationRollStream;
 };
