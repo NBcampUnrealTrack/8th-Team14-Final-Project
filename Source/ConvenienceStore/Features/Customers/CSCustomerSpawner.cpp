@@ -242,14 +242,7 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 		}
 	}
 
-	// 이벤트 날 종족 비율을 로그로 세려고 남긴다
-	UCSCustomerArchetypeDataAsset* Picked = Archetypes[PickedIndex];
-	if (Picked != nullptr)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[종족스폰] 종족=%s 비율=%.1f%%"),
-			*Picked->GetName(), Weights[PickedIndex] / TotalWeight * 100.f);
-	}
-	return Picked;
+	return Archetypes[PickedIndex];
 }
 
 void ACSCustomerSpawner::ApplyCustomerVisual(ACSCustomerCharacter* Customer, const UCSCustomerVisualDataAsset* Visual) const

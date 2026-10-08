@@ -154,7 +154,7 @@ const TArray<UCSCraftRumorSubsystem::FCSDailyRumor>& UCSCraftRumorSubsystem::Get
 		return CachedDailyRumors;
 	}
 
-	// 제조 전용을 다 찾기 전에는 그 힌트만, 다 찾은 뒤에는 그 힌트를 빼고 조합·성질·기본 조리법을 낸다.
+	// 제조 전용을 다 찾기 전에는 그 힌트만, 다 찾은 뒤에는 그 힌트를 빼고 조합·성질을 낸다.
 	// 처음엔 팔 물건을 만드는 법부터 알아야 하고, 이미 아는 레시피를 계속 들으면 소문 자리가 아깝다
 	bool bAllCraftOnlyDiscovered = true;
 	for (const FName RecipeRow : Crafting->GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
