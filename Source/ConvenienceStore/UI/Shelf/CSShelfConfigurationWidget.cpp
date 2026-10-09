@@ -25,7 +25,7 @@ bool UCShelfConfigurationWidget::ConfigureLevelProduct(
 	LastConfigurationStatus = PendingReorganizationCount > 0
 		? FText::Format(
 			NSLOCTEXT("ShelfConfiguration", "ConfigurationChangedPendingReorganization",
-				"기존 상품 {0}개를 직원이 정리한 뒤 새 상품으로 변경됩니다."),
+				"기존 상품 {0}개를 직원이 정리한 뒤\n새 상품으로 변경됩니다."),
 			FText::AsNumber(PendingReorganizationCount))
 		: FText::FromString(TEXT("진열 상품을 변경했습니다."));
 	ShowConfigurationStatus(LastConfigurationStatus, PendingReorganizationCount);
