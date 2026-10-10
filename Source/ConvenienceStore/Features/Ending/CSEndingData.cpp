@@ -21,7 +21,7 @@ UCSEndingData::UCSEndingData()
 
 bool UCSEndingData::IsConfigurationValid() const
 {
-	if (Items.Num() != 4 || ActivationGold < 0) return false;
+	if (Items.Num() != 4 || ActivationGold < 0 || ActivationStoreLevel < 1) return false;
 	TSet<FName> Ids;
 	for (const FCSEndingItemDefinition& Item : Items)
 	{

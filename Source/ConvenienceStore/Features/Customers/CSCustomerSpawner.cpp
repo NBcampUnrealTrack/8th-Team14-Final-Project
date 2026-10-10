@@ -3,6 +3,7 @@
 #include "Features/Customers/CSCustomerSpawner.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Streets/CSStreetRoute.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "TimerManager.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
@@ -12,6 +13,7 @@
 #include "Data/CSVillainTypes.h"
 #include "Data/CSCustomerTrafficDataAsset.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "Data/CSStorePhaseTypes.h"
 #include "NavigationSystem.h"
 #include "Components/CapsuleComponent.h"
@@ -200,11 +202,24 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 {
 	if (Archetypes.Num() == 0) return nullptr;
 
+	// 뉴스·기념일이 그날 특정 종족을 늘리거나 줄인다. 서브시스템이 없으면 기본 가중치 그대로
+	const UWorld* World = GetWorld();
+	const UCSNoticeEventSubsystem* NoticeSubsystem = World != nullptr ? World->GetSubsystem<UCSNoticeEventSubsystem>() : nullptr;
+
 	// 등록된 종족들의 스폰 가중치 합을 구함
+	TArray<float> Weights;
+	Weights.Reserve(Archetypes.Num());
 	float TotalWeight = 0.f;
 	for (const auto& Candidate : Archetypes)
 	{
-		if (Candidate != nullptr) TotalWeight += Candidate->SpawnWeightBase;
+		float Weight = 0.f;
+		if (Candidate != nullptr)
+		{
+			const float Multiplier = IsValid(NoticeSubsystem) ? NoticeSubsystem->GetRaceSpawnMultiplier(Candidate->GetFName()) : 1.f;
+			Weight = Candidate->SpawnWeightBase * Multiplier;
+		}
+		Weights.Add(Weight);
+		TotalWeight += Weight;
 	}
 
 	if (TotalWeight <= 0.f) // 가중치가 전부 0이면 첫 종족으로 폴백
@@ -215,14 +230,20 @@ UCSCustomerArchetypeDataAsset* ACSCustomerSpawner::PickArchetypeBySpawnWeight() 
 	// 0~TotalWeight 사이 난수를 뽑아 가중치를 누적하며 그 난수를 처음 넘는 종족을 선택
 	const float Roll = MasterStream.FRandRange(0.f, TotalWeight);
 
+	int32 PickedIndex = Archetypes.Num() - 1; // 부동소수점 오차로 못 걸렸을 때 대비한 폴백
 	float Cumulative = 0.f;
-	for (const auto& Candidate : Archetypes)
+	for (int32 Index = 0; Index < Archetypes.Num(); ++Index)
 	{
-		if (Candidate == nullptr) continue;
-		Cumulative += Candidate->SpawnWeightBase;
-		if (Roll <= Cumulative) return Candidate;
+		if (Archetypes[Index] == nullptr) continue;
+		Cumulative += Weights[Index];
+		if (Roll <= Cumulative)
+		{
+			PickedIndex = Index;
+			break;
+		}
 	}
-	return Archetypes.Last(); // 부동소수점 오차로 못 걸렸을 때 대비한 폴백
+
+	return Archetypes[PickedIndex];
 }
 
 void ACSCustomerSpawner::ApplyCustomerVisual(ACSCustomerCharacter* Customer, const UCSCustomerVisualDataAsset* Visual) const
@@ -584,6 +605,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		if (StorefrontPoint != nullptr)
 		{
 			State->StorefrontLocation = PickPointInArea(StorefrontPoint, FVector::ZeroVector, BodyRadius, BodyHalfHeight);
+		}
+
+		// 기준선이 있으면 스폰 위치의 레인 비율을 저장
+		// 매장에 들렀다 나와도 같은 레인으로 거리에 합류하도록 사용
+		if (IsValid(Route))
+		{
+			State->StreetRoute = Route.Get();
+			State->StreetLaneRatio = Route->GetLaneRatio(SpawnGround, BodyRadius);
 		}
 
 	}

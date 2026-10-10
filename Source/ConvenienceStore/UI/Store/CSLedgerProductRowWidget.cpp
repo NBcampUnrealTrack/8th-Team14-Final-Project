@@ -5,28 +5,6 @@
 #include "Components/TextBlock.h"
 #include "Components/Widget.h"
 
-namespace
-{
-FText GetProductRowCategoryText(ECSProductCategory Category)
-{
-	switch (Category)
-	{
-	case ECSProductCategory::Alcohol: return FText::FromString(TEXT("주류"));
-	case ECSProductCategory::Beverage: return FText::FromString(TEXT("음료"));
-	case ECSProductCategory::FreshFood: return FText::FromString(TEXT("신선식품"));
-	case ECSProductCategory::FrozenFood: return FText::FromString(TEXT("냉동식품"));
-	case ECSProductCategory::Potion: return FText::FromString(TEXT("포션"));
-	case ECSProductCategory::Scroll: return FText::FromString(TEXT("두루마리"));
-	case ECSProductCategory::Snack: return FText::FromString(TEXT("간식"));
-	case ECSProductCategory::Supply: return FText::FromString(TEXT("보급품"));
-	case ECSProductCategory::Toiletry: return FText::FromString(TEXT("위생용품"));
-	case ECSProductCategory::Tool: return FText::FromString(TEXT("도구"));
-	case ECSProductCategory::HangoverCure: return FText::FromString(TEXT("숙취해소제"));
-	default: return FText::GetEmpty();
-	}
-}
-}
-
 void UCSLedgerProductRowWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -67,7 +45,7 @@ void UCSLedgerProductRowWidget::RefreshRowView()
 		Txt_ProductName->SetText(DisplayedProduct.ProductName);
 		Txt_ProductName->SetColorAndOpacity(bSelected ? SelectedNameColor : DefaultNameColor);
 	}
-	if (IsValid(Txt_Category)) Txt_Category->SetText(GetProductRowCategoryText(DisplayedProduct.Category));
+	if (IsValid(Txt_Category)) Txt_Category->SetText(CSGetProductCategoryDisplayName(DisplayedProduct.Category));
 	if (IsValid(Txt_Stock))
 	{
 		Txt_Stock->SetText(FText::Format(

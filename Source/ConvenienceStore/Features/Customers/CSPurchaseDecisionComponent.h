@@ -263,6 +263,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
 	TObjectPtr<UDataTable> RejectionDisplayDataTable;
 
+	// 종족별 속마음 문장 후보. 행 구조는 FCSInnerThoughtLinesRow
+	// 비어 있거나 행이 없으면 RejectionDisplayDataTable 문구를 그대로 쓴다
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Rejection")
+	TObjectPtr<UDataTable> InnerThoughtLinesDataTable;
+
 	// 이 손님이 계획 상품을 가질 확률. 실패하면 계획 없이 스폰되어 진열대에서 본 것으로만 산다(충동구매)
 	// 전원이 계획을 가지면 입장 판정(ShouldEnterStore)의 "계획 없음" 분기가 항상 비어 효과가 사라지므로
 	// 이 굴림으로 두 부류를 실제로 갈라놓는다
@@ -308,6 +313,10 @@ private:
 	// 계획 상품을 못 찾았을 때, 사러 온 이유(날씨/뉴스/기념일)에 맞는 표시 행 이름
 	// 해당하는 이유가 없으면 NAME_None - 호출부가 기본 행으로 돌아간다
 	FName GetPlannedMissingCauseRowName(FName ProductId) const;
+
+	// InnerThoughtLinesDataTable에서 이 손님 종족의 문장 하나를 고른다. 없으면 false
+	// 뉴스·기념일 상황이면 OutEventName에 오늘 뉴스 제목이나 기념일 이름을 채운다
+	bool PickInnerThoughtLine(const FCSPurchaseRejectionInfo& Info, FText& OutLine, FText& OutEventName) const;
 
 	// 후보 하나의 실제가/기준가/PriceScore를 한 번에 구하는 공용 계산 결과
 	// ScoreCandidate/BuildScoreShortfallRejectionInfo/BuildPriceReactionInfo 세 곳이
@@ -385,7 +394,7 @@ private:
 
 	// 전체 후보에 점수를 매긴 뒤 점수 내림차순으로 상위 TopCandidateCount개만 남김
 	// 살아남은 후보가 하나도 없으면(전부 -1.0) OutBestRejectionInfo에 대표 거절 사유를 채움
-	// CategoryBlocked가 하나라도 있으면 그게 대표, 없으면 Severity가 가장 낮은(=가장 아깝게 놓친) 것
+	// Severity가 가장 낮은(=가장 아깝게 놓친) 것. CategoryBlocked는 대표로 삼지 않는다
 	// 뉴스 때문에 기준선 아래로 떨어진 후보는 여기서 아예 빼고 OutNewsSuppressedInfo에 담아 내보냄
 	TArray<FCSPurchaseCandidate> ScoreAndSelectTopCandidates(TArray<FCSPurchaseCandidate> Candidates, FCSPurchaseRejectionInfo& OutBestRejectionInfo, FCSPurchaseRejectionInfo& OutNewsSuppressedInfo) const;
 

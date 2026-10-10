@@ -16,11 +16,14 @@
 #include "CoreMinimal.h"
 #include "StateTreeTaskBase.h"
 #include "StateTreeExecutionTypes.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "CSCustomerStateTreeTasks.generated.h"
 
 class AAIController;
 class ACSCustomerCharacter;
 class UCSCustomerRuntimeSubsystem;
+class UCSCustomerStateComponent;
+class ACSStreetRoute;
 
 // =====================================================================
 //  PickNextShelf : 아직 안 본 진열대를 랜덤으로 골라 Output으로 내보냄
@@ -350,6 +353,12 @@ struct FCSTask_LeaveAndDespawn : public FStateTreeTaskCommonBase
 
 	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context,
 		const float DeltaTime) const override;
+
+private:
+	// 퇴장 지점까지 이동을 요청
+	// 기준선이 있으면 레인 경로를 사용하고, 없거나 레인 경로 요청에 실패하면 NavMesh 최단 경로를 사용
+	EPathFollowingRequestResult::Type RequestExitMove(FInstanceDataType& Data,
+		const UCSCustomerStateComponent& State) const;
 };
 
 // =====================================================================
@@ -552,6 +561,9 @@ struct FCSTask_SubduedDespawn : public FStateTreeTaskCommonBase
 // 판정은 손님당 한 번, 지나친 뒤에는 문이 열려도 돌아오지 않음
 // 성공(Succeeded) = 매장 진입 결정 → Root 재선택 → Shopping
 // 실패(Failed)    = 그냥 지나감    → Leave → ExitPoint로 계속 걸어감
+//
+// 스포너에 기준선(Route)이 지정된 손님은 퇴장 지점까지의 레인 경로로 걷다가
+// 기준선의 입구 거리를 지나는 순간 판정함. 지나기 전에 이동이 멈추면 그 자리에서 판정
 // =====================================================================
 
 USTRUCT()
@@ -589,4 +601,16 @@ struct FCSTask_ApproachStorefront : public FStateTreeTaskCommonBase
 
 	virtual void ExitState(FStateTreeExecutionContext& Context,
 		const FStateTreeTransitionResult& Transition) const override;
+
+private:
+	// 기준선을 따라 퇴장 지점까지 걷는 레인 경로 이동을 요청
+	// 이미 입구 거리를 지난 위치면 이동 없이 바로 입장 여부를 판정
+	EStateTreeRunStatus EnterRouteApproach(FStateTreeExecutionContext& Context,
+		FInstanceDataType& Data, const UCSCustomerStateComponent& State,
+		const ACSStreetRoute& Route) const;
+
+	// 입장 여부를 1회 판정하고 입장이면 입장 상태를 기록
+	// 입장이면 Succeeded, 통과면 Failed를 반환
+	EStateTreeRunStatus JudgeStoreEntry(FStateTreeExecutionContext& Context,
+		FInstanceDataType& Data) const;
 };

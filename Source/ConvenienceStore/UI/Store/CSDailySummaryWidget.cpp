@@ -163,7 +163,9 @@ void UCSDailySummaryWidget::RefreshSummary()
 	// 오늘 만족도분이 안 잡혀 있음. 지금까지 통계로 미리 계산한 만족도분(GetProjectedReputationDelta)을
 	// 더해서 보여줌 - 점수는 실제로 바꾸지 않고 표시만 미리 반영
 	const ACSStorePlayerController* Controller = Cast<ACSStorePlayerController>(GetOwningPlayer());
-	const bool bReadOnlyView = IsValid(Controller) && Controller->IsDailySummaryReadOnly();
+	// 수면 화면의 조회는 마감 정산이 끝난 뒤라 미리 계산분을 또 더하면 두 배로 보인다
+	const bool bReadOnlyView = IsValid(Controller) && Controller->IsDailySummaryReadOnly()
+		&& !State->bIsDailySummaryPending;
 	const int32 ProjectedDeltaOnly = (bReadOnlyView && IsValid(ReputationSubsystem))
 		? ReputationSubsystem->GetProjectedReputationDelta()
 		: 0;

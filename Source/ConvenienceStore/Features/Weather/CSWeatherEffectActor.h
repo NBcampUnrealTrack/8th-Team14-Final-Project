@@ -5,6 +5,8 @@
 #include "Data/CSWeatherEnvironmentTypes.h"
 #include "CSWeatherEffectActor.generated.h"
 
+class UMaterialParameterCollection;
+class UNiagaraComponent;
 class UPostProcessComponent;
 class USceneComponent;
 
@@ -19,6 +21,7 @@ public:
 	ACSWeatherEffectActor();
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	// 날씨 색감 포스트 프로세스를 활성화하고 실내외 상태에 맞는 가중치를 적용
 	// 서브시스템이 실내외 판정을 마친 뒤 호출
@@ -47,6 +50,22 @@ public:
 	// 캐릭터 주위 날씨 파티클의 표시 설정을 반환
 	UFUNCTION(BlueprintPure, Category = "Weather")
 	bool IsLocalEffectActive() const { return bLocalEffectActive; }
+
+	// 실내에 있을 때 캐릭터 주위 파티클을 숨길지 설정하고 현재 표시 상태에 반영
+	// 블로커가 있는 맵은 false로 설정해 실내에서도 파티클을 표시
+	void SetHideParticlesWhenSheltered(bool bHide);
+
+	// 블로커 박스 목록을 모든 나이아가라 컴포넌트의 User 배열 파라미터로 전달
+	// BlockerCenters 파라미터가 없는 나이아가라 컴포넌트는 제외
+	// Yaws는 라디안 단위
+	void ApplyWeatherBlockers(const TArray<FVector>& Centers, const TArray<FVector>& HalfExtents, const TArray<float>& Yaws);
+
+	// 커버 영역마다 원본 나이아가라 컴포넌트와 같은 에셋의 컴포넌트를 월드 고정 위치에 생성
+	// 이전에 생성한 커버 컴포넌트는 제거하고 다시 생성
+	// 원본 컴포넌트에는 커버 박스를 제외 영역으로 전달해 그 안에서 생성된 입자를 소멸
+	// SpawnRateScale 파라미터가 없는 에셋은 제외
+	// TopCenters는 박스 윗면 중심(생성 높이), Sizes는 XY 전체 크기, Yaws는 도 단위
+	void ApplyCoverageAreas(const TArray<FVector>& TopCenters, const TArray<FVector2D>& Sizes, const TArray<float>& Yaws);
 
 	// 이 날씨에서 레벨 환경 액터에 적용할 배수와 틴트를 반환
 	const FCSWeatherEnvironmentProfile& GetEnvironmentProfile() const { return EnvironmentProfile; }
@@ -85,6 +104,23 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Environment")
 	FCSWeatherEnvironmentProfile EnvironmentProfile;
 
+	// 나이아가라 에셋의 User.SpawnAreaSize 기본값 (캐릭터 주위 파티클 생성 범위)
+	// 커버 컴포넌트 스폰 레이트 배수 = 영역 면적 / 이 면적
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Coverage")
+	FVector2D ReferenceSpawnAreaSize = FVector2D(4000.0f, 4000.0f);
+
+	// 날씨 파티클 머티리얼(M_WeatherParticle)이 읽는 Material Parameter Collection (MPC_Weather)
+	// 카메라가 커버 박스 안에 있으면 FadeBypass를 1로 써서 카메라 거리 페이드를 끔
+	// 비어 있으면 FadeBypass를 쓰지 않으므로 페이드가 항상 켜진 상태로 동작
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Coverage")
+	TObjectPtr<UMaterialParameterCollection> WeatherParameterCollection;
+
+	// 카메라가 커버 박스 경계에서 이 거리(XY)만큼 나가면 페이드가 완전히 켜짐
+	// 박스 경계를 넘을 때 먼 파티클이 한 번에 사라지지 않도록 이 구간에서 서서히 전환
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weather|Coverage",
+		meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float CoverageFadeTransitionDistance = 1500.0f;
+
 	// StopEffect가 두 번 불려도 Destroy를 두 번 부르지 않게 합니다.
 	UPROPERTY(BlueprintReadOnly, Category = "Weather")
 	bool bStopRequested = false;
@@ -102,7 +138,46 @@ private:
 	// 목표 가중치를 다시 계산해 즉시 적용하거나 페이드가 필요하면 Tick을 활성화
 	void RefreshPostProcessWeight(bool bFade);
 
+	// 색감 가중치를 목표 쪽으로 한 프레임만큼 이동하고 목표에 도달하면 bPostProcessFading을 해제
+	void TickPostProcessFade(float DeltaSeconds);
+
+	// 카메라와 가장 가까운 커버 박스 경계까지의 XY 거리로 FadeBypass를 계산해 MPC에 기록
+	void UpdateCoverageFadeBypass();
+
+	// MPC의 FadeBypass 값을 설정. MPC가 없거나 파라미터가 없으면 아무것도 하지 않음
+	void SetCoverageFadeBypass(float Value);
+
+	// 커버 박스 기준 페이드 판정을 사용하는지 (커버 박스가 있고 MPC가 지정됨)
+	bool IsCoverageFadeEnabled() const;
+
+	// 색감 페이드 중이거나 커버 박스 판정이 필요할 때만 Tick을 활성화
+	void UpdateTickEnabled();
+
+	// 실내외 상태와 숨김 설정에 맞춰 나이아가라 컴포넌트의 표시 여부를 갱신
+	void RefreshParticleVisibility();
+
+	// 실내에 있을 때 캐릭터 주위 파티클을 숨길지 여부
+	// 블로커가 없는 맵은 기존 문 앞 영역 방식을 유지하도록 true로 초기화
+	bool bHideParticlesWhenSheltered = true;
+
+	// ApplyCoverageAreas가 생성한 월드 고정 나이아가라 컴포넌트
+	// 실내 숨김 대상에서 제외하고 다시 적용할 때 제거
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UNiagaraComponent>> CoverageComponents;
+
 	// ActivatePostProcess 호출 여부
 	// 호출 전에는 실내외 전환이 발생해도 색감 가중치를 0으로 유지
 	bool bPostProcessActivated = false;
+
+	// 색감 가중치가 목표로 이동하는 중인지 여부
+	bool bPostProcessFading = false;
+
+	// ApplyCoverageAreas가 받은 커버 박스의 XY 중심, XY 절반 크기, Yaw(라디안)
+	// 카메라가 박스 안에 있는지 판정할 때 사용
+	TArray<FVector2D> CoverageCentersXY;
+	TArray<FVector2D> CoverageHalfSizes;
+	TArray<float> CoverageYawsRad;
+
+	// MPC에 FadeBypass 파라미터가 없을 때 경고를 한 번만 출력
+	bool bWarnedMissingFadeBypass = false;
 };

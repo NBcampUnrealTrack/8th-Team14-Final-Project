@@ -13,6 +13,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Features/Customers/CSCustomerAIController.h"
+#include "Features/Streets/CSStreetRoute.h"
 
 // =====================================================================
 // PickNextShelf
@@ -321,15 +323,33 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 	{
 		// 정확 일치를 못 찾은 경우 - 연관구매 대상 + 남은 계획 카테고리 + 선호 카테고리를 하드 필터로 합친다
 		// (장바구니가 비어있으면 연관구매 대상이 없어 사실상 선호 카테고리로 직행하게 됨)
-		TSet<ECSProductCategory> PullTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		const TSet<ECSProductCategory> AffinityTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		TSet<ECSProductCategory> PullTargets = AffinityTargets;
 		PullTargets.Append(RemainingPlannedCategories);
 		if (Decision != nullptr)
 		{
 			PullTargets.Append(Decision->GetPreferredCategories());
 		}
 
-		const TMap<ECSProductCategory, float> AttractionWeights =
+		TMap<ECSProductCategory, float> AttractionWeights =
 			Decision != nullptr ? Decision->GetCategoryAttractionWeights() : TMap<ECSProductCategory, float>();
+
+		// 장바구니 때문에 끌리는 카테고리는 손님이 가장 좋아하는 카테고리만큼 끌리게 한다
+		// 평소 선호도로 뽑으면 비선호인 숙취해소제는 술을 담아도 매대를 거의 안 찾아간다
+		// 차단된 카테고리는 0이라 그대로 둔다
+		float TopWeight = 0.0f;
+		for (const TPair<ECSProductCategory, float>& Pair : AttractionWeights)
+		{
+			TopWeight = FMath::Max(TopWeight, Pair.Value);
+		}
+		for (const ECSProductCategory Category : AffinityTargets)
+		{
+			float* Weight = AttractionWeights.Find(Category);
+			if (Weight != nullptr && *Weight > 0.0f)
+			{
+				*Weight = FMath::Max(*Weight, TopWeight);
+			}
+		}
 
 		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, PullTargets, AttractionWeights, Data.Actor);
 	}
@@ -568,6 +588,25 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 		return EStateTreeRunStatus::Failed;
 	}
 	return EStateTreeRunStatus::Running;
+}
+
+// 평판 가격 불쾌가 감점을 시작하는 강도와 같다. 이보다 약한 반응은 띄울 이유가 없다
+static constexpr float CS_MinPriceReactionSeverity = 0.4f;
+
+// 느낌표는 플레이어가 고칠 수 있는 가격 부담과 물건 없음에만 띄운다
+// 카테고리 차단은 도감에, 뉴스는 게시판에 이미 나와서 띄우면 소음만 늘어난다
+static bool CS_ShouldShowReaction(const FCSPurchaseRejectionInfo& Info)
+{
+	switch (Info.Reason)
+	{
+	case ECSPurchaseRejectReason::PriceRejected:
+		return Info.Severity >= CS_MinPriceReactionSeverity;
+	case ECSPurchaseRejectReason::PlannedProductMissing:
+	case ECSPurchaseRejectReason::PreferredCategoryMissing:
+		return true;
+	default:
+		return false;
+	}
 }
 
 // 거절 즉시표시(머리 위 아이콘) + LastRejectionInfo/LastRejectionTime 기록 +
@@ -982,11 +1021,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// None/ShelfEmpty/HardWalletExceeded는 흔한 사유라 매번 띄우면 소음이라 조용히 미구매 처리
+		// 띄우지 않는 사유는 조용히 미구매 처리
 		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 멈춰 선다
-		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::ShelfEmpty ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::HardWalletExceeded ||
+		if (!CS_ShouldShowReaction(RejectionInfo) ||
 			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
@@ -1003,7 +1040,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
 	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
 	// 이미 반응한 상품이면 멈추지 않고 바로 담는다
-	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+	if (CS_ShouldShowReaction(RejectionInfo) &&
 		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
 		// Hold를 미리 풀지 않는다 - Pick 시작 시 PlayPickAnimation이 덮어쓰고, 아니면 ExitState가 정리한다
@@ -1442,8 +1479,7 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 		}
 	}
 
-	const EPathFollowingRequestResult::Type Result =
-		Data.AIController->MoveToLocation(State->ExitLocation, Data.AcceptanceRadius);
+	const EPathFollowingRequestResult::Type Result = RequestExitMove(Data, *State);
 
 	if (Result == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
@@ -1493,6 +1529,44 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::Tick(FStateTreeExecutionContext& Co
 	}
 
 	return EStateTreeRunStatus::Running;
+}
+
+// 퇴장 지점까지 이동을 요청
+EPathFollowingRequestResult::Type FCSTask_LeaveAndDespawn::RequestExitMove(FInstanceDataType& Data,
+	const UCSCustomerStateComponent& State) const
+{
+	// 기준선이 있으면 레인 경로로 퇴장
+	// 매장에 들어왔던 손님은 합류 지점까지 NavMesh 경로 뒤에 기억한 레인을 이어 붙이고,
+	// 거리에 있던 손님은 현재 위치의 레인 그대로 이동
+	const ACSStreetRoute* Route = State.GetStreetRoute();
+	ACSCustomerAIController* Controller = Cast<ACSCustomerAIController>(Data.AIController);
+
+	if (Route != nullptr && Controller != nullptr)
+	{
+		EPathFollowingRequestResult::Type LaneResult = EPathFollowingRequestResult::Failed;
+
+		if (State.HasEnteredStore())
+		{
+			LaneResult = Controller->MoveFromStoreToStreetLane(
+				*Route, State.StreetLaneRatio, State.ExitLocation, Data.AcceptanceRadius);
+		}
+		else
+		{
+			LaneResult = Controller->MoveAlongStreetLane(*Route, State.ExitLocation, Data.AcceptanceRadius);
+		}
+
+		if (LaneResult != EPathFollowingRequestResult::Failed)
+		{
+			return LaneResult;
+		}
+
+		// 레인 경로 요청에 실패해도 손님이 남지 않도록 최단 경로로 퇴장을 시도
+		UE_LOG(LogTemp, Warning,
+			TEXT("[퇴장] %s 레인 경로 요청 실패 - 최단 경로로 퇴장. 기준선 %s의 입구 거리와 NavMesh 범위 확인 필요"),
+			*Data.Actor->GetName(), *Route->GetName());
+	}
+
+	return Data.AIController->MoveToLocation(State.ExitLocation, Data.AcceptanceRadius);
 }
 
 // =====================================================================
@@ -1782,6 +1856,12 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::EnterState(FStateTreeExecutionCo
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 기준선이 있으면 StorefrontLocation 대신 기준선의 입구 거리로 판정
+	if (const ACSStreetRoute* Route = State->GetStreetRoute())
+	{
+		return EnterRouteApproach(Context, Data, *State, *Route);
+	}
+
 	// 판정 지점이 없을 때 조용히 입장시키지 않는다.
 	// 조용히 통과시키면 개폐 판정이 통째로 사라지는데 로그가 없어 원인 추적이 불가능하다.
 	// (스폰 초기화 순서 버그가 실제로 이 폴백에 가려 오래 발견되지 않았다.)
@@ -1824,12 +1904,84 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::Tick(FStateTreeExecutionContext&
 		return EStateTreeRunStatus::Failed;
 	}
 
-	// 아직 걸어가는 중이면 대기
-	if (Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle)
+	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+	if (State == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	const bool bIsMoving = Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle;
+
+	// 기준선이 있으면 걷는 중 입구 거리를 지나는 순간 판정
+	// 지나기 전에 이동이 멈추면 그 자리에서 판정해 손님이 멈춘 채 남지 않도록 처리
+	if (const ACSStreetRoute* Route = State->GetStreetRoute())
+	{
+		if (bIsMoving && !Route->IsPastStorefront(Data.Actor->GetNavAgentLocation(), State->ExitLocation))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+	}
+	// 기준선이 없으면 가게 앞 지점에 도착할 때까지 대기
+	else if (bIsMoving)
 	{
 		return EStateTreeRunStatus::Running;
 	}
 
+	return JudgeStoreEntry(Context, Data);
+}
+
+// 기준선을 따라 퇴장 지점까지 걷는 레인 경로 이동을 요청
+EStateTreeRunStatus FCSTask_ApproachStorefront::EnterRouteApproach(FStateTreeExecutionContext& Context,
+	FInstanceDataType& Data, const UCSCustomerStateComponent& State,
+	const ACSStreetRoute& Route) const
+{
+	// 입구 거리가 없으면 판정할 수 없으므로 통과 처리하고 원인을 기록
+	if (!Route.HasStorefront())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 기준선 %s에 입구 거리가 없음 - StorefrontMarker 또는 StorefrontDistance 지정 필요"),
+			*Data.Actor->GetName(), *Route.GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 이미 입구 거리를 지난 위치면 이동 없이 바로 판정
+	if (Route.IsPastStorefront(Data.Actor->GetNavAgentLocation(), State.ExitLocation))
+	{
+		return JudgeStoreEntry(Context, Data);
+	}
+
+	ACSCustomerAIController* Controller = Cast<ACSCustomerAIController>(Data.AIController);
+	if (Controller == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 컨트롤러가 ACSCustomerAIController가 아니라 레인 경로를 요청할 수 없음"),
+			*Data.Actor->GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 입구에서 멈추지 않도록 퇴장 지점까지의 레인 경로를 요청
+	// 입구 거리를 지나는 순간은 Tick에서 확인
+	const EPathFollowingRequestResult::Type MoveResult =
+		Controller->MoveAlongStreetLane(Route, State.ExitLocation, Data.AcceptanceRadius);
+
+	if (MoveResult == EPathFollowingRequestResult::Failed)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 레인 경로 요청 실패 - 기준선 %s와 NavMesh 범위 확인 필요"),
+			*Data.Actor->GetName(), *Route.GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+// 입장 여부를 1회 판정하고 입장이면 입장 상태를 기록
+EStateTreeRunStatus FCSTask_ApproachStorefront::JudgeStoreEntry(FStateTreeExecutionContext& Context,
+	FInstanceDataType& Data) const
+{
 	UCSCustomerRuntimeSubsystem* Subsystem =
 		Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();

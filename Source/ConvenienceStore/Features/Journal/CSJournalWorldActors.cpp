@@ -3,6 +3,7 @@
 #include "Systems/Journal/CSJournalSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
@@ -106,17 +107,19 @@ TArray<FString> ACSJournalDiscoveryPoint::GetEntryIdOptions() const
 // 발견 지점의 조준 판정과 임시 외형을 구성합니다. 외형은 블루프린트 자식에서 변경하실 수 있습니다.
 ACSJournalDiscoveryPoint::ACSJournalDiscoveryPoint()
 {
-	auto* Box = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
-	SetRootComponent(Box);
-	Box->SetBoxExtent(FVector(35, 35, 65));
-	Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	Box->SetCollisionResponseToAllChannels(ECR_Ignore);
-	Box->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-	auto* DisplayMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DiscoveryMesh"));
-	DisplayMesh->SetupAttachment(Box);
-	DisplayMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	DisplayMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
-	DisplayMesh->SetRelativeScale3D(FVector(.12, .6, .9));
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
+	InteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
+	InteractionBox->SetupAttachment(SceneRoot);
+	InteractionBox->SetBoxExtent(FVector(35, 35, 65));
+	InteractionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	DiscoveryMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("DiscoveryMesh"));
+	DiscoveryMesh->SetupAttachment(SceneRoot);
+	DiscoveryMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DiscoveryMesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+	DiscoveryMesh->SetRelativeScale3D(FVector(.12, .6, .9));
 	InteractionText = FText::FromString(TEXT("기록 조사하기"));
 }
 FText ACSJournalDiscoveryPoint::GetInteractionText_Implementation() const
@@ -165,28 +168,39 @@ void CSConfigureJournalWorld(UWorld* World)
 			}
 			else if (Asset == TEXT("ElfTraining"))
 			{
-				B.Name = TEXT("엘프 훈련장");
+				B.Name = TEXT("엘프의 검술 수련장");
 				B.Race = ECSJournalRace::Elf;
 			}
 			else if (Asset == TEXT("MagicSchool"))
 			{
-				B.Name = TEXT("마법 학교");
+				B.Name = TEXT("마법사의 마법 교습소");
 				B.Race = ECSJournalRace::Wizard;
 			}
 			else if (Asset == TEXT("Recruitment"))
 			{
-				B.Name = TEXT("고용소");
+				B.Name = TEXT("알바지옥");
 				B.Race = ECSJournalRace::Human;
 			}
 			else if (Asset == TEXT("potion_shop"))
 			{
-				B.Name = TEXT("물약 상점");
-				B.Race = ECSJournalRace::Wizard;
+				B.Name = TEXT("모험가의 포션 상점");
+				B.Race = ECSJournalRace::Human;
 			}
+			// 엔딩 물품을 받는 마법사가 있는 곳이라 마법사로 둔다
 			else if (Asset == TEXT("AstroShop"))
 			{
-				B.Name = TEXT("AstroShop");
-				B.Race = ECSJournalRace::Human;
+				B.Name = TEXT("귀환의 보관소");
+				B.Race = ECSJournalRace::Wizard;
+			}
+			else if (Asset == TEXT("DwarfWorkShop"))
+			{
+				B.Name = TEXT("드워프 공방");
+				B.Race = ECSJournalRace::Dwarf;
+			}
+			else if (Asset == TEXT("OrcTavern"))
+			{
+				B.Name = TEXT("오크 주점");
+				B.Race = ECSJournalRace::Orc;
 			}
 			else
 				continue;
