@@ -17,5 +17,22 @@ enum class ECSAudioEvent : uint8
 	DeliveryCrateDisappear UMETA(DisplayName = "Delivery Crate Disappear"),
 	CrystalBallOpen UMETA(DisplayName = "Crystal Ball Open"),
 	LedgerOpen UMETA(DisplayName = "Ledger Open"),
-	LedgerClose UMETA(DisplayName = "Ledger Close")
+	LedgerClose UMETA(DisplayName = "Ledger Close"),
+	EndingItemSubmit UMETA(DisplayName = "Ending Item Submit"),
+	MagicHitCustomer,
+	StoreOpen,
+	GachaWellBlessing,
+	PlayerLevelUp,
+	MagicCircleLevelUp,
+	OrderSuccess,
+	EmployeeHireSuccess,
+	OrderFail,
+	CheckoutWaitingBell,
+	CustomerPickProduct,
+	JournalEntryAdded,
+	StoreClose,
+	GachaCapsuleBreak,
+	GachaCapsuleSpawn,
+	EndOfDaySleep,
+	DeliveryOrder
 };

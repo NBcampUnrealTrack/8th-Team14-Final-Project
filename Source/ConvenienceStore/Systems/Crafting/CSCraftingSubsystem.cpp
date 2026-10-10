@@ -1,6 +1,7 @@
 ﻿#include "Systems/Crafting/CSCraftingSubsystem.h"
 
 #include "Data/CSProductTypes.h"
+#include "Data/CSCraftFailureVisualRegistry.h"
 #include "Engine/DataTable.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -190,6 +191,16 @@ FAutoConsoleCommandWithWorldAndArgs CmdCraftDiscoverAll(
 		UE_LOG(LogTemp, Display, TEXT("[제조] 제조 전용 레시피 %d개를 발견한 것으로 기록했습니다."), Count);
 	}));
 #endif
+}
+
+UCSCraftingSubsystem::UCSCraftingSubsystem()
+{
+	FailureVisualRegistry = FSoftObjectPath(TEXT("/Game/ConvenienceStore/Data/DataAsset/DA_CraftFailureVisualRegistry.DA_CraftFailureVisualRegistry"));
+}
+
+UCSCraftFailureVisualRegistry* UCSCraftingSubsystem::GetFailureVisualRegistry() const
+{
+	return FailureVisualRegistry.LoadSynchronous();
 }
 
 bool UCSCraftingSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const

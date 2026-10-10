@@ -137,6 +137,7 @@ void ACSCheckoutCounterActor::BeginPlay()
 
 void ACSCheckoutCounterActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(WaitingBellTimer);
 	if (UWorld* World = GetWorld())
 	{
 		// 계산대가 제거될 때 손님 Subsystem이 사라진 계산대를 계속 참조하지 않게 합니다.
@@ -157,6 +158,8 @@ void ACSCheckoutCounterActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	EndWaitForNextCustomer();
 	CancelEmployeeCheckoutPresentation();
 	CloseCheckoutWidget(true);
+	// UI 정리 중 대기 상태 알림이 호출되어도 종료된 계산대에 타이머를 남기지 않습니다.
+	GetWorldTimerManager().ClearTimer(WaitingBellTimer);
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -609,6 +612,41 @@ void ACSCheckoutCounterActor::SetCustomerBeingServed(ACSCustomerCharacter* Custo
 	{
 		CustomerState->bIsBeingServed = bIsServed;
 	}
+	NotifyCheckoutQueueChanged();
+}
+
+void ACSCheckoutCounterActor::NotifyCheckoutQueueChanged()
+{
+	UCSCustomerRuntimeSubsystem* Customers = GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (IsActorBeingDestroyed() || !CanProcessCheckout() || !IsValid(Customers) ||
+		Customers->GetCommittedQueueLength() == 0 || IsValid(ActiveCheckoutWidget) ||
+		bIsCheckoutTransitioning || bIsEmployeeCheckoutPresenting)
+	{
+		GetWorldTimerManager().ClearTimer(WaitingBellTimer);
+		bWaitingBellPlayed = false;
+		return;
+	}
+	if (!bWaitingBellPlayed && !GetWorldTimerManager().IsTimerActive(WaitingBellTimer))
+		GetWorldTimerManager().SetTimer(WaitingBellTimer, this, &ThisClass::TryPlayWaitingBell, 0.25f, true);
+}
+
+void ACSCheckoutCounterActor::TryPlayWaitingBell()
+{
+	NotifyCheckoutQueueChanged();
+	if (!GetWorldTimerManager().IsTimerActive(WaitingBellTimer)) return;
+	UCSCustomerRuntimeSubsystem* Customers = GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	ACSCustomerCharacter* Front = Customers->GetCheckoutReadyCustomer();
+	if (!IsValid(Front) || !IsValid(Front->GetCustomerState()) ||
+		!Front->GetCustomerState()->HasSelectedItems() || Front->GetCustomerState()->bIsBeingServed) return;
+	UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this);
+	if (!Audio) return;
+	// 연속 대기에는 한 번만 울리고, 잠깐의 응대 전환에도 같은 소리가 겹치지 않게 합니다.
+	if (GetWorld()->GetTimeSeconds() - LastWaitingBellTime <
+		FMath::Max(3.0f, Audio->GetSFXDuration(ECSAudioEvent::CheckoutWaitingBell))) return;
+	bWaitingBellPlayed = true;
+	LastWaitingBellTime = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().ClearTimer(WaitingBellTimer);
+	Audio->PlaySFX(ECSAudioEvent::CheckoutWaitingBell);
 }
 
 bool ACSCheckoutCounterActor::CanEmployeeProcessCheckout() const
@@ -768,6 +806,7 @@ void ACSCheckoutCounterActor::CancelEmployeeCheckoutPresentation()
 	bLastEmployeeCheckoutSucceeded = false;
 	EmployeeScanElapsedSeconds = 0.0f;
 	ActiveEmployeeCheckoutOrder.Reset();
+	NotifyCheckoutQueueChanged();
 }
 
 bool ACSCheckoutCounterActor::IsCustomerOrderCheckoutEligible(
@@ -1488,6 +1527,7 @@ void ACSCheckoutCounterActor::HandleCheckoutItemScanned(FName ProductId)
 void ACSCheckoutCounterActor::HandleStorePhaseChanged(ECStorePhase NewPhase)
 {
 	(void)NewPhase;
+	NotifyCheckoutQueueChanged();
 
 	// 결제 완료 뒤 영수증 퇴장 연출이 진행 중이라면 이미 기록된 거래의 마무리까지 보여 줍니다.
 	// 연출 완료 콜백에서는 CanProcessCheckout()이 false이므로 다음 손님으로 넘어가지 않고 UI를 닫습니다.
@@ -1547,6 +1587,7 @@ void ACSCheckoutCounterActor::CloseCheckoutWidget(const bool bRestorePawnImmedia
 	}
 	ActiveCheckoutWidget->RemoveFromParent();
 	ActiveCheckoutWidget = nullptr;
+	NotifyCheckoutQueueChanged();
 
 	if (IsValid(PlayerController) &&
 		!PlayerController->IsA<ACSStorePlayerController>())

@@ -54,6 +54,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio|BGM")
 	void StopBGM();
 
+	// SFX SoundClass에는 영향을 주지 않고 현재 BGM 컴포넌트만 정지까지 페이드합니다.
+	void FadeOutBGM(float Duration);
+	float GetSFXDuration(ECSAudioEvent AudioEvent) const;
+
 	UFUNCTION(BlueprintCallable, Category = "Audio|SFX")
 	bool PlaySFX(ECSAudioEvent AudioEvent);
 

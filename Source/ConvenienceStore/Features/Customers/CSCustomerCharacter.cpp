@@ -21,6 +21,7 @@
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 #include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Components/StaticMeshComponent.h"
 
 namespace
@@ -103,6 +104,7 @@ void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
 		World->GetTimerManager().ClearTimer(HeadIconHideTimerHandle);
+		World->GetTimerManager().ClearTimer(PickSoundTimerHandle);
 	}
 	bActionAnimationPlaying = false;
 	bHoldActionTransformOnFinish = false;
@@ -185,7 +187,27 @@ bool ACSCustomerCharacter::PlayThinkingAnimation()
 
 bool ACSCustomerCharacter::PlayPickAnimation()
 {
-	return PlayActionAnimation(FallbackPickAnimation, false);
+	if (!PlayActionAnimation(FallbackPickAnimation, false))
+	{
+		return false;
+	}
+
+	// Schedule from the actual played interval, including the existing start-frame skip.
+	FTimerManager& Timers = GetWorld()->GetTimerManager();
+	Timers.SetTimer(PickSoundTimerHandle, this, &ACSCustomerCharacter::PlayPickSound,
+		Timers.GetTimerRemaining(ActionAnimationTimerHandle) * 0.3f, false);
+	return true;
+}
+
+void ACSCustomerCharacter::PlayPickSound()
+{
+	if (bActionAnimationPlaying)
+	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+		{
+			Audio->PlaySFX(ECSAudioEvent::CustomerPickProduct);
+		}
+	}
 }
 
 bool ACSCustomerCharacter::IsActionAnimationPlaying() const
@@ -198,6 +220,7 @@ void ACSCustomerCharacter::CancelActionAnimation()
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
+		World->GetTimerManager().ClearTimer(PickSoundTimerHandle);
 	}
 
 	bActionAnimationPlaying = false;

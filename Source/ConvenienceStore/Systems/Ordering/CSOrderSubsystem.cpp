@@ -1,6 +1,8 @@
 #include "Systems/Ordering/CSOrderSubsystem.h"
 
 #include "Data/CSFacilityTypes.h"
+#include "Misc/ScopeExit.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Data/CSProductTypes.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Delivery/CSDeliveryPortalActor.h"
@@ -254,6 +256,12 @@ FCSCombinedOrderResult UCSOrderSubsystem::PlaceCombinedOrder(
 	const TArray<FCSOrderLine>& Products, const TArray<FCSFacilityOrderLine>& Facilities,
 	ECSOrderDeliveryType DeliveryType)
 {
+	bool bOrderSucceeded = false;
+	ON_SCOPE_EXIT
+	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+			Audio->PlaySFX(bOrderSucceeded ? ECSAudioEvent::OrderSuccess : ECSAudioEvent::OrderFail);
+	};
 	FCSCombinedOrderResult Result = EvaluateCombinedOrder(Products, Facilities, DeliveryType);
 	auto Fail = [&Result](ECSCombinedOrderFailure Reason, const FText& Message)
 	{
@@ -348,6 +356,7 @@ FCSCombinedOrderResult UCSOrderSubsystem::PlaceCombinedOrder(
 	}
 	Result.RemainingFunds = State->GetCurrentFunds();
 	Result.Message = NSLOCTEXT("Order", "Complete", "발주가 완료되었습니다.");
+	bOrderSucceeded = true;
 	if (HasProducts)
 	{
 		Result.Products.bSuccess = true;
@@ -502,6 +511,12 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrderWithDelivery(
 	const TArray<FCSOrderLine>& OrderLines,
 	ECSOrderDeliveryType DeliveryType)
 {
+	bool bOrderSucceeded = false;
+	ON_SCOPE_EXIT
+	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+			Audio->PlaySFX(bOrderSucceeded ? ECSAudioEvent::OrderSuccess : ECSAudioEvent::OrderFail);
+	};
 	if (bCombinedCheckoutInProgress)
 	{
 		FCSOrderResult Busy;
@@ -582,6 +597,7 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrderWithDelivery(
 		const int32 SpawnedCrateCount = SpawnedCrates.Num();
 		NextProductDeliverySpawnIndex += SpawnedCrateCount;
 		DeliveryPortal->OnOrderDelivered(SpawnedCrateCount);
+		bOrderSucceeded = true;
 		OnOrderPlaced.Broadcast(Result);
 		return Result;
 	}
@@ -605,6 +621,7 @@ FCSOrderResult UCSOrderSubsystem::PlaceOrderWithDelivery(
 	Result.FailureReason = ECOrderFailureReason::None;
 
 	// 실제 배송과 분리하여 자금 차감 및 Pending 접수가 끝난 시점에 방송합니다.
+	bOrderSucceeded = true;
 	OnOrderPlaced.Broadcast(Result);
 
 	return Result;
@@ -726,6 +743,12 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 	const TArray<FCSFacilityOrderLine>& OrderLines,
 	ECSOrderDeliveryType DeliveryType)
 {
+	bool bOrderSucceeded = false;
+	ON_SCOPE_EXIT
+	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+			Audio->PlaySFX(bOrderSucceeded ? ECSAudioEvent::OrderSuccess : ECSAudioEvent::OrderFail);
+	};
 	if (bCombinedCheckoutInProgress)
 	{
 		FCSFacilityOrderResult Busy;
@@ -813,6 +836,7 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 		const int32 SpawnedFacilityCount = SpawnedFacilities.Num();
 		NextFacilityDeliverySpawnIndex += SpawnedFacilityCount;
 		DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilityCount);
+		bOrderSucceeded = true;
 		OnFacilityOrderPlaced.Broadcast(Result);
 		return Result;
 	}
@@ -834,6 +858,7 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 
 	Result.bSuccess = true;
 	Result.FailureReason = ECFacilityOrderFailureReason::None;
+	bOrderSucceeded = true;
 	OnFacilityOrderPlaced.Broadcast(Result);
 	return Result;
 }
