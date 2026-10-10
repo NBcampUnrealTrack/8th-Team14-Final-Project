@@ -3,7 +3,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Data/CSSaveTypes.h"
+#include "Data/CSCraftFailureVisualRegistry.h"
+#include "Engine/Texture2D.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "Systems/Crafting/CSCraftingSubsystem.h"
 
 ACSTrashActor::ACSTrashActor()
 {
@@ -25,12 +28,90 @@ ACSTrashActor::ACSTrashActor()
 	TrashDisplayName = NSLOCTEXT("Trash", "DefaultDisplayName", "쓰레기");
 }
 
+void ACSTrashActor::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyTrashRow();
+}
+
+void ACSTrashActor::BeginPlay()
+{
+	// 레벨에 저장된 액터는 런타임에 Construction을 거치지 않을 수 있습니다.
+	ApplyTrashRow();
+	Super::BeginPlay();
+}
+
+bool ACSTrashActor::InitializeTrash(FDataTableRowHandle InTrashRow)
+{
+	TrashRow = InTrashRow;
+	return ApplyTrashRow();
+}
+
+bool ACSTrashActor::ApplyTrashRow()
+{
+	const FCSCraftFailureRow* Row = nullptr;
+	if (IsValid(TrashRow.DataTable) && !TrashRow.RowName.IsNone() &&
+		TrashRow.DataTable->GetRowStruct() == FCSCraftFailureRow::StaticStruct())
+	{
+		Row = TrashRow.DataTable->FindRow<FCSCraftFailureRow>(TrashRow.RowName, TEXT("ApplyTrashRow"), false);
+	}
+
+	if (Row == nullptr && !bHasAppliedTrashRow)
+	{
+		// 기존 일반 쓰레기 및 제조대가 직접 설정한 이름/메시는 건드리지 않습니다.
+		return false;
+	}
+
+	// 행 변경/해제 시 이전 종류의 메시, 아이콘, 크기가 남지 않도록 BP 기본값부터 적용합니다.
+	const ACSTrashActor* Defaults = GetClass()->GetDefaultObject<ACSTrashActor>();
+	TrashDisplayName = Defaults->TrashDisplayName;
+	TrashIcon = nullptr;
+	FailureMeshRelativeTransform = FTransform::Identity;
+	bHasFailureMeshTransform = false;
+	if (IsValid(TrashMesh) && IsValid(Defaults->TrashMesh))
+	{
+		TrashMesh->SetStaticMesh(Defaults->TrashMesh->GetStaticMesh());
+		TrashMesh->SetRelativeTransform(Defaults->TrashMesh->GetRelativeTransform());
+	}
+	bHasAppliedTrashRow = Row != nullptr;
+	if (Row == nullptr) return false;
+
+	TrashDisplayName = Row->DisplayName.IsEmpty() ? FText::FromName(TrashRow.RowName) : Row->DisplayName;
+	SetTrashMesh(Row->Mesh.LoadSynchronous());
+	// 제조대와 같은 Registry를 사용하되 Editor 월드에서도 조회할 수 있도록 CDO에서 가져옵니다.
+	const UCSCraftFailureVisualRegistry* Registry = GetDefault<UCSCraftingSubsystem>()->GetFailureVisualRegistry();
+	const int64 OutcomeValue = StaticEnum<ECSCraftOutcome>()->GetValueByName(TrashRow.RowName);
+	if (Registry != nullptr && OutcomeValue != INDEX_NONE)
+	{
+		if (const FCSCraftFailureVisualEntry* Visual = Registry->FindVisualData(static_cast<ECSCraftOutcome>(OutcomeValue)))
+		{
+			ApplyCraftFailureVisual(*Visual);
+		}
+	}
+	return true;
+}
+
 void ACSTrashActor::SetTrashMesh(UStaticMesh* InMesh)
 {
 	if (IsValid(TrashMesh) && InMesh != nullptr)
 	{
 		TrashMesh->SetStaticMesh(InMesh);
 	}
+}
+
+void ACSTrashActor::ApplyCraftFailureVisual(const FCSCraftFailureVisualEntry& Visual)
+{
+	if (IsValid(TrashMesh))
+	{
+		if (UStaticMesh* Mesh = Visual.StaticMesh.LoadSynchronous())
+		{
+			TrashMesh->SetStaticMesh(Mesh);
+			FailureMeshRelativeTransform = Visual.MeshRelativeTransform;
+			bHasFailureMeshTransform = true;
+			TrashMesh->SetRelativeTransform(FailureMeshRelativeTransform);
+		}
+	}
+	TrashIcon = Visual.Icon.LoadSynchronous();
 }
 
 FVector ACSTrashActor::GetCleaningLocation() const
@@ -96,6 +177,10 @@ void ACSTrashActor::PrepareForPickupPhysics()
 	TrashMesh->AttachToComponent(
 		SceneRoot,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	if (bHasFailureMeshTransform)
+	{
+		TrashMesh->SetRelativeTransform(FailureMeshRelativeTransform);
+	}
 }
 
 void ACSTrashActor::EnableWorldDropPhysics()

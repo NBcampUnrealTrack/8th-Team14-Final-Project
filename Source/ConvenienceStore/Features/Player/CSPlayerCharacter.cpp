@@ -5235,7 +5235,7 @@ void ACSPlayerCharacter::UpdateQuickbarHUD()
 		{
 			// 제조 실패물은 종류 이름으로 보여 준다
 			ToolNames.Add(Trash->GetTrashDisplayName());
-			ToolIcons.Add(TrashQuickbarIcon);
+			ToolIcons.Add(IsValid(Trash->GetTrashIcon()) ? Trash->GetTrashIcon() : TrashQuickbarIcon.Get());
 		}
 		else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Item))
 		{

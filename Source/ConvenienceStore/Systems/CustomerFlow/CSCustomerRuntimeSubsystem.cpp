@@ -2,6 +2,7 @@
 
 
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "Features/Checkout/CSCheckoutCounterActor.h"
 #include "Features/Customers/Interface/CSCustomerCounterInterface.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
@@ -1072,12 +1073,14 @@ void UCSCustomerRuntimeSubsystem::ResolvePendingQueueCommits()
 		// 접근 목록에서 제거하고 대기열 끝에 추가해 순번을 확정
 		CancelQueueApproach(Candidate.Customer);
 		Queue.Add(Candidate.Customer);
+		if (ACSCheckoutCounterActor* Checkout = Cast<ACSCheckoutCounterActor>(Counter)) Checkout->NotifyCheckoutQueueChanged();
 	}
 }
 
 void UCSCustomerRuntimeSubsystem::LeaveQueue(ACSCustomerCharacter* Customer)
 {
 	Queue.Remove(Customer); // 배열 중간에서 삭제되더라도 TArray가 자동으로 빈 공간을 당겨주고 뒷 순번도 같이 갱신됨
+	if (ACSCheckoutCounterActor* Checkout = Cast<ACSCheckoutCounterActor>(Counter)) Checkout->NotifyCheckoutQueueChanged();
 }
 
 int32 UCSCustomerRuntimeSubsystem::GetQueueIndex(const ACSCustomerCharacter* Customer) const
@@ -1238,6 +1241,7 @@ void UCSCustomerRuntimeSubsystem::CompleteFrontCheckout()
 
 	// 첫 번째 요소를 제거합니다. (TArray 특성상 뒤에 있던 원소들이 자동으로 한 칸씩 당겨짐)
 	Queue.RemoveAt(0);
+	if (ACSCheckoutCounterActor* Checkout = Cast<ACSCheckoutCounterActor>(Counter)) Checkout->NotifyCheckoutQueueChanged();
 
 	if (Front != nullptr)
 	{

@@ -1,4 +1,5 @@
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
 #include "Engine/GameInstance.h"
 
@@ -551,6 +552,7 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 	++GeneratedOrderCountToday;
 	NextOrderGenerationMinutes = -1.0f;
 	BroadcastOrdersChanged(NewOrder);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::DeliveryOrder);
 	OutMessage = NSLOCTEXT("Delivery", "OrderGenerated", "새 배달 주문이 도착했습니다.");
 	ShowDeliveryToast(
 		NSLOCTEXT("Delivery", "OrderGeneratedToastTitle", "새 배달 주문 도착"),
