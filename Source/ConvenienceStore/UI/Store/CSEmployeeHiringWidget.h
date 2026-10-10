@@ -53,11 +53,14 @@ protected:
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UButton> CancelButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RoleNameText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DutiesText;
+	// 고용비 숫자와 가게 레벨 조건을 서로 다른 위치에 배치할 수 있도록 분리합니다.
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HireCostText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> RequiredStoreLevelText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> DailyWageText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> TotalDailyWageText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> CurrentFundsText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StartDayText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> WagePaymentNoticeText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> AvailabilityText;
 	// 커스텀 UI/애니메이션은 이 이벤트에서 ViewData를 읽습니다. 디자이너에서도 호출됩니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Hiring") void OnHiringViewUpdated();

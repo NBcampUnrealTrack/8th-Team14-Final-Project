@@ -28,9 +28,9 @@ FText ACSStoreEmployeeCharacter::GetHiringRoleName() const
 {
 	switch (HiringSlot)
 	{
-	case ECSEmployeeHireSlot::FirstRestock: return NSLOCTEXT("EmployeeHiring", "FirstRestock", "첫 번째 진열 직원");
+	case ECSEmployeeHireSlot::FirstRestock: return NSLOCTEXT("EmployeeHiring", "FirstRestock", "진열 직원");
 	case ECSEmployeeHireSlot::Checkout: return NSLOCTEXT("EmployeeHiring", "Checkout", "계산 직원");
-	case ECSEmployeeHireSlot::SecondRestock: return NSLOCTEXT("EmployeeHiring", "SecondRestock", "두 번째 진열 직원");
+	case ECSEmployeeHireSlot::SecondRestock: return NSLOCTEXT("EmployeeHiring", "SecondRestock", "진열 직원 추가 고용");
 	default: return FText::GetEmpty();
 	}
 }
