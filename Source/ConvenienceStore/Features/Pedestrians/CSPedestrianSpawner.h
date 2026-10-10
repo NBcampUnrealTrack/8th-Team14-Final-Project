@@ -7,6 +7,7 @@
 
 class ACSPedestrianCharacter;
 class ACSStoreGameState;
+class ACSStreetRoute;
 class UCSCustomerArchetypeDataAsset;
 
 // 활성 행인 한 명의 경로와 이동 진행 상태
@@ -86,6 +87,12 @@ protected:
 	// 스폰마다 A→B 또는 B→A 방향을 무작위로 선택
 	UPROPERTY(EditAnywhere, Category = "Pedestrian|Spawn")
 	TObjectPtr<AActor> EndpointB;
+
+	// 행인이 따라 걸을 길 기준선
+	// 지정하면 기준선을 평행 이동한 레인 경로를 사용하고, 비어 있으면 NavMesh 최단 경로를 사용
+	// 두 끝점 영역은 기준선 양 끝 근처에 배치
+	UPROPERTY(EditAnywhere, Category = "Pedestrian|Spawn")
+	TObjectPtr<ACSStreetRoute> Route;
 
 	// 행인 한 명의 스폰을 시도하는 시간 간격
 	UPROPERTY(EditAnywhere, Category = "Pedestrian|Spawn",
