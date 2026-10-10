@@ -1,6 +1,8 @@
 #include "Features/Tools/CSMagicProjectileActor.h"
 
 #include "Components/SphereComponent.h"
+#include "Features/Customers/CSCustomerCharacter.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Features/Tools/CSHitReactable.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "NiagaraComponent.h"
@@ -116,6 +118,9 @@ void ACSMagicProjectileActor::HandleProjectileHit(
 			HitResult.ImpactPoint,
 			TravelDirection,
 			CharacterKnockbackStrength);
+		// 같은 투사체의 뒤늦은 중복 Hit 콜백에서는 추가 재생하지 않습니다.
+		if (Cast<ACSCustomerCharacter>(OtherActor) && !IsActorBeingDestroyed())
+			if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::MagicHitCustomer);
 	}
 	else if (IsValid(OtherComponent) && OtherComponent->IsSimulatingPhysics())
 	{

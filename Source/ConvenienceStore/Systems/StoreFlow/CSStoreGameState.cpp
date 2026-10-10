@@ -5,6 +5,7 @@
 #include "Data/CSStoreProgressionDataAsset.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Engine/World.h"
 
@@ -85,6 +86,7 @@ bool ACSStoreGameState::TryUpgradeMagicCircle(FText& OutMessage)
 	}
 	OutMessage = FText::Format(NSLOCTEXT("MagicCircle", "Upgraded", "마법진이 {0}단계로 강화되었습니다."), FText::AsNumber(MagicCircleLevel));
 	OnMagicCircleUpgraded.Broadcast(MagicCircleLevel);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::MagicCircleLevelUp);
 	return true;
 }
 
@@ -165,6 +167,7 @@ void ACSStoreGameState::SetStorePhase(const FCSStorePhaseData& PhaseData)
 		// 정산 등 영업 시간 밖의 단계로 바뀌면 영업 상태도 함께 종료합니다.
 		bIsStoreOpen = false;
 		OnStoreOpenStateChanged.Broadcast(false);
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::StoreClose);
 	}
 
 	SetRemainingSeconds(0.0f);
@@ -253,6 +256,8 @@ bool ACSStoreGameState::SetStoreOpen(bool bShouldOpen)
 		bHasStoreOpenedToday = true;
 	}
 	OnStoreOpenStateChanged.Broadcast(bIsStoreOpen);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+		Audio->PlaySFX(bIsStoreOpen ? ECSAudioEvent::StoreOpen : ECSAudioEvent::StoreClose);
 	return true;
 }
 
@@ -682,6 +687,7 @@ bool ACSStoreGameState::AddStoreExperience(int32 Amount)
 	{
 		CurrentStoreLevel = NewLevel;
 		OnStoreLevelChanged.Broadcast(CurrentStoreLevel);
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::PlayerLevelUp);
 	}
 
 	return true;

@@ -4,6 +4,7 @@
 #include "Features/Ending/CSEndingWidget.h"
 #include "Features/Inventory/CSQuickbarInventoryComponent.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Components/BoxComponent.h"
@@ -222,6 +223,10 @@ void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)
 			{
 				SubmittedItemIds.Add(Id);
 				OnSubmissionChanged.Broadcast();
+				if (UCSAudioSubsystem* AudioSubsystem = UCSAudioSubsystem::Get(this))
+				{
+					AudioSubsystem->PlaySFX(ECSAudioEvent::EndingItemSubmit);
+				}
 			}
 			// 마지막 재료를 맡긴 입력으로 골드까지 지불하지 않습니다.
 			return;

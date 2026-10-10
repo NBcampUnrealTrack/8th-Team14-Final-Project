@@ -45,6 +45,8 @@ protected:
 	TObjectPtr<UCSWakeUpWidget> ActiveWakeUpWidget;
 	TWeakObjectPtr<ACSStorePlayerController> SleepingController;
 	FTimerHandle SleepTimer;
+	FTimerHandle SleepAudioWaitTimer;
+	double SleepAudioEndTime = 0.0;
 	int32 DayBeforeSleep = INDEX_NONE;
 	UFUNCTION() void HandleConfirmed();
 	UFUNCTION() void HandleCancelled();

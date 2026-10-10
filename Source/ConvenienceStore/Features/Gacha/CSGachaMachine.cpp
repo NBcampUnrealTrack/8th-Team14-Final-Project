@@ -1,6 +1,7 @@
 #include "Features/Gacha/CSGachaMachine.h"
 
 #include "Components/BoxComponent.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -251,7 +252,10 @@ void ACSGachaMachine::Interact_Implementation(AActor* Interactor)
 	bDrawing = true;
 	bBeamActive = true;
 	EffectElapsed = 0.f;
+	// 실제 빛 연출이 시작되는 단일 지점에서만 재생합니다.
+	Beam->SetVisibility(bUseDemoEffects && bShowBeam);
 	OnDrawStarted();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::GachaWellBlessing);
 	if (DrawDelaySeconds <= 0.0f) FinishBeam();
 	else GetWorldTimerManager().SetTimer(DrawTimer, this, &ACSGachaMachine::FinishBeam, DrawDelaySeconds, false);
 }
@@ -299,6 +303,7 @@ void ACSGachaMachine::CompleteDraw()
 	DispensePulseRemaining = 0.4f;
 	const FVector Impulse = (GetActorForwardVector() * 0.55f + FVector::UpVector) * LaunchImpulse;
 	Spawned->Launch(Impulse);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::GachaCapsuleSpawn);
 	OnSealDispensed();
 	NotifyPlayer(NSLOCTEXT("Gacha", "TakeSeal", "봉인석이 나왔습니다. 집어서 Q로 개봉해 주세요."));
 }

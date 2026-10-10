@@ -6,6 +6,7 @@
 #include "Components/WidgetComponent.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
+#include "Data/CSCraftFailureVisualRegistry.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/DataTable.h"
 #include "Engine/LocalPlayer.h"
@@ -2193,6 +2194,15 @@ bool ACSCraftStationActor::SpawnFailureTrash(ECSCraftOutcome Outcome, FText& Out
 	}
 
 	OutDisplayName = Trash->GetTrashDisplayName();
+	// Apply after construction so BP defaults cannot overwrite the per-failure visual.
+	// Missing registry entries retain the existing DT_CraftFailure mesh and common trash icon.
+	if (const UCSCraftFailureVisualRegistry* Registry = IsValid(Crafting) ? Crafting->GetFailureVisualRegistry() : nullptr)
+	{
+		if (const FCSCraftFailureVisualEntry* Visual = Registry->FindVisualData(Outcome))
+		{
+			Trash->ApplyCraftFailureVisual(*Visual);
+		}
+	}
 	LastFailureTrash = Trash;
 	return true;
 }

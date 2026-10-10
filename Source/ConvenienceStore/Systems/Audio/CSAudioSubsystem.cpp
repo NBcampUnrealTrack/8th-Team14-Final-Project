@@ -164,6 +164,21 @@ void UCSAudioSubsystem::StopBGM()
 	ActiveBGMComponent = nullptr;
 }
 
+void UCSAudioSubsystem::FadeOutBGM(float Duration)
+{
+	if (IsValid(ActiveBGMComponent))
+	{
+		ActiveBGMComponent->FadeOut(FMath::Max(0.0f, Duration), 0.0f);
+	}
+}
+
+float UCSAudioSubsystem::GetSFXDuration(ECSAudioEvent AudioEvent) const
+{
+	const USoundBase* Sound = FindSFXSound(AudioEvent);
+	return IsValid(Sound) && !Sound->IsLooping() && FMath::IsFinite(Sound->GetDuration())
+		? FMath::Max(0.0f, Sound->GetDuration()) : 0.0f;
+}
+
 bool UCSAudioSubsystem::PlaySFX(ECSAudioEvent AudioEvent)
 {
 	USoundBase* Sound = FindSFXSound(AudioEvent);

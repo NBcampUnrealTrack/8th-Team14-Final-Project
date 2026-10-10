@@ -1,5 +1,6 @@
 ﻿#include "Systems/Journal/CSJournalSubsystem.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Data/CSJournalSettings.h"
 #include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
@@ -81,6 +82,7 @@ bool UCSJournalSubsystem::UnlockEntry(FName Id)
 		return false;
 	UnlockedEntries.Add(Id);
 	OnJournalChanged.Broadcast();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::JournalEntryAdded);
 	return true;
 }
 // 새 아티팩트를 획득한 경우에만 수집 상태를 변경하고 도감 화면에 알립니다.
@@ -90,6 +92,7 @@ bool UCSJournalSubsystem::CollectArtifact(FName Id)
 		return false;
 	CollectedArtifacts.Add(Id);
 	OnJournalChanged.Broadcast();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::JournalEntryAdded);
 	return true;
 }
 
@@ -174,6 +177,7 @@ void UCSJournalSubsystem::RecordEvent(FName Id, int32 Day, FText Title, FText Bo
 	E.Body = Body;
 	Events.Add(E);
 	OnJournalChanged.Broadcast();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::JournalEntryAdded);
 }
 // 선택한 날짜의 기록만 읽음 상태로 변경하여 다른 날짜의 알림을 유지합니다.
 void UCSJournalSubsystem::MarkDayRead(int32 Day)
@@ -205,6 +209,7 @@ void UCSJournalSubsystem::RecordDelivery(const FCSDeliveryOrderRuntime &Order, i
 		D.AcceptedDay = Day;
 		D.Order = Order;
 		Index = Deliveries.Add(D);
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::JournalEntryAdded);
 	}
 	auto &D = Deliveries[Index];
 	D.Order = Order;
