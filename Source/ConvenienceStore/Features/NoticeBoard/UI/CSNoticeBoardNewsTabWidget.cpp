@@ -40,7 +40,8 @@ void UCSNoticeBoardNewsTabWidget::RefreshNewsTab()
 	FCSNewsEventDataRow News;
 	TArray<FCSNoticeBoardDemandChange> Changes;
 	const bool bHasNews = IsValid(NoticeEventSubsystem) && NoticeEventSubsystem->GetTodayNews(News);
-	if (bHasNews)
+	// 뉴스가 없는 기념일에도 오르는 상품을 보여줘야 해서 뉴스 유무와 관계없이 받는다
+	if (IsValid(NoticeEventSubsystem))
 	{
 		NoticeEventSubsystem->GetTodayNewsDemandChanges(Changes);
 	}

@@ -264,11 +264,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
 	float LastRejectionTime = 0.0f;
 
-	// 이 손님의 가격 불쾌가 하루 평판 집계(DailyPriceUpsetSum)에 이미 반영됐는지
-	// 손님 한 명이 여러 번 가격에 반응해도 평판 감점은 방문당 1회로 제한하기 위한 플래그
-	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
+	// 이번 방문에서 느낀 가장 큰 가격 불쾌 강도. 평판은 퇴장할 때 이 값 하나만 반영한다
+	// 반응할 때마다 감점하면 비싼 상품을 여러 개 본 손님이 그만큼 더 깎인다
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Rejection")
-	bool bPriceUpsetCounted = false;
+	float MaxPriceUpsetSeverity = 0.0f;
 
 	// 이미 연출을 보여준 상품들. 후보 목록의 SKU 중복 제거는 한 라운드 안에서만 유효해서
 	// 라운드를 넘어가는 기억은 여기 있어야 한다
@@ -289,8 +288,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
 	float TrashDropProgress = 0.0f;
 
-	// 오늘 다른 손님이 흘린 쓰레기를 목격해 평판 집계(DailyTrashWitnessed)에 이미 반영됐는지
-	// 손님 한 명이 여러 번 목격해도 반영은 방문당 1회로 제한하기 위한 플래그
+	// 오늘 다른 손님이 흘린 쓰레기를 목격했는지. 평판에는 퇴장할 때 반영한다
 	// 손님 액터가 매일 밤 파괴되고 새로 스폰되므로 별도 리셋 없이 기본값(false)으로 되돌아감
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Trash")
 	bool bTrashWitnessedToday = false;

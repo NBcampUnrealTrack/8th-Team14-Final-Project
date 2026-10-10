@@ -122,6 +122,18 @@ struct FCSPurchaseRejectionDisplayRow : public FTableRowBase
 	TArray<FCSPurchaseRejectionTier> Tiers;
 };
 
+// 속마음 문장 후보. 행 이름은 "상황_종족"
+// 같은 상황이 반복돼도 지루하지 않게 띄울 때마다 이 중 하나를 고른다
+// 자리표시자는 {ProductName} {Category} {ActualPrice} {ReferencePrice} {EventName}, 조사는 {ProductName}|hpp(을,를)
+USTRUCT(BlueprintType)
+struct FCSInnerThoughtLinesRow : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Purchase|Rejection")
+	TArray<FText> Lines;
+};
+
 // 카테고리 연관구매 한 쌍
 // Strength 0은 "쌍 끄기"다 - 점수 보너스와 진열대 끌어가기가 둘 다 꺼진다(로드 시점에 걸러짐)
 // 행 이름(RowName)은 코드가 읽지 않으므로 아무 이름이나 붙여도 됨

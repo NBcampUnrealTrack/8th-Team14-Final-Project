@@ -33,8 +33,22 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up")
 	TObjectPtr<UCurveFloat> EyeOpeningCurve;
 
+	// 화면 중앙의 눈꺼풀 경계에 사용할 진한 색과 투명도를 지정합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up|Appearance")
+	FLinearColor CenterLidColor = FLinearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+	// 화면 바깥 가장자리에 사용할 옅은 색과 투명도를 지정합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up|Appearance")
+	FLinearColor OuterLidColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.18f);
+
+	// 값이 클수록 중앙에서 바깥으로 이어지는 그라데이션이 부드러워집니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up|Appearance",
+		meta = (ClampMin = "2", ClampMax = "32"))
+	int32 LidGradientSteps = 16;
+
 private:
 	float Elapsed = 0.0f;
+	double LastRealTime = 0.0;
 	float EyeOpenness = 0.0f;
 	bool bFinished = false;
 };

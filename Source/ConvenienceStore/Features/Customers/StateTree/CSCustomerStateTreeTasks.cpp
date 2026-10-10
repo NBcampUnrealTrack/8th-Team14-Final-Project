@@ -321,15 +321,33 @@ EStateTreeRunStatus FCSTask_PickNextShelf::EnterState(FStateTreeExecutionContext
 	{
 		// 정확 일치를 못 찾은 경우 - 연관구매 대상 + 남은 계획 카테고리 + 선호 카테고리를 하드 필터로 합친다
 		// (장바구니가 비어있으면 연관구매 대상이 없어 사실상 선호 카테고리로 직행하게 됨)
-		TSet<ECSProductCategory> PullTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		const TSet<ECSProductCategory> AffinityTargets = Subsystem->GetAffinityTargetCategories(State->SelectProducts);
+		TSet<ECSProductCategory> PullTargets = AffinityTargets;
 		PullTargets.Append(RemainingPlannedCategories);
 		if (Decision != nullptr)
 		{
 			PullTargets.Append(Decision->GetPreferredCategories());
 		}
 
-		const TMap<ECSProductCategory, float> AttractionWeights =
+		TMap<ECSProductCategory, float> AttractionWeights =
 			Decision != nullptr ? Decision->GetCategoryAttractionWeights() : TMap<ECSProductCategory, float>();
+
+		// 장바구니 때문에 끌리는 카테고리는 손님이 가장 좋아하는 카테고리만큼 끌리게 한다
+		// 평소 선호도로 뽑으면 비선호인 숙취해소제는 술을 담아도 매대를 거의 안 찾아간다
+		// 차단된 카테고리는 0이라 그대로 둔다
+		float TopWeight = 0.0f;
+		for (const TPair<ECSProductCategory, float>& Pair : AttractionWeights)
+		{
+			TopWeight = FMath::Max(TopWeight, Pair.Value);
+		}
+		for (const ECSProductCategory Category : AffinityTargets)
+		{
+			float* Weight = AttractionWeights.Find(Category);
+			if (Weight != nullptr && *Weight > 0.0f)
+			{
+				*Weight = FMath::Max(*Weight, TopWeight);
+			}
+		}
 
 		PickedShelf = Subsystem->PickRandomUnvisitedShelf(State->VisitedShelves, PullTargets, AttractionWeights, Data.Actor);
 	}
@@ -568,6 +586,25 @@ EStateTreeRunStatus FCSTask_BrowseShelf::EnterState(FStateTreeExecutionContext& 
 		return EStateTreeRunStatus::Failed;
 	}
 	return EStateTreeRunStatus::Running;
+}
+
+// 평판 가격 불쾌가 감점을 시작하는 강도와 같다. 이보다 약한 반응은 띄울 이유가 없다
+static constexpr float CS_MinPriceReactionSeverity = 0.4f;
+
+// 느낌표는 플레이어가 고칠 수 있는 가격 부담과 물건 없음에만 띄운다
+// 카테고리 차단은 도감에, 뉴스는 게시판에 이미 나와서 띄우면 소음만 늘어난다
+static bool CS_ShouldShowReaction(const FCSPurchaseRejectionInfo& Info)
+{
+	switch (Info.Reason)
+	{
+	case ECSPurchaseRejectReason::PriceRejected:
+		return Info.Severity >= CS_MinPriceReactionSeverity;
+	case ECSPurchaseRejectReason::PlannedProductMissing:
+	case ECSPurchaseRejectReason::PreferredCategoryMissing:
+		return true;
+	default:
+		return false;
+	}
 }
 
 // 거절 즉시표시(머리 위 아이콘) + LastRejectionInfo/LastRejectionTime 기록 +
@@ -982,11 +1019,9 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	if (!bPicked)
 	{
-		// None/ShelfEmpty/HardWalletExceeded는 흔한 사유라 매번 띄우면 소음이라 조용히 미구매 처리
+		// 띄우지 않는 사유는 조용히 미구매 처리
 		// 이미 반응한 상품도 같이 묶는다 - 표시만 막고 대기를 남기면 아이콘 없이 멈춰 선다
-		if (RejectionInfo.Reason == ECSPurchaseRejectReason::None ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::ShelfEmpty ||
-			RejectionInfo.Reason == ECSPurchaseRejectReason::HardWalletExceeded ||
+		if (!CS_ShouldShowReaction(RejectionInfo) ||
 			State->HasReactedTo(RejectionInfo.ProductId))
 		{
 			Customer->ReleaseActionTransitionHold();
@@ -1003,7 +1038,7 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 	// 보여준 뒤(CS_HandlePurchaseRejection과 동일한 대기), 대기가 끝나면 그때 담는다
 	// (위 WaitingReaction 단계의 bPendingTakeProductAfterReaction 처리가 이어받음)
 	// 이미 반응한 상품이면 멈추지 않고 바로 담는다
-	if (RejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+	if (CS_ShouldShowReaction(RejectionInfo) &&
 		!State->HasReactedTo(RejectionInfo.ProductId))
 	{
 		// Hold를 미리 풀지 않는다 - Pick 시작 시 PlayPickAnimation이 덮어쓰고, 아니면 ExitState가 정리한다

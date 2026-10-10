@@ -6,7 +6,9 @@
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Math/RandomStream.h"
+#include "Data/CSProductTypes.h"
 #include "Systems/Crafting/CSCraftingSubsystem.h"
+#include "Systems/NoticeEvents/CSNoticeEventSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/Weather/CSWeatherSubsystem.h"
@@ -41,6 +43,12 @@ void UCSCraftRumorSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		Weather = WeatherSubsystem;
 		WeatherSubsystem->OnWeatherForecastUpdated.AddUniqueDynamic(this, &UCSCraftRumorSubsystem::HandleWeatherForecastUpdated);
 	}
+	// 영업일 시작과 뉴스 결정 중 어느 쪽이 먼저 불려도 예고가 늦게 바뀌지 않게 뉴스 쪽 방송도 받는다
+	if (UCSNoticeEventSubsystem* NoticeSubsystem = InWorld.GetSubsystem<UCSNoticeEventSubsystem>(); IsValid(NoticeSubsystem))
+	{
+		Notice = NoticeSubsystem;
+		NoticeSubsystem->OnNoticeEventsChanged.AddUniqueDynamic(this, &UCSCraftRumorSubsystem::HandleNoticeEventsChanged);
+	}
 }
 
 void UCSCraftRumorSubsystem::Deinitialize()
@@ -55,8 +63,13 @@ void UCSCraftRumorSubsystem::Deinitialize()
 	{
 		WeatherSubsystem->OnWeatherForecastUpdated.RemoveDynamic(this, &UCSCraftRumorSubsystem::HandleWeatherForecastUpdated);
 	}
+	if (UCSNoticeEventSubsystem* NoticeSubsystem = Notice.Get())
+	{
+		NoticeSubsystem->OnNoticeEventsChanged.RemoveDynamic(this, &UCSCraftRumorSubsystem::HandleNoticeEventsChanged);
+	}
 	GameState.Reset();
 	Weather.Reset();
+	Notice.Reset();
 	Super::Deinitialize();
 }
 
@@ -123,7 +136,7 @@ int32 UCSCraftRumorSubsystem::GetTimeSlot() const
 	return FMath::Clamp(Slot, 0, TimeSlotsPerDay - 1);
 }
 
-const TArray<FText>& UCSCraftRumorSubsystem::GetDailyRumors(int32 BusinessDay)
+const TArray<UCSCraftRumorSubsystem::FCSDailyRumor>& UCSCraftRumorSubsystem::GetDailyRumors(int32 BusinessDay)
 {
 	if (CachedDay == BusinessDay)
 	{
@@ -141,44 +154,90 @@ const TArray<FText>& UCSCraftRumorSubsystem::GetDailyRumors(int32 BusinessDay)
 		return CachedDailyRumors;
 	}
 
-	TArray<FCSCraftRumorLine> Pool = Crafting->GetMaterialRumorLines();
+	// 제조 전용을 다 찾기 전에는 그 힌트만, 다 찾은 뒤에는 그 힌트를 빼고 조합·성질을 낸다.
+	// 처음엔 팔 물건을 만드는 법부터 알아야 하고, 이미 아는 레시피를 계속 들으면 소문 자리가 아깝다
+	bool bAllCraftOnlyDiscovered = true;
+	for (const FName RecipeRow : Crafting->GetRecipeRowNames(ECSCraftRecipeKind::CraftOnly))
+	{
+		if (!Crafting->GetDiscoveredRecipeRows().Contains(RecipeRow))
+		{
+			bAllCraftOnlyDiscovered = false;
+			break;
+		}
+	}
+
+	struct FPoolLine
+	{
+		FName Key;
+		FText Text;
+		bool bCraftHint = false;
+	};
+
+	// 같은 결과물을 가리키는 문장은 한 묶음이고 하루에 하나만 쓴다. 안 그러면 같은 힌트가 말만 바꿔 여러 번 뜬다
+	// 결과물이 없는 잡담·성질은 문장마다 따로 묶는다
+	TMap<FName, TArray<FPoolLine>> Groups;
+	if (!bAllCraftOnlyDiscovered)
+	{
+		for (const FCSCraftRumorLine& Line : Crafting->GetMaterialRumorLines())
+		{
+			const FCSCraftRecipeRow* Recipe = Crafting->FindRecipeByRowName(Line.Key);
+			Groups.FindOrAdd(Recipe != nullptr ? Recipe->ResultProduct : Line.Key).Add({ Line.Key, Line.Text, true });
+		}
+	}
 	if (const UDataTable* RumorTable = Crafting->GetRumorTable())
 	{
 		for (const TPair<FName, uint8*>& Pair : RumorTable->GetRowMap())
 		{
 			const FCSCraftRumorRow* Row = reinterpret_cast<const FCSCraftRumorRow*>(Pair.Value);
-			if (Row != nullptr && Row->Kind != ECSCraftRumorKind::WeatherVariant && Row->Kind != ECSCraftRumorKind::None &&
-				!Row->Text.IsEmpty())
+			if (Row == nullptr || Row->Text.IsEmpty())
 			{
-				Pool.Add({ Pair.Key, Row->Text });
+				continue;
+			}
+			const bool bCraftOnlyHint = Row->Kind == ECSCraftRumorKind::Combination &&
+				Crafting->IsCraftOnlyResultProduct(Row->TargetProduct);
+			const bool bLaterHint = (Row->Kind == ECSCraftRumorKind::Combination && !bCraftOnlyHint) ||
+				Row->Kind == ECSCraftRumorKind::Property;
+			// 예고는 내일 일에 맞춰 따로 고르므로 하루 풀에 넣지 않는다
+			// 기본 조리법(중불에 세 번)은 조합 힌트 문장마다 들어 있어서 따로 내지 않는다
+			const bool bExcluded = Row->Kind == ECSCraftRumorKind::None ||
+				Row->Kind == ECSCraftRumorKind::BasicMethod ||
+				Row->Kind == ECSCraftRumorKind::WeatherVariant ||
+				Row->Kind == ECSCraftRumorKind::NewsPreview ||
+				Row->Kind == ECSCraftRumorKind::HolidayPreview ||
+				(bCraftOnlyHint && bAllCraftOnlyDiscovered) ||
+				(bLaterHint && !bAllCraftOnlyDiscovered);
+			if (!bExcluded)
+			{
+				Groups.FindOrAdd(Row->TargetProduct.IsNone() ? Pair.Key : Row->TargetProduct)
+					.Add({ Pair.Key, Row->Text, Row->Kind != ECSCraftRumorKind::Chatter });
 			}
 		}
 	}
-	// 표 행 순서가 바뀌어도 같은 시드면 같은 결과가 나오게 키로 정렬한다
-	Pool.Sort([](const FCSCraftRumorLine& A, const FCSCraftRumorLine& B) { return A.Key.LexicalLess(B.Key); });
 
 	// 결정적 계산이라 영업일 시작, 1일차, 불러오기 어느 경로로 와도 같은 날은 같은 소문이 나온다.
-	// 난수 호출 횟수는 풀 크기로만 정해진다
+	// 표 행 순서가 바뀌어도 같은 결과가 나오게 묶음과 문장을 키로 정렬한 뒤 굴린다
 	const uint32 DaySeed = HashCombine(HashCombine(GetTypeHash(GetRumorBaseSeed()), RumorSeedSalt), GetTypeHash(BusinessDay));
 	FRandomStream Stream(static_cast<int32>(DaySeed));
+	Groups.KeySort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
+	TArray<FPoolLine> Pool;
+	for (TPair<FName, TArray<FPoolLine>>& Group : Groups)
+	{
+		Group.Value.Sort([](const FPoolLine& A, const FPoolLine& B) { return A.Key.LexicalLess(B.Key); });
+		Pool.Add(Group.Value.Num() > 1 ? Group.Value[Stream.RandRange(0, Group.Value.Num() - 1)] : Group.Value[0]);
+	}
 	for (int32 Index = Pool.Num() - 1; Index > 0; --Index)
 	{
 		Pool.Swap(Index, Stream.RandRange(0, Index));
 	}
 
-	if (Pool.Num() < RumorsPerDay && !bWarnedSmallPool)
+	for (const FPoolLine& Line : Pool)
 	{
-		bWarnedSmallPool = true;
-		UE_LOG(LogTemp, Warning, TEXT("[제조 검증] 게시판 소문 풀이 %d개라 하루 %d개를 다 채우지 못합니다."), Pool.Num(), RumorsPerDay);
-	}
-	for (int32 Index = 0; Index < FMath::Min(Pool.Num(), RumorsPerDay); ++Index)
-	{
-		CachedDailyRumors.Add(Pool[Index].Text);
+		CachedDailyRumors.Add({ Line.Text, Line.bCraftHint });
 	}
 	return CachedDailyRumors;
 }
 
-FName UCSCraftRumorSubsystem::FindWeatherVariant(FText& OutText)
+FName UCSCraftRumorSubsystem::FindWeatherVariant(const int32 Slot, FText& OutText)
 {
 	OutText = FText::GetEmpty();
 	UCSWeatherSubsystem* WeatherSubsystem = Weather.Get();
@@ -197,8 +256,10 @@ FName UCSCraftRumorSubsystem::FindWeatherVariant(FText& OutText)
 		return NAME_None;
 	}
 
+	// 눈처럼 둘 다 오르면 더 크게 오르는 쪽, 같으면 표에서 앞선 쪽
 	FName BestProduct;
 	float BestModifier = 0.0f;
+	TArray<TPair<FName, FText>> Lines;
 	for (const TPair<FName, uint8*>& Pair : RumorTable->GetRowMap())
 	{
 		const FCSCraftRumorRow* Row = reinterpret_cast<const FCSCraftRumorRow*>(Pair.Value);
@@ -206,53 +267,194 @@ FName UCSCraftRumorSubsystem::FindWeatherVariant(FText& OutText)
 		{
 			continue;
 		}
-		FDataTableRowHandle ProductRow;
-		ProductRow.DataTable = Crafting->GetProductTable();
-		ProductRow.RowName = Row->TargetProduct;
-		// 눈처럼 둘 다 오르면 더 크게 오르는 쪽, 같으면 표에서 앞선 쪽
-		const float Modifier = WeatherSubsystem->GetProductWeatherDemandModifierForWeather(ProductRow, Tomorrow);
-		if (Modifier > BestModifier)
+		if (Row->TargetProduct != BestProduct)
 		{
+			FDataTableRowHandle ProductRow;
+			ProductRow.DataTable = Crafting->GetProductTable();
+			ProductRow.RowName = Row->TargetProduct;
+			const float Modifier = WeatherSubsystem->GetProductWeatherDemandModifierForWeather(ProductRow, Tomorrow);
+			if (Modifier <= BestModifier)
+			{
+				continue;
+			}
 			BestModifier = Modifier;
 			BestProduct = Row->TargetProduct;
-			OutText = Row->Text;
+			Lines.Reset();
+		}
+		Lines.Add({ Pair.Key, Row->Text });
+	}
+	if (Lines.IsEmpty())
+	{
+		return NAME_None;
+	}
+
+	Lines.Sort([](const TPair<FName, FText>& A, const TPair<FName, FText>& B) { return A.Key.LexicalLess(B.Key); });
+	OutText = Lines[Slot % Lines.Num()].Value;
+	return BestProduct;
+}
+
+FName UCSCraftRumorSubsystem::FindEventPreview(const int32 Slot, FText& OutText)
+{
+	OutText = FText::GetEmpty();
+	const UCSNoticeEventSubsystem* NoticeSubsystem = Notice.Get();
+	const UWorld* World = GetWorld();
+	const UCSCraftingSubsystem* Crafting = World ? World->GetSubsystem<UCSCraftingSubsystem>() : nullptr;
+	const UDataTable* RumorTable = IsValid(Crafting) ? Crafting->GetRumorTable() : nullptr;
+	if (!IsValid(NoticeSubsystem) || RumorTable == nullptr)
+	{
+		return NAME_None;
+	}
+
+	// 기념일 날은 뉴스가 안 뜨므로 둘이 겹치지 않는다
+	const FName HolidayRowName = NoticeSubsystem->GetTomorrowHolidayRowName();
+	const FName NewsRowName = HolidayRowName.IsNone() ? NoticeSubsystem->GetTomorrowNewsRowName() : NAME_None;
+	if (HolidayRowName.IsNone() && NewsRowName.IsNone())
+	{
+		return NAME_None;
+	}
+
+	// 기념일은 종족 이야기까지 넣으려고 기념일마다 문장을 따로 쓰고, 뉴스는 틀에 이름과 상품을 끼운다
+	TArray<TPair<FName, FText>> Lines;
+	for (const TPair<FName, uint8*>& Pair : RumorTable->GetRowMap())
+	{
+		const FCSCraftRumorRow* Row = reinterpret_cast<const FCSCraftRumorRow*>(Pair.Value);
+		const bool bMatches = Row != nullptr && (HolidayRowName.IsNone()
+			? Row->Kind == ECSCraftRumorKind::NewsPreview
+			: Row->Kind == ECSCraftRumorKind::HolidayPreview && Row->TargetProduct == HolidayRowName);
+		if (bMatches)
+		{
+			Lines.Add({ Pair.Key, Row->Text });
 		}
 	}
-	return BestProduct;
+	if (Lines.IsEmpty())
+	{
+		return NAME_None;
+	}
+	Lines.Sort([](const TPair<FName, FText>& A, const TPair<FName, FText>& B) { return A.Key.LexicalLess(B.Key); });
+	const FText& Template = Lines[Slot % Lines.Num()].Value;
+
+	if (!HolidayRowName.IsNone())
+	{
+		OutText = Template;
+		return HolidayRowName;
+	}
+
+	FCSNewsEventDataRow News;
+	TArray<FCSNoticeEventEffectRuleRow> Targets;
+	NoticeSubsystem->GetPositiveDemandTargets(ECSNoticeEventSourceType::News, NewsRowName, Targets);
+	if (!NoticeSubsystem->GetNewsRow(NewsRowName, News) || Targets.IsEmpty())
+	{
+		// 오르는 상품이 없으면 "무엇을 준비하라"는 예고가 성립하지 않는다
+		return NAME_None;
+	}
+
+	// 다 나열하면 다시 외울 게 생겨서 가장 많이 오르는 것 둘까지만 말한다. 나머지는 당일 뉴스 탭에 다 나온다
+	FText Demand;
+	if (Targets[0].TargetType == ECSNoticeEventTargetType::Category)
+	{
+		const int64 CategoryValue = StaticEnum<ECSProductCategory>()->GetValueByName(Targets[0].TargetId);
+		const FText CategoryName = CategoryValue != INDEX_NONE
+			? CSGetProductCategoryDisplayName(static_cast<ECSProductCategory>(CategoryValue))
+			: FText::FromName(Targets[0].TargetId);
+		Demand = FText::Format(NSLOCTEXT("CraftRumor", "PreviewDemandCategory", "{0}|hpp(이라면,라면) 뭐든"), CategoryName);
+	}
+	else if (Targets.Num() > 1 && Targets[1].TargetType == ECSNoticeEventTargetType::Product)
+	{
+		Demand = FText::Format(NSLOCTEXT("CraftRumor", "PreviewDemandTwo", "{0}|hpp(이랑,랑) {1}"),
+			Crafting->GetProductDisplayName(Targets[0].TargetId), Crafting->GetProductDisplayName(Targets[1].TargetId));
+	}
+	else
+	{
+		Demand = Crafting->GetProductDisplayName(Targets[0].TargetId);
+	}
+
+	FFormatNamedArguments Args;
+	Args.Add(TEXT("EventName"), News.Title);
+	Args.Add(TEXT("Demand"), Demand);
+	OutText = FText::Format(Template, Args);
+	return NewsRowName;
 }
 
 TArray<FText> UCSCraftRumorSubsystem::GetCurrentRumors()
 {
 	TArray<FText> Rumors;
-	const TArray<FText>& Daily = GetDailyRumors(GetBusinessDay());
+	const TArray<FCSDailyRumor>& Daily = GetDailyRumors(GetBusinessDay());
 	if (Daily.IsEmpty())
 	{
 		return Rumors;
 	}
 
 	const int32 Slot = GetTimeSlot();
-	FText VariantText;
-	const FName Variant = FindWeatherVariant(VariantText);
-	// 고정 자리가 있으면 하루 9개 중 6개만 쓴다. 추첨은 그대로라 날씨와 상관없이 같은 날 같은 순서다
-	const int32 PickCount = Variant.IsNone() ? 3 : 2;
-	if (!Variant.IsNone())
+	FText EventText;
+	FText WeatherText;
+	const bool bHasEvent = !FindEventPreview(Slot, EventText).IsNone();
+	const bool bHasWeather = !FindWeatherVariant(Slot, WeatherText).IsNone();
+
+	// 하루치를 앞에서부터 제조 힌트 자리 3개(시간대마다 하나)와 일반 자리로 나눈다.
+	// 일반 자리는 시간대마다 둘씩 떼어 두고 예고가 없을 때만 꺼내서, 예고 유무와 상관없이 같은 시간대엔 같은 소문이다
+	TArray<const FText*> HintSeats;
+	TArray<const FText*> GeneralSeats;
+	for (const FCSDailyRumor& Rumor : Daily)
 	{
-		Rumors.Add(VariantText);
+		if (Rumor.bCraftHint && HintSeats.Num() < TimeSlotsPerDay)
+		{
+			HintSeats.Add(&Rumor.Text);
+		}
+		else
+		{
+			GeneralSeats.Add(&Rumor.Text);
+		}
 	}
-	for (int32 Index = Slot * PickCount; Index < (Slot + 1) * PickCount && Daily.IsValidIndex(Index); ++Index)
+
+	auto AddGeneral = [&Rumors, &GeneralSeats, Slot](const int32 SeatInSlot)
 	{
-		Rumors.Add(Daily[Index]);
+		const int32 Index = Slot * 2 + SeatInSlot;
+		if (GeneralSeats.IsValidIndex(Index))
+		{
+			Rumors.Add(*GeneralSeats[Index]);
+		}
+	};
+
+	if (bHasEvent)
+	{
+		Rumors.Add(EventText);
+	}
+	else
+	{
+		AddGeneral(0);
+	}
+	if (bHasWeather)
+	{
+		Rumors.Add(WeatherText);
+	}
+	else
+	{
+		AddGeneral(1);
+	}
+	if (HintSeats.IsValidIndex(Slot))
+	{
+		Rumors.Add(*HintSeats[Slot]);
 	}
 	return Rumors;
 }
 
 void UCSCraftRumorSubsystem::CheckRumorStateChanged()
 {
-	FText VariantText;
+	FText Unused;
 	const int32 Day = GetBusinessDay();
 	const int32 Slot = GetTimeSlot();
-	const FName Variant = FindWeatherVariant(VariantText);
-	if (bHasLastState && Day == LastDay && Slot == LastTimeSlot && Variant == LastVariant)
+	const FName Variant = FindWeatherVariant(Slot, Unused);
+	// 게임 시간이 바뀔 때마다 불려서 예고 문장은 조립하지 않고 무슨 일인지만 본다
+	FName EventPreview;
+	if (const UCSNoticeEventSubsystem* NoticeSubsystem = Notice.Get())
+	{
+		EventPreview = NoticeSubsystem->GetTomorrowHolidayRowName();
+		if (EventPreview.IsNone())
+		{
+			EventPreview = NoticeSubsystem->GetTomorrowNewsRowName();
+		}
+	}
+	if (bHasLastState && Day == LastDay && Slot == LastTimeSlot && Variant == LastVariant && EventPreview == LastEventPreview)
 	{
 		return;
 	}
@@ -260,6 +462,7 @@ void UCSCraftRumorSubsystem::CheckRumorStateChanged()
 	LastDay = Day;
 	LastTimeSlot = Slot;
 	LastVariant = Variant;
+	LastEventPreview = EventPreview;
 	OnCraftRumorsChanged.Broadcast();
 }
 
@@ -274,6 +477,11 @@ void UCSCraftRumorSubsystem::HandleBusinessDayChanged(int32 NewBusinessDay)
 }
 
 void UCSCraftRumorSubsystem::HandleWeatherForecastUpdated()
+{
+	CheckRumorStateChanged();
+}
+
+void UCSCraftRumorSubsystem::HandleNoticeEventsChanged()
 {
 	CheckRumorStateChanged();
 }
