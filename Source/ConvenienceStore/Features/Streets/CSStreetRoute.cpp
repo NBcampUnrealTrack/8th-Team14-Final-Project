@@ -84,6 +84,112 @@ float ACSStreetRoute::GetStorefrontDistance() const
 	return StorefrontDistance;
 }
 
+// 가게 입구 거리가 지정되어 있는지 확인
+bool ACSStreetRoute::HasStorefront() const
+{
+	return GetStorefrontDistance() >= 0.0f;
+}
+
+// 월드 위치의 옆 거리를 그 지점의 레인 최대 거리로 나눈 레인 비율을 반환
+float ACSStreetRoute::GetLaneRatio(
+	const FVector& WorldLocation,
+	float BodyRadius) const
+{
+	float Distance = 0.0f;
+	float Lateral = 0.0f;
+	if (!GetRouteCoordinates(WorldLocation, Distance, Lateral))
+	{
+		return 0.0f;
+	}
+
+	// 구간마다 길 폭이 다를 수 있으므로 cm가 아니라 레인 최대 거리 대비 비율로 반환
+	const float Limit = GetLaneLimitAtDistance(Distance, BodyRadius);
+	if (Limit <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	return FMath::Clamp(Lateral / Limit, -1.0f, 1.0f);
+}
+
+// 현재 위치가 목적지 방향 기준으로 가게 입구 거리를 지났는지 확인
+bool ACSStreetRoute::IsPastStorefront(
+	const FVector& WorldLocation,
+	const FVector& Destination) const
+{
+	const float Storefront = GetStorefrontDistance();
+	if (Storefront < 0.0f)
+	{
+		return false;
+	}
+
+	float Distance = 0.0f;
+	float Lateral = 0.0f;
+	float DestinationDistance = 0.0f;
+	float DestinationLateral = 0.0f;
+
+	if (!GetRouteCoordinates(WorldLocation, Distance, Lateral) ||
+		!GetRouteCoordinates(Destination, DestinationDistance, DestinationLateral))
+	{
+		return false;
+	}
+
+	// 목적지가 입구보다 앞이면 기준선 정방향, 뒤면 역방향으로 이동 중인 것으로 판단
+	float WalkSign = 1.0f;
+	if (DestinationDistance < Storefront)
+	{
+		WalkSign = -1.0f;
+	}
+
+	return (Distance - Storefront) * WalkSign >= 0.0f;
+}
+
+// 매장에서 나온 NPC가 레인에 합류할 지면 좌표를 계산
+bool ACSStreetRoute::GetMergeLocation(
+	float LaneRatio,
+	float BodyRadius,
+	const FVector& Destination,
+	FVector& OutLocation) const
+{
+	OutLocation = FVector::ZeroVector;
+
+	const float Storefront = GetStorefrontDistance();
+	if (Storefront < 0.0f)
+	{
+		return false;
+	}
+
+	float DestinationDistance = 0.0f;
+	float DestinationLateral = 0.0f;
+	if (!GetRouteCoordinates(Destination, DestinationDistance, DestinationLateral))
+	{
+		return false;
+	}
+
+	// 입구 거리에서 목적지 방향으로 MergeAheadDistance만큼 이동하되 목적지 거리를 넘지 않도록 제한
+	float MergeDistance = Storefront;
+	if (DestinationDistance >= Storefront)
+	{
+		MergeDistance = FMath::Min(Storefront + MergeAheadDistance, DestinationDistance);
+	}
+	else
+	{
+		MergeDistance = FMath::Max(Storefront - MergeAheadDistance, DestinationDistance);
+	}
+
+	// 레인 비율에 합류 지점의 레인 최대 거리를 곱해 옆 거리를 계산
+	// 비율이 기준선 오른쪽 기준이라 진행 방향과 관계없이 부호를 그대로 사용
+	const float Lateral =
+		FMath::Clamp(LaneRatio, -1.0f, 1.0f) * GetLaneLimitAtDistance(MergeDistance, BodyRadius);
+
+	// BuildLanePath와 같은 검색 범위로 NavMesh에 투영
+	// 높이는 FCSStreetLaneRequest의 기본 QueryHalfHeight와 같은 값을 사용
+	const float QueryRadius = FMath::Max(BodyRadius, 50.0f);
+	const FVector QueryExtent(QueryRadius, QueryRadius, 250.0f);
+
+	return ProjectLanePoint(MergeDistance, Lateral, QueryExtent, OutLocation);
+}
+
 // 기준선 위 거리의 수평 진행 방향 기준 오른쪽 벡터를 반환
 FVector ACSStreetRoute::GetFlatRightAtDistance(float Distance) const
 {

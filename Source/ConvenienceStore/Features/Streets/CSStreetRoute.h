@@ -64,6 +64,30 @@ public:
 	// 입구 마커가 있으면 마커 위치를 투영한 거리, 없으면 StorefrontDistance를 반환
 	float GetStorefrontDistance() const;
 
+	// 가게 입구 거리가 지정되어 있는지 확인
+	bool HasStorefront() const;
+
+	// 월드 위치의 옆 거리를 그 지점의 레인 최대 거리로 나눈 레인 비율을 반환
+	// 기준선 진행 방향의 오른쪽이 양수이며 -1~1로 제한하고, 기준선이 유효하지 않으면 0을 반환
+	float GetLaneRatio(
+		const FVector& WorldLocation,
+		float BodyRadius) const;
+
+	// 현재 위치가 목적지 방향 기준으로 가게 입구 거리를 지났는지 확인
+	// 입구 거리가 없거나 기준선이 유효하지 않으면 false를 반환
+	bool IsPastStorefront(
+		const FVector& WorldLocation,
+		const FVector& Destination) const;
+
+	// 매장에서 나온 NPC가 레인에 합류할 지면 좌표를 계산
+	// 입구 거리에서 목적지 방향으로 MergeAheadDistance만큼 앞, 레인 비율만큼 옆으로 이동한 위치를 사용
+	// 입구 거리가 없거나 NavMesh 투영에 실패하면 false를 반환
+	bool GetMergeLocation(
+		float LaneRatio,
+		float BodyRadius,
+		const FVector& Destination,
+		FVector& OutLocation) const;
+
 	// 기준선 스플라인을 반환
 	USplineComponent* GetSpline() const { return Spline; }
 
@@ -111,6 +135,12 @@ protected:
 	// 지정하면 이 액터 위치를 기준선에 투영한 거리를 입구 거리로 사용
 	UPROPERTY(EditAnywhere, Category = "Street|Storefront")
 	TObjectPtr<AActor> StorefrontMarker;
+
+	// 매장에서 나온 NPC가 입구 거리에서 진행 방향으로 더 나아가 레인에 합류하는 거리
+	// 입구 정면에서 직각으로 꺾지 않고 비스듬히 합류하도록 사용
+	UPROPERTY(EditAnywhere, Category = "Street|Storefront",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float MergeAheadDistance = 250.0f;
 
 private:
 	// 기준선 위 거리의 수평 진행 방향 기준 오른쪽 벡터를 반환
