@@ -11,6 +11,7 @@
 #include "CSCustomerStateComponent.generated.h"
 
 class UCSCustomerStateComponent;
+class ACSStreetRoute;
 
 // 입장이 확정되는 순간(bHasEnteredStore false → true) 한 번만 방송됩니다.
 DECLARE_MULTICAST_DELEGATE_OneParam(FCSOnEnteredStoreNative, UCSCustomerStateComponent* /*State*/);
@@ -76,6 +77,20 @@ public:
 	// 가게 앞 판정 지점의 좌표. 스포너가 스폰 시점에 채워줍니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer")
 	FVector StorefrontLocation = FVector::ZeroVector;
+
+	// 거리 구간을 걸을 때 따라갈 기준선. 스포너에 Route가 지정된 경우에만 채워짐
+	// 비어 있으면 Approach와 Leave가 NavMesh 최단 경로로 이동
+	UPROPERTY(VisibleAnywhere, Category = "Customer|Street")
+	TWeakObjectPtr<ACSStreetRoute> StreetRoute;
+
+	// 스폰 위치에서 계산한 레인 비율(-1~1, 기준선 진행 방향 오른쪽이 양수)
+	// 매장에서 나와 거리에 합류할 때 같은 레인으로 돌아가도록 저장
+	// 길 폭이 구간마다 다를 수 있어 cm가 아니라 비율로 보관
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Street")
+	float StreetLaneRatio = 0.0f;
+
+	// 따라갈 기준선을 반환하고 없으면 nullptr을 반환
+	ACSStreetRoute* GetStreetRoute() const;
 
 	// 영업시간 종료로 강제 퇴장이 확정된 손님인지.
 	// 이 플래그가 필요한 이유는 두 가지
