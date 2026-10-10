@@ -9,9 +9,9 @@ class ACSStoreEmployeeCharacter;
 UENUM(BlueprintType)
 enum class ECSEmployeeHireSlot : uint8
 {
-	FirstRestock UMETA(DisplayName = "첫 번째 진열 직원"),
+	FirstRestock UMETA(DisplayName = "진열 직원"),
 	Checkout UMETA(DisplayName = "계산 직원"),
-	SecondRestock UMETA(DisplayName = "두 번째 진열 직원"),
+	SecondRestock UMETA(DisplayName = "진열 직원 추가 고용"),
 };
 
 USTRUCT(BlueprintType)
