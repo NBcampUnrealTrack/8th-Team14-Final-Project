@@ -132,13 +132,19 @@ void ACSStoreEmployeeCharacter::OnConstruction(const FTransform& Transform)
 void ACSStoreEmployeeCharacter::ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength)
 {
 	if (!HasAuthority() || !CanWork() || !CanHandleTask(ECSStoreEmployeeTaskType::RestockShelf)) return;
+	ApplyMagicWorkBoost(MagicBoostDuration, MagicWorkMultiplier);
+}
+
+void ACSStoreEmployeeCharacter::ApplyMagicWorkBoost(float Duration, float Multiplier)
+{
+	if (!HasAuthority() || !CanWork() || Duration <= 0.0f) return;
 	if (!GetWorldTimerManager().IsTimerActive(MagicBoostTimer))
 	{
 		MoveSpeedBeforeBoost = GetCharacterMovement()->MaxWalkSpeed;
 	}
 	GetCharacterMovement()->MaxWalkSpeed = MoveSpeedBeforeBoost * FMath::Max(1.0f, MagicMoveMultiplier);
-	WorkSpeedMultiplier = FMath::Max(1.0f, MagicWorkMultiplier);
-	GetWorldTimerManager().SetTimer(MagicBoostTimer, this, &ThisClass::EndMagicBoost, FMath::Max(0.1f, MagicBoostDuration), false);
+	WorkSpeedMultiplier = FMath::Max(1.0f, Multiplier);
+	GetWorldTimerManager().SetTimer(MagicBoostTimer, this, &ThisClass::EndMagicBoost, FMath::Max(0.1f, Duration), false);
 	MagicBoostNameplate->SetHiddenInGame(false);
 	OnMagicBoostChanged(true);
 }

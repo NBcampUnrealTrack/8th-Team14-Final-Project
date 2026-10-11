@@ -7,6 +7,9 @@
 #include "Sound/SoundBase.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
+#include "Systems/SaveLoad/CSSaveGame.h"
+#include "TimerManager.h"
+#include "Engine/World.h"
 
 void UCSAudioSubsystem::Deinitialize()
 {
@@ -122,25 +125,32 @@ bool UCSAudioSubsystem::IsSFXMuted() const
 
 bool UCSAudioSubsystem::PlayBGM()
 {
-	if (!IsValid(AudioConfig) || !IsValid(AudioConfig->StoreBGM) || !IsValid(GetWorld()))
+	const FName Id = GetSelectedBGMId();
+	USoundBase* Sound = nullptr;
+	for (const FCSBGMTrack& Track : GetBGMTracks()) if (Track.Id == Id) { Sound = Track.Sound; break; }
+	if (!IsValid(Sound) || !IsValid(GetWorld()))
 	{
 		return false;
 	}
 
+	ClearBGMTransition();
 	if (IsValid(ActiveBGMComponent))
 	{
-		if (ActiveBGMComponent->Sound == AudioConfig->StoreBGM &&
+		if (bBGMPlaybackRequested && ActiveBGMComponent->Sound == Sound &&
 			ActiveBGMComponent->IsPlaying())
 		{
+			PlayingBGMId = Id;
+			OnBGMChanged.Broadcast();
 			return true;
 		}
 
 		StopBGM();
 	}
 
-	ActiveBGMComponent = UGameplayStatics::SpawnSound2D(
+	bBGMPlaybackRequested = true;
+	ActiveBGMComponent = UGameplayStatics::CreateSound2D(
 		GetWorld(),
-		AudioConfig->StoreBGM,
+		Sound,
 		1.0f,
 		1.0f,
 		0.0f,
@@ -148,28 +158,134 @@ bool UCSAudioSubsystem::PlayBGM()
 		false,
 		false);
 
+	if (IsValid(ActiveBGMComponent))
+	{
+		ActiveBGMComponent->SoundClassOverride = AudioConfig->BGMSoundClass;
+		ActiveBGMComponent->OnAudioFinished.AddUniqueDynamic(this, &ThisClass::HandleBGMFinished);
+		PlayingBGMId = Id;
+		ActiveBGMComponent->FadeIn(0.2f);
+	}
+	OnBGMChanged.Broadcast();
 	return IsValid(ActiveBGMComponent);
 }
 
 void UCSAudioSubsystem::StopBGM()
 {
+	bBGMPlaybackRequested = false;
+	ClearBGMTransition();
+	PlayingBGMId = NAME_None;
 	if (!IsValid(ActiveBGMComponent))
 	{
 		ActiveBGMComponent = nullptr;
 		return;
 	}
 
+	ActiveBGMComponent->OnAudioFinished.RemoveDynamic(this, &ThisClass::HandleBGMFinished);
 	ActiveBGMComponent->Stop();
 	ActiveBGMComponent->DestroyComponent();
 	ActiveBGMComponent = nullptr;
+	OnBGMChanged.Broadcast();
 }
 
 void UCSAudioSubsystem::FadeOutBGM(float Duration)
 {
+	// 수면 중 변경/로드하더라도 다음 PlayBGM 요청 전까지 음악을 다시 켜지 않습니다.
+	bBGMPlaybackRequested = false;
+	ClearBGMTransition();
 	if (IsValid(ActiveBGMComponent))
 	{
 		ActiveBGMComponent->FadeOut(FMath::Max(0.0f, Duration), 0.0f);
 	}
+}
+
+TArray<FCSBGMTrack> UCSAudioSubsystem::GetBGMTracks() const
+{
+	TArray<FCSBGMTrack> Result;
+	if (!AudioConfig) return Result;
+	if (IsValid(AudioConfig->StoreBGM))
+	{
+		FCSBGMTrack& Default = Result.AddDefaulted_GetRef();
+		Default.Id = TEXT("Store");
+		Default.DisplayName = NSLOCTEXT("Jukebox", "StoreMusic", "이세계 편의점");
+		Default.Sound = AudioConfig->StoreBGM;
+	}
+	for (const FCSBGMTrack& Track : AudioConfig->BGMTracks)
+	{
+		if (Track.Id.IsNone() || !IsValid(Track.Sound)) continue;
+		if (FCSBGMTrack* Existing = Result.FindByPredicate([&](const auto& T) { return T.Id == Track.Id; }))
+		{
+			// Store는 항상 기존 기본 음악입니다. 목록에서는 표시 이름만 바꿀 수 있습니다.
+			if (Track.Id == TEXT("Store") && !Track.DisplayName.IsEmpty()) Existing->DisplayName = Track.DisplayName;
+			continue;
+		}
+		Result.Add(Track);
+	}
+	return Result;
+}
+
+FName UCSAudioSubsystem::GetSelectedBGMId() const
+{
+	for (const auto& Track : GetBGMTracks()) if (Track.Id == SelectedBGMId) return SelectedBGMId;
+	return TEXT("Store");
+}
+
+FName UCSAudioSubsystem::GetPlayingBGMId() const
+{
+	return IsValid(ActiveBGMComponent) && ActiveBGMComponent->IsPlaying() ? PlayingBGMId : NAME_None;
+}
+
+bool UCSAudioSubsystem::SelectBGM(FName Id)
+{
+	if (!GetBGMTracks().ContainsByPredicate([&](const auto& T) { return T.Id == Id; })) return false;
+	if (GetSelectedBGMId() == Id) return true;
+	SelectedBGMId = Id;
+	ClearBGMTransition();
+	if (bBGMPlaybackRequested)
+	{
+		if (IsValid(ActiveBGMComponent) && ActiveBGMComponent->IsPlaying() && GetWorld())
+		{
+			ActiveBGMComponent->FadeOut(0.2f, 0.0f);
+			BGMTransitionWorld = GetWorld();
+			GetWorld()->GetTimerManager().SetTimer(BGMTransitionTimer, FTimerDelegate::CreateWeakLambda(this, [this] { PlayBGM(); }), 0.2f, false);
+		}
+		else PlayBGM();
+	}
+	OnBGMChanged.Broadcast();
+	return true;
+}
+
+void UCSAudioSubsystem::ClearBGMTransition()
+{
+	if (BGMTransitionWorld.IsValid()) BGMTransitionWorld->GetTimerManager().ClearTimer(BGMTransitionTimer);
+	BGMTransitionWorld.Reset();
+}
+
+void UCSAudioSubsystem::HandleBGMFinished()
+{
+	PlayingBGMId = NAME_None;
+	// 페이드 전환은 타이머가 담당하고 자연 종료된 비반복 음원만 다시 재생합니다.
+	if (bBGMPlaybackRequested && !BGMTransitionTimer.IsValid()) PlayBGM();
+	else OnBGMChanged.Broadcast();
+}
+
+void UCSAudioSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
+{
+	OutSave.SelectedBGMId = GetSelectedBGMId();
+}
+
+void UCSAudioSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
+{
+	SelectedBGMId = InSave.SelectedBGMId;
+	SelectedBGMId = GetSelectedBGMId();
+	if (bBGMPlaybackRequested) PlayBGM();
+	OnBGMChanged.Broadcast();
+}
+
+void UCSAudioSubsystem::ResetBGMSelection()
+{
+	StopBGM();
+	SelectedBGMId = NAME_None;
+	OnBGMChanged.Broadcast();
 }
 
 float UCSAudioSubsystem::GetSFXDuration(ECSAudioEvent AudioEvent) const
