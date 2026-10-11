@@ -2259,6 +2259,9 @@ bool UCSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer(ACSCustomerCharacter*
 		return true;
 	}
 
+	// 최초 피격 정보만 저장. 이동 중지와 래그돌은 StateTree 제압 상태 진입에서 시작
+	Customer->QueueSubduedReaction(ImpactDirection, KnockbackStrength);
+
 	// 쓰러진 빌런은 더 이상 추격 대상이 아니므로 외곽선을 끈다.
 	Customer->SetVillainHighlight(false);
 
@@ -2278,10 +2281,6 @@ bool UCSCustomerRuntimeSubsystem::HandleMagicHitOnCustomer(ACSCustomerCharacter*
 	// 쓰러지는 연출보다 먼저 하는 이유: 낙하 기준점이 손님에 붙은 화살표 컴포넌트라서
 	// 나중에 랙돌로 몸이 뒤집힌 뒤에 부르면 상품이 땅밑이나 벽에 박힌다.
 	const int32 DroppedCount = DropCustomerItems(Customer);
-
-	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제. 상세는 VillainSubdue_Design.md 4-6절
-	// 쓰러지는 연출을 넣을 자리. 연출이 후순위라 훅 자체를 주석 처리해 둔 상태
-	// 종족별 분기는 캐릭터 쪽 C++ 구현이 담당
 
 	if (GEngine != nullptr)
 	{
