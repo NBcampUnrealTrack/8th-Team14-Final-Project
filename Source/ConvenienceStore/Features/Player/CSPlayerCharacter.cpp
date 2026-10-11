@@ -3735,6 +3735,8 @@ void ACSPlayerCharacter::ThrowHeldItem()
 	{
 		if (IsValid(PrimitiveComponent) && PrimitiveComponent->IsSimulatingPhysics())
 		{
+			// 세게 던지면 한 프레임에 벽 두께보다 멀리 가서 벽을 뚫는다
+			PrimitiveComponent->SetUseCCD(true);
 			PrimitiveComponent->AddImpulse(
 				ThrowDirection * ThrowStrength,
 				NAME_None,

@@ -108,6 +108,8 @@ void ACSMagicWandActor::PrepareForPickupPhysics()
 {
 	Super::PrepareForPickupPhysics();
 	// Quickbar 보관과 Home Dock 반환도 이 기존 준비 경로를 거칩니다.
+	// 퀵바 보관은 OnUnequipped를 안 거쳐서 여기서 안 지우면 조준점이 계속 떠 있다
+	HideCrosshairWidget();
 	RestoreWorldScale();
 }
 
