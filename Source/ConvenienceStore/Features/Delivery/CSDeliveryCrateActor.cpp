@@ -1,13 +1,16 @@
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Data/CSCollisionChannels.h"
 
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 
 #include "Components/SceneComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Data/CSFreshnessSettingsDataAsset.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/GameInstance.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Items/CSProductPlacementPreviewActor.h"
@@ -54,6 +57,7 @@ ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 	CrateMesh->SetupAttachment(SceneRoot);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CrateMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 	// 상자는 Pawn을 막지 않고 겹침으로만 상호작용합니다.
 	// 따라서 이동 가능한 바닥을 NavMesh에서 제거할 이유가 없으며, 이 설정이 없으면
 	// 직원 캡슐 반경(75cm)까지 반영된 빈 공간 때문에 상자 중심에서 멀리 멈출 수 있습니다.
@@ -62,6 +66,15 @@ ACSDeliveryCrateActor::ACSDeliveryCrateActor()
 	CrateMesh->OnComponentBeginOverlap.AddDynamic(
 		this,
 		&ACSDeliveryCrateActor::HandlePawnOverlap);
+
+	SubduedCollisionProxy = CreateDefaultSubobject<UBoxComponent>(TEXT("SubduedCollisionProxy"));
+	SubduedCollisionProxy->SetupAttachment(CrateMesh);
+	SubduedCollisionProxy->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SubduedCollisionProxy->SetCollisionObjectType(ECC_WorldDynamic);
+	SubduedCollisionProxy->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SubduedCollisionProxy->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Block);
+	SubduedCollisionProxy->SetGenerateOverlapEvents(false);
+	SubduedCollisionProxy->SetCanEverAffectNavigation(false);
 }
 
 void ACSDeliveryCrateActor::BeginPlay()
@@ -71,8 +84,10 @@ void ACSDeliveryCrateActor::BeginPlay()
 	if (IsValid(CrateMesh))
 	{
 		CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+		CrateMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 		CrateMesh->SetGenerateOverlapEvents(true);
 	}
+	UpdateSubduedCollisionProxy();
 
 	const bool bRuntimeCrateIsUninitialized =
 		ProductRow.DataTable == nullptr &&
@@ -627,8 +642,31 @@ void ACSDeliveryCrateActor::EnableWorldDropPhysics()
 
 	CrateMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CrateMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CrateMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 	CrateMesh->SetGenerateOverlapEvents(true);
 	CrateMesh->SetSimulatePhysics(true);
+	UpdateSubduedCollisionProxy();
+}
+
+void ACSDeliveryCrateActor::UpdateSubduedCollisionProxy()
+{
+	if (!IsValid(CrateMesh) || !IsValid(SubduedCollisionProxy))
+	{
+		return;
+	}
+
+	const UStaticMesh* CrateStaticMesh = CrateMesh->GetStaticMesh();
+	if (!IsValid(CrateStaticMesh))
+	{
+		SubduedCollisionProxy->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		return;
+	}
+
+	// 상자 메시의 물리 반응은 제외하고 현재 크기의 고정 충돌 상자로 래그돌만 정지
+	const FBox LocalBounds = CrateStaticMesh->GetBoundingBox();
+	SubduedCollisionProxy->SetRelativeLocation(LocalBounds.GetCenter());
+	SubduedCollisionProxy->SetBoxExtent(LocalBounds.GetExtent() * 0.9f);
+	SubduedCollisionProxy->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 }
 
 void ACSDeliveryCrateActor::EnterFreshnessSafeZone(

@@ -43,21 +43,16 @@ public:
 	// 결제가 확정된 고객에게 장바구니 대신 봉투를 보여 줍니다.
 	void ShowShoppingBag();
 
-	// 마법 투사체에 맞았을 때 공격이 진행한 방향으로 고객을 밀어냅니다.
+	// 마법 투사체의 피격 정보를 전달하고 빌런 제압 판정을 처리
 	virtual void ApplyMagicHit_Implementation(
 		FVector HitLocation,
 		FVector ImpactDirection,
 		float KnockbackStrength) override;
 
-	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제.
-	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
-	//void BeginSubduedReaction(FVector ImpactDirection, float KnockbackStrength);
-	//virtual void BeginSubduedReaction_Implementation(FVector ImpactDirection, float KnockbackStrength);
-
-	// TODO(제압 연출): 소멸 직전 1회. 랙돌 정리나 사라지는 연출을 붙일 자리
-	//UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Customer|Subdue")
-	//void EndSubduedReaction();
-	//virtual void EndSubduedReaction_Implementation();
+	// 최초 제압 피격 정보를 저장. 이동 중지와 래그돌은 제압 상태 진입 시 처리
+	void QueueSubduedReaction(const FVector& ImpactDirection, float KnockbackStrength);
+	// 제압 상태 진입 시 현재 자세·스케일로 물리를 재생성한 뒤 최초 골반 충격을 한 번 적용
+	void BeginSubduedReaction();
 
 
 	// 계산을 포기했을 때 상품을 내려놓기 시작할 지점 SideIndex: 0 = 왼쪽, 1 = 오른쪽
@@ -132,10 +127,20 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Customer|Drop")
 	TObjectPtr<UArrowComponent> DropOriginRight;
 
-	// 넉백 시 약간 위로 뜨도록 더하는 수직 속도입니다.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Magic Hit",
+	// 투사체의 넉백 강도를 골반의 수평 속도 변화로 바꾸는 비율
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Subdue",
 		meta = (ClampMin = "0.0", UIMin = "0.0"))
-	float MagicKnockbackUpwardStrength = 250.0f;
+	float SubduedHorizontalVelocityScale = 0.2f;
+
+	// 종족별 질량과 관계없이 골반에 적용할 최대 수평 속도 변화(cm/s)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Subdue",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float SubduedMaxHorizontalVelocityChange = 350.0f;
+
+	// 쓰러질 때 골반에 적용할 위쪽 속도 변화(cm/s)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Subdue",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float SubduedUpwardVelocityChange = 80.0f;
 
 	// Post Process 외곽선 머티리얼에서 빨강으로 설정하여 사용
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Customer|Villain",
@@ -177,6 +182,8 @@ private:
 	void PlayPickSound();
 	void ApplyActionMeshRotation();
 	void RestoreActionMeshRotation();
+	void LogSubduedPhysicsState(const TCHAR* Stage) const;
+	void LogSubduedPhysicsAfterSimulation();
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimSequence> FallbackIdleAnimation;
@@ -195,6 +202,8 @@ private:
 
 	FTimerHandle ActionAnimationTimerHandle;
 	FTimerHandle PickSoundTimerHandle;
+	// 제압 직후 물리 폭주 여부를 한 번 기록하고 EndPlay에서 해제
+	FTimerHandle SubduedPhysicsDiagnosticTimerHandle;
 	// ShowHeadIcon()이 예약한 자동 숨김 타이머
 	FTimerHandle HeadIconHideTimerHandle;
 	bool bFallbackAnimationsInitialized = false;
@@ -209,6 +218,12 @@ private:
 	FTransform SavedActionBasketAnchorRelativeTransform = FTransform::Identity;
 	bool bActionMeshRotationApplied = false;
 	bool bActionBasketAnchorTransformCached = false;
+	bool bSubduedRagdollActive = false;
+	float SubduedReactionStartTime = 0.0f;
+	// StateTree 제압 상태에 진입할 때까지 보관하는 최초 피격 정보
+	FVector PendingSubduedImpactDirection = FVector::ZeroVector;
+	float PendingSubduedKnockbackStrength = 0.0f;
+	bool bSubduedReactionPending = false;
 
 	// 외곽선을 켜기 전 원래 상태를 기억해뒀다가 끌 때 복원
 	TMap<TObjectPtr<UPrimitiveComponent>, bool> OriginalCustomDepthStates;
