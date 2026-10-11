@@ -583,11 +583,17 @@ int32 ACSStoreGameState::GetStoreLevel() const
 
 FText ACSStoreGameState::GetStoreLevelDisplayName() const
 {
+	return GetStoreLevelDisplayNameForLevel(CurrentStoreLevel);
+}
+
+FText ACSStoreGameState::GetStoreLevelDisplayNameForLevel(const int32 StoreLevel) const
+{
+	const int32 SafeLevel = FMath::Clamp(StoreLevel, 1, 10);
 	return IsValid(StoreProgressionDataAsset)
-		? StoreProgressionDataAsset->GetStoreLevelDisplayName(CurrentStoreLevel)
+		? StoreProgressionDataAsset->GetStoreLevelDisplayName(SafeLevel)
 		: FText::Format(
 			NSLOCTEXT("StoreLevel", "FallbackLevelName", "상점 레벨 {0}"),
-			FText::AsNumber(CurrentStoreLevel));
+			FText::AsNumber(SafeLevel));
 }
 
 int32 ACSStoreGameState::GetStoreExperienceInCurrentLevel() const

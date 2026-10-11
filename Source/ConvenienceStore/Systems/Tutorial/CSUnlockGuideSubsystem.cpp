@@ -3,6 +3,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Features/Store/CSUnlockGuideCamera.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Ending/CSEndingActors.h"
@@ -22,6 +23,22 @@
 #include "LevelSequencePlayer.h"
 #include "LevelSequenceActor.h"
 #include "MovieSceneSequencePlaybackSettings.h"
+
+namespace
+{
+void DebugSkipOpeningCommand(UWorld* World)
+{
+	if (UCSUnlockGuideSubsystem* Guide = World ? World->GetSubsystem<UCSUnlockGuideSubsystem>() : nullptr)
+	{
+		Guide->DebugSkipOpening();
+	}
+}
+
+FAutoConsoleCommandWithWorld CmdSkipOpening(
+	TEXT("cs.SkipOpening"),
+	TEXT("현재 재생 중인 새 게임 오프닝을 종료하고 게임으로 진행한다. 디버그용."),
+	FConsoleCommandWithWorldDelegate::CreateStatic(&DebugSkipOpeningCommand));
+}
 
 TStatId UCSUnlockGuideSubsystem::GetStatId() const
 {
@@ -160,7 +177,19 @@ void UCSUnlockGuideSubsystem::Tick(float DeltaTime)
 			if (Count != VisibleCharacters) { VisibleCharacters = Count; RefreshPresentation(); }
 		}
 	}
-	else if (Stage == EStage::LevelUp || Stage == EStage::Goal || Stage == EStage::EyeOpening || Stage == EStage::CameraHold) HideOtherWidgets();
+	else if (Stage == EStage::StoryFadeOut || Stage == EStage::StoryFadeIn)
+	{
+		HideOtherWidgets();
+		UpdateStoryTransition(RealDelta);
+	}
+	else if (Stage == EStage::LevelUp)
+	{
+		HideOtherWidgets();
+		Elapsed += RealDelta;
+		const float Delay = Controller ? FMath::Max(0.1f, Controller->LevelUpAutoAdvanceDelay) : 3.0f;
+		if (Elapsed >= Delay) BeginStory();
+	}
+	else if (Stage == EStage::Goal || Stage == EStage::EyeOpening || Stage == EStage::CameraHold) HideOtherWidgets();
 	else if (Stage == EStage::Waiting)
 	{
 		// 운반 여부는 차단 조건으로 쓰지 않고, 작업과 이동이 잠깐 끝난 시점에 시작합니다.
@@ -289,6 +318,7 @@ void UCSUnlockGuideSubsystem::BeginGuide()
 	if (bLevelEvent)
 	{
 		Stage = EStage::LevelUp;
+		Elapsed = 0.0f;
 		RefreshWidget();
 		return;
 	}
@@ -325,6 +355,8 @@ bool UCSUnlockGuideSubsystem::StartOpeningStory()
 	if (EyeClass->HasAnyClassFlags(CLASS_Abstract)) EyeClass = UCSWakeUpWidget::StaticClass();
 	EyeWidget = CreateWidget<UCSWakeUpWidget>(Controller, EyeClass);
 	if (!EyeWidget) return false;
+	// 다른 경로에서 이미 시작된 BGM도 프롤로그 동안에는 확실히 정지합니다.
+	if (UCSAudioSubsystem* AudioSubsystem = UCSAudioSubsystem::Get(this)) AudioSubsystem->StopBGM();
 	bOwnsPause = Controller->SetPause(true);
 	if (!bOwnsPause) { EyeWidget = nullptr; return false; }
 	bOpening = true;
@@ -347,6 +379,14 @@ bool UCSUnlockGuideSubsystem::StartOpeningStory()
 	return true;
 }
 
+void UCSUnlockGuideSubsystem::DebugSkipOpening()
+{
+	if (!bOpening) return;
+	// 정상 눈뜨기 완료 경로와 마찬가지로, 미뤄 둔 기본 BGM을 시작한 뒤 모든 잠금과 UI를 정리합니다.
+	if (UCSAudioSubsystem* AudioSubsystem = UCSAudioSubsystem::Get(this)) AudioSubsystem->PlayBGM();
+	Finish(true);
+}
+
 void UCSUnlockGuideSubsystem::FinishEyeOpening()
 {
 	if (EyeWidget)
@@ -355,6 +395,8 @@ void UCSUnlockGuideSubsystem::FinishEyeOpening()
 		EyeWidget->RemoveFromParent();
 		EyeWidget = nullptr;
 	}
+	// 프롤로그와 눈뜨기 연출이 모두 끝난 뒤에만 상점 기본 BGM을 시작합니다.
+	if (UCSAudioSubsystem* AudioSubsystem = UCSAudioSubsystem::Get(this)) AudioSubsystem->PlayBGM();
 	if (Stage == EStage::EyeOpening) BeginStory();
 }
 
@@ -378,7 +420,14 @@ void UCSUnlockGuideSubsystem::BeginNextLevel()
 void UCSUnlockGuideSubsystem::BeginStory()
 {
 	SceneIndex = INDEX_NONE;
-	NextStoryScene();
+	BeginStoryFadeOut();
+}
+
+void UCSUnlockGuideSubsystem::BeginStoryFadeOut()
+{
+	Stage = EStage::StoryFadeOut;
+	Elapsed = 0.0f;
+	if (PresentationWidget) PresentationWidget->SetStoryFadeOpacity(0.0f);
 }
 
 void UCSUnlockGuideSubsystem::NextStoryScene()
@@ -396,6 +445,7 @@ void UCSUnlockGuideSubsystem::NextStoryScene()
 			if (PlaybackShots.IsEmpty()) ShowGoal();
 			else NextShot();
 		}
+		if (PresentationWidget) PresentationWidget->SetStoryFadeOpacity(0.0f);
 		return;
 	}
 	const FCSStoryScene& Scene = ActiveScenes[SceneIndex];
@@ -406,9 +456,39 @@ void UCSUnlockGuideSubsystem::NextStoryScene()
 			if (It->ActorHasTag(Scene.CameraTag)) { Target = *It; break; }
 	}
 	if (Target) Controller->SetViewTarget(Target);
-	Stage = EStage::Story;
+	Stage = EStage::StoryFadeIn;
+	Elapsed = 0.0f;
 	LineIndex = 0;
 	EnterStoryLine();
+}
+
+void UCSUnlockGuideSubsystem::UpdateStoryTransition(float RealDelta)
+{
+	if (!PresentationWidget) { Finish(false); return; }
+	Elapsed += RealDelta;
+	if (Stage == EStage::StoryFadeOut)
+	{
+		const float Duration = Controller ? FMath::Max(0.05f, Controller->StoryFadeOutDuration) : 0.35f;
+		const float Alpha = FMath::SmoothStep(0.0f, Duration, Elapsed);
+		PresentationWidget->SetStoryFadeOpacity(Alpha);
+		if (Elapsed >= Duration)
+		{
+			PresentationWidget->SetStoryFadeOpacity(1.0f);
+			NextStoryScene();
+		}
+		return;
+	}
+	if (Stage == EStage::StoryFadeIn)
+	{
+		const float Duration = Controller ? FMath::Max(0.05f, Controller->StoryFadeInDuration) : 0.45f;
+		const float Alpha = FMath::SmoothStep(0.0f, Duration, Elapsed);
+		PresentationWidget->SetStoryFadeOpacity(1.0f - Alpha);
+		if (Elapsed >= Duration)
+		{
+			PresentationWidget->SetStoryFadeOpacity(0.0f);
+			Stage = EStage::Story;
+		}
+	}
 }
 
 void UCSUnlockGuideSubsystem::EnterStoryLine()
@@ -423,6 +503,13 @@ void UCSUnlockGuideSubsystem::ContinuePresentation()
 	if (Stage == EStage::LevelUp) { BeginStory(); return; }
 	if (Stage == EStage::Goal) { Finish(true); return; }
 	if (Stage == EStage::CameraHold) { NextShot(); return; }
+	// 화면에 대사가 이미 보이는데 페이드인 단계라 입력이 버려지는 느낌이 없도록 즉시 연출을 완료합니다.
+	if (Stage == EStage::StoryFadeIn)
+	{
+		if (PresentationWidget) PresentationWidget->SetStoryFadeOpacity(0.0f);
+		Stage = EStage::Story;
+		return;
+	}
 	if (Stage != EStage::Story || !ActiveScenes.IsValidIndex(SceneIndex)) return;
 	const FCSStoryScene& Scene = ActiveScenes[SceneIndex];
 	if (!Scene.Lines.IsValidIndex(LineIndex)) return;
@@ -437,7 +524,7 @@ void UCSUnlockGuideSubsystem::ContinuePresentation()
 	}
 	++LineIndex;
 	if (Scene.Lines.IsValidIndex(LineIndex)) EnterStoryLine();
-	else NextStoryScene();
+	else BeginStoryFadeOut();
 }
 
 void UCSUnlockGuideSubsystem::SkipStoryScene()
@@ -453,7 +540,7 @@ void UCSUnlockGuideSubsystem::SkipStoryScene()
 				ActiveScenes[SceneIndex + 1].Background == ECSStoryBackground::Illustration &&
 				ActiveScenes[SceneIndex + 1].Illustration == Image) ++SceneIndex;
 		}
-		NextStoryScene();
+		BeginStoryFadeOut();
 	}
 	else SkipCamera();
 }
@@ -471,13 +558,22 @@ void UCSUnlockGuideSubsystem::RefreshPresentation()
 	if (!PresentationWidget) return;
 	FText Heading, Body, Speaker, Caption;
 	UTexture2D* Illustration = nullptr;
+	UTexture2D* SpeakerPortrait = nullptr;
 	ECSLevelPresentationPhase Phase = ECSLevelPresentationPhase::LevelUp;
+	ECSStorySpeaker SpeakerType = ECSStorySpeaker::Narration;
 	if (Stage == EStage::LevelUp)
 	{
-		Heading = FText::Format(FText::FromString(TEXT("가게 레벨 상승 · Lv.{0}")), FText::AsNumber(ActiveLevel));
+		Heading = NSLOCTEXT("LevelPresentation", "LevelUpHeading", "레벨 업");
 		if (const FCSLevelStoryEvent* Event = FindStoryEvent(ActiveLevel)) Body = Event->LevelUpMessage;
+		if (StoreState)
+		{
+			PresentationWidget->SetLevelUpDetails(
+				FMath::Max(1, ActiveLevel - 1), ActiveLevel,
+				StoreState->GetStoreLevelDisplayNameForLevel(ActiveLevel - 1),
+				StoreState->GetStoreLevelDisplayNameForLevel(ActiveLevel));
+		}
 	}
-	else if (Stage == EStage::Story && ActiveScenes.IsValidIndex(SceneIndex))
+	else if ((Stage == EStage::Story || Stage == EStage::StoryFadeIn || Stage == EStage::StoryFadeOut) && ActiveScenes.IsValidIndex(SceneIndex))
 	{
 		Phase = ECSLevelPresentationPhase::Story;
 		const FCSStoryScene& Scene = ActiveScenes[SceneIndex];
@@ -486,6 +582,8 @@ void UCSUnlockGuideSubsystem::RefreshPresentation()
 		if (Scene.Lines.IsValidIndex(LineIndex))
 		{
 			const FCSStoryLine& Line = Scene.Lines[LineIndex];
+			SpeakerType = Line.Speaker;
+			SpeakerPortrait = Line.SpeakerPortrait;
 			Body = FText::FromString(Line.Text.ToString().Left(VisibleCharacters));
 			if (Line.Speaker == ECSStorySpeaker::Other) Speaker = Line.SpeakerName;
 		}
@@ -507,8 +605,19 @@ void UCSUnlockGuideSubsystem::RefreshPresentation()
 		Body = ActiveGoal;
 	}
 	else { PresentationWidget->SetVisibility(ESlateVisibility::Collapsed); return; }
-	PresentationWidget->Present(Phase, Heading, Body, Speaker, Caption, Illustration, Stage == EStage::CameraHold);
-	PresentationWidget->SetKeyboardFocus();
+	PresentationWidget->Present(Phase, SpeakerType, Heading, Body, Speaker, Caption,
+		Illustration, SpeakerPortrait, Stage == EStage::CameraHold);
+	// 눈뜨기 위젯이 제거된 뒤 포커스가 비는 경우가 있으므로 현재 연출 위젯으로 확실히 넘깁니다.
+	// GameAndUI를 유지해야 컨트롤러의 Space/Enter 백업 입력도 동작합니다.
+	if (Controller && !PresentationWidget->HasUserFocus(Controller))
+	{
+		FInputModeGameAndUI InputMode;
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		InputMode.SetHideCursorDuringCapture(false);
+		InputMode.SetWidgetToFocus(PresentationWidget->TakeWidget());
+		Controller->SetInputMode(InputMode);
+		PresentationWidget->SetUserFocus(Controller);
+	}
 }
 
 void UCSUnlockGuideSubsystem::BuildPlaybackShots()
@@ -580,6 +689,13 @@ void UCSUnlockGuideSubsystem::NextShot()
 			SequencePlayer->Pause();
 		}
 	}
+	if (PresentationWidget)
+	{
+		const float EffectiveDuration = SequenceDuration > 0.0f
+			? SequenceDuration
+			: PlaybackShots[ShotIndex].Duration;
+		PresentationWidget->BeginUnlockShot(EffectiveDuration);
+	}
 	RefreshWidget();
 }
 
@@ -628,7 +744,7 @@ void UCSUnlockGuideSubsystem::UpdateCamera(float RealDelta)
 		// 일시정지된 월드 타이머 대신 실제 시간으로 시퀀스의 평가 위치를 갱신합니다.
 		SequencePlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
 			SequenceStartSeconds + FMath::Min(Elapsed, FMath::Max(0.0f, SequenceDuration - 0.0001f)), EUpdatePositionMethod::Play));
-		if (Elapsed >= SequenceDuration) { if (bLevelEvent) HoldCamera(); else NextShot(); }
+		if (Elapsed >= SequenceDuration) NextShot();
 	}
 	else
 	{
@@ -639,7 +755,7 @@ void UCSUnlockGuideSubsystem::UpdateCamera(float RealDelta)
 		PlaybackCamera->SetActorLocationAndRotation(Location, Rotation);
 		const float EndFOV = Camera->EndFieldOfView > 0.0f ? FMath::Clamp(Camera->EndFieldOfView, 5.0f, 170.0f) : ShotFOV;
 		PlaybackCamera->GetCameraComponent()->SetFieldOfView(FMath::Lerp(ShotFOV, EndFOV, Alpha));
-		if (Elapsed >= Duration) { if (bLevelEvent) HoldCamera(); else NextShot(); }
+		if (Elapsed >= Duration) NextShot();
 	}
 }
 
@@ -712,6 +828,7 @@ void UCSUnlockGuideSubsystem::Finish(bool bMarkSeen)
 	ActiveLevel = INDEX_NONE;
 	ActiveScenes.Reset();
 	if (PresentationWidget) PresentationWidget->SetVisibility(ESlateVisibility::Collapsed);
+	if (PresentationWidget) PresentationWidget->SetStoryFadeOpacity(0.0f);
 	bOwnsPause = false;
 	bHistory = false;
 	Stage = EStage::Idle;

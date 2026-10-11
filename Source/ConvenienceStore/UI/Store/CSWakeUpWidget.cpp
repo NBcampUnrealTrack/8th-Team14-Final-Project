@@ -23,14 +23,34 @@ void UCSWakeUpWidget::NativeConstruct()
 	SetVisibility(ESlateVisibility::HitTestInvisible);
 	Elapsed = 0.0f;
 	LastRealTime = FPlatformTime::Seconds();
+	EyeOpenness = bAutoStartEyeOpening ? 0.0f : 1.0f;
+	bFinished = false;
+	bEyeOpeningStarted = bAutoStartEyeOpening;
+}
+
+void UCSWakeUpWidget::StartEyeOpening()
+{
+	Elapsed = 0.0f;
+	LastRealTime = FPlatformTime::Seconds();
 	EyeOpenness = 0.0f;
 	bFinished = false;
+	bEyeOpeningStarted = true;
+	InvalidateLayoutAndVolatility();
+}
+
+void UCSWakeUpWidget::CopyEyeAppearanceFrom(const UCSWakeUpWidget& Template)
+{
+	EyeOpeningDuration = Template.EyeOpeningDuration;
+	EyeOpeningCurve = Template.EyeOpeningCurve;
+	CenterLidColor = Template.CenterLidColor;
+	OuterLidColor = Template.OuterLidColor;
+	LidGradientSteps = Template.LidGradientSteps;
 }
 
 void UCSWakeUpWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
-	if (bFinished) return;
+	if (bFinished || !bEyeOpeningStarted) return;
 	// 게임이 정지된 오프닝에서도 눈뜨기가 진행되도록 실제 시간을 사용합니다.
 	const double Now = FPlatformTime::Seconds();
 	Elapsed += FMath::Clamp(static_cast<float>(Now - LastRealTime), 0.0f, 0.1f);

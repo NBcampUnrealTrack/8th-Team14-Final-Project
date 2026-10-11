@@ -401,6 +401,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	FText GetStoreLevelDisplayName() const;
 
+	// 레벨업 연출처럼 현재 레벨 외의 칭호가 필요한 UI에서 사용합니다.
+	UFUNCTION(BlueprintPure, Category = "Store|Progression")
+	FText GetStoreLevelDisplayNameForLevel(int32 StoreLevel) const;
+
 	UFUNCTION(BlueprintPure, Category = "Store|Progression")
 	int32 GetStoreExperienceInCurrentLevel() const;
 
