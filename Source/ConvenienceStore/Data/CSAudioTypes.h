@@ -28,8 +28,8 @@ enum class ECSAudioEvent : uint8
 	EmployeeHireSuccess,
 	OrderFail,
 	CheckoutWaitingBell,
-	CustomerPickProduct,
-	JournalEntryAdded,
+	// 21은 제거된 Pick SFX 값입니다. 기존 BP/DataAsset의 이후 이벤트 ID를 유지합니다.
+	JournalEntryAdded = 22,
 	StoreClose,
 	GachaCapsuleBreak,
 	GachaCapsuleSpawn,

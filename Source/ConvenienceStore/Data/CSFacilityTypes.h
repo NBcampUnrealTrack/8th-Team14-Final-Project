@@ -5,6 +5,8 @@
 #include "Engine/DataTable.h"
 #include "CSFacilityTypes.generated.h"
 
+class ACSUsableToolActor;
+
 // 시설의 게임플레이 역할을 구분합니다.
 UENUM(BlueprintType)
 enum class ECSFacilityType : uint8
@@ -12,7 +14,8 @@ enum class ECSFacilityType : uint8
 	Shelf,
 	Checkout,
 	Delivery,
-	Decoration
+	Decoration,
+	Tool
 };
 
 // DT_FantasyFacilityMaster의 한 행으로, 시설의 종류와 진열 환경을 정의합니다.
@@ -34,6 +37,14 @@ struct CONVENIENCESTORE_API FCSFacilityDataRow : public FTableRowBase
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facility|Purchase",
 		meta = (ClampMin = "0", UIMin = "0"))
 	int32 PurchasePriceGold = 0;
+
+	// 시설 발주창에서 판매하지만 설치 절차 없이 기존 도구로 배송할 때만 지정합니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facility|Delivery")
+	TSubclassOf<ACSUsableToolActor> DeliveredToolClass;
+
+	// 도구의 루트 메시 원본 크기에 맞춘 월드 배율입니다. 설치형 시설에는 적용하지 않습니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Delivery")
+	FVector DeliveredToolScale = FVector::OneVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Facility|Ownership",
 		meta = (ClampMin = "0", UIMin = "0"))

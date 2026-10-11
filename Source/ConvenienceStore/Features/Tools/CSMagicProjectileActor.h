@@ -23,6 +23,7 @@ public:
 
 	// 발사자 외에 지팡이처럼 투사체가 통과해야 하는 액터를 충돌 대상에서 제외합니다.
 	void AddIgnoredActor(AActor* ActorToIgnore);
+	void SetEmployeeBoostDuration(float Duration) { EmployeeBoostDuration = FMath::Max(0.0f, Duration); }
 
 protected:
 	virtual void BeginPlay() override;
@@ -58,6 +59,7 @@ protected:
 	float ProjectileLifetime = 4.0f;
 
 private:
+	float EmployeeBoostDuration = 0.0f;
 	void StartProjectileAfterEffectsReady();
 	float EffectsReadyDeadline = 0.0f;
 

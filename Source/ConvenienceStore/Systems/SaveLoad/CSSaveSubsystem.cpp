@@ -8,6 +8,7 @@
 #include "UObject/SoftObjectPath.h"
 
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveParticipant.h"
 
@@ -189,6 +190,10 @@ bool UCSSaveSubsystem::StartNewGame(FName SlotName, TSoftObjectPtr<UWorld> GameL
 	// ResetJournal에서 아티팩트 초기화까지 함께 처리
 	if (UGameInstance* OwningGameInstance = GetGameInstance())
 	{
+		if (UCSAudioSubsystem* Audio = OwningGameInstance->GetSubsystem<UCSAudioSubsystem>())
+		{
+			Audio->ResetBGMSelection();
+		}
 		if (UCSJournalSubsystem* Journal = OwningGameInstance->GetSubsystem<UCSJournalSubsystem>())
 		{
 			Journal->ResetJournal();
