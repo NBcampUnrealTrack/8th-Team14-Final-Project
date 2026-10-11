@@ -1,5 +1,6 @@
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 
+#include "AIController.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
@@ -40,9 +41,10 @@ void ACSStoreEmployeeCharacter::RefreshEmploymentPresentation()
 	const UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
 	const bool bApplicant = bRequiresHiring && !(Hiring && Hiring->IsSlotHired(HiringSlot));
 	bAwaitingEmploymentStart = bRequiresHiring && !bApplicant && !CanWork();
+	bDismissTargetable = IsDismissableNow();
 	// 고용 전 지원자는 모자를 숨기고, 고용 완료/저장 복원 시 즉시 표시합니다.
 	HatMesh->SetHiddenInGame(bApplicant);
-	if (bRequiresHiring) GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, bApplicant ? ECR_Block : ECR_Ignore);
+	if (bRequiresHiring) GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility, (bApplicant || bDismissTargetable) ? ECR_Block : ECR_Ignore);
 	if (HiringNameplateFont) HiringNameplate->SetFont(HiringNameplateFont);
 	HiringNameplate->SetText(bAwaitingEmploymentStart
 		? NSLOCTEXT("EmployeeHiring", "StartsTomorrowNameplate", "내일부터 근무") : GetHiringRoleName());
@@ -53,7 +55,7 @@ void ACSStoreEmployeeCharacter::Interact_Implementation(AActor* Interactor)
 {
 	if (!bRequiresHiring || (IsValid(ActiveHiringWidget) && ActiveHiringWidget->IsInViewport())) return;
 	const UCSEmployeeHiringSubsystem* Hiring = GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>();
-	if (!Hiring || Hiring->IsSlotHired(HiringSlot)) return;
+	if (!Hiring || (Hiring->IsSlotHired(HiringSlot) && !IsDismissableNow())) return;
 	const APawn* Pawn = Cast<APawn>(Interactor);
 	ACSStorePlayerController* PlayerController = Pawn ? Cast<ACSStorePlayerController>(Pawn->GetController()) : nullptr;
 	if (!IsValid(PlayerController) || !PlayerController->IsLocalController() || PlayerController->IsGameplayUIInputLocked()) return;
@@ -73,6 +75,28 @@ FText ACSStoreEmployeeCharacter::GetInteractionText_Implementation() const
 {
 	if (!bRequiresHiring) return FText::GetEmpty();
 	const UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
-	if (Hiring && Hiring->IsSlotHired(HiringSlot)) return FText::GetEmpty();
+	if (Hiring && Hiring->IsSlotHired(HiringSlot))
+	{
+		return IsDismissableNow() ? NSLOCTEXT("EmployeeHiring", "Dismiss", "직원 해고하기") : FText::GetEmpty();
+	}
 	return FText::Format(NSLOCTEXT("EmployeeHiring", "Talk", "{0}와 대화하기"), GetHiringRoleName());
+}
+
+bool ACSStoreEmployeeCharacter::IsDismissableNow() const
+{
+	const UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
+	FText Unused;
+	return bRequiresHiring && Hiring && Hiring->CanDismiss(this, Unused);
+}
+
+void ACSStoreEmployeeCharacter::ReturnToHiringSpot()
+{
+	// 상자에서 꺼낸 상품은 상자 수량에 맞춰 지우고 상자는 집기 전 자리로 돌려놓은 뒤 업무를 끝낸다
+	ClearHeldProduct();
+	ReleaseHeldCrate();
+	if (bHasActiveTask) ClearActiveTask(false);
+	CancelIdleReturn();
+	if (AAIController* AI = Cast<AAIController>(GetController())) AI->StopMovement();
+	SetActorTransform(HiringHomeTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	RefreshEmploymentPresentation();
 }

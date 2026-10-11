@@ -26,6 +26,7 @@ class UCSDailySummaryWidget;
 class UCSCraftingSubsystem;
 class UCSTutorialChoiceWidget;
 class ACSProductPickupActor;
+class ACSDeliveryCrateActor;
 struct FCSOrderResult;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
@@ -284,6 +285,12 @@ protected:
 	// 여러 번 불러도 안전하다. 튜토리얼 물건과 마커를 지우고 선택 창을 닫는다
 	void CleanUpCraftTutorial();
 
+	// 창고 스텝. 배송 장소로 상자를 하나 더 보내고 창고에 넣었는지 주기적으로 본다
+	void BeginStoreCrateStep();
+	void CheckStoreCrateStored();
+	// 튜토리얼 날 진열대가 비어 가면 품절 팁을 띄운다
+	void CheckRestockTip();
+
 	UFUNCTION()
 	void HandleTutorialChoiceMade(bool bYes);
 
@@ -339,6 +346,10 @@ private:
 	// TrySpawnTutorialCrateDeliveries가 스폰한 배송 상자를 기억해둠 (위 선반과 같은 이유)
 	UPROPERTY()
 	TArray<TObjectPtr<AActor>> TutorialSpawnedCrates;
+
+	TWeakObjectPtr<ACSDeliveryCrateActor> StoreCrateTarget;
+	FTimerHandle StoreCrateCheckTimerHandle;
+	FTimerHandle RestockTipCheckTimerHandle;
 
 	int32 PlacedFacilityCount = 0;
 

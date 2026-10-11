@@ -62,6 +62,11 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StartDayText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> WagePaymentNoticeText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> AvailabilityText;
+	// 해고 창은 고용 창을 그대로 쓰고 아래 고정 문구만 바꾼다
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> HireCostLabelText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> TotalDailyWageLabelText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> StartDayLabelText;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ConfirmButtonText;
 	// 커스텀 UI/애니메이션은 이 이벤트에서 ViewData를 읽습니다. 디자이너에서도 호출됩니다.
 	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Hiring") void OnHiringViewUpdated();
 private:
@@ -75,4 +80,5 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UCSEmployeeHiringSubsystem> HiringSubsystem;
 	FText PaymentError;
 	bool bViewConstructed = false;
+	bool bDismissMode = false;
 };
