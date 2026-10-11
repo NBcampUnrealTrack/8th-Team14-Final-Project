@@ -15,7 +15,6 @@
 #include "Features/UI/CSDeliveryToastWidget.h"
 #include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
-#include "UI/Save/CSSaveLoadMenuWidget.h"
 #include "UI/Tutorial/CSNoticeBannerWidgetBase.h"
 #include "UI/Settings/CSSettingsWidget.h"
 #include "EnhancedInputComponent.h"
@@ -41,9 +40,6 @@ void ACSStorePlayerController::SetupInputComponent()
 	}
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
-	// P 키로 저장·불러오기 메뉴를 열고 조작을 막는 UI가 열려 있으면 무시
-	// F5는 개발 빌드의 엔진 뷰 모드 단축키와 겹쳐 사용하지 않음
-	InputComponent->BindKey(EKeys::P, IE_Pressed, this, &ACSStorePlayerController::ToggleSaveLoadMenu);
 
 	// 입력 에셋이 지정되지 않았으면 기존 Esc 바인딩을 그대로 쓴다
 	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
@@ -311,60 +307,6 @@ void ACSStorePlayerController::SetOpeningUIHidden(bool bShouldHide)
 		}
 		OpeningUILayer.Reset();
 	}
-}
-
-void ACSStorePlayerController::ToggleSaveLoadMenu()
-{
-	if (bCraftCloseupActive) return;
-	if (IsValid(ActiveSaveLoadMenuWidget))
-	{
-		CloseSaveLoadMenu();
-		return;
-	}
-
-	if (!IsLocalPlayerController() || SaveLoadMenuWidgetClass == nullptr)
-	{
-		return;
-	}
-
-	// 계산·발주·수면 전환이나 임시 타이틀처럼 조작을 막는 상태에서는 메뉴를 겹쳐 열지 않음
-	if (IsGameplayUIInputLocked())
-	{
-		return;
-	}
-
-	ActiveSaveLoadMenuWidget = CreateWidget<UCSSaveLoadMenuWidget>(this, SaveLoadMenuWidgetClass);
-	if (!IsValid(ActiveSaveLoadMenuWidget))
-	{
-		return;
-	}
-
-	ActiveSaveLoadMenuWidget->OnMenuClosed.AddUniqueDynamic(this, &ACSStorePlayerController::HandleSaveLoadMenuClosed);
-
-	ActiveSaveLoadMenuWidget->AddToViewport(1002);
-	SetStoreHUDHidden(ActiveSaveLoadMenuWidget, true);
-	SetGameplayUIInputLock(ActiveSaveLoadMenuWidget, true);
-}
-
-void ACSStorePlayerController::CloseSaveLoadMenu()
-{
-	if (!IsValid(ActiveSaveLoadMenuWidget))
-	{
-		return;
-	}
-
-	UCSSaveLoadMenuWidget* MenuToClose = ActiveSaveLoadMenuWidget;
-	ActiveSaveLoadMenuWidget = nullptr;
-
-	MenuToClose->OnMenuClosed.RemoveDynamic(this, &ACSStorePlayerController::HandleSaveLoadMenuClosed);
-	SetGameplayUIInputLock(MenuToClose, false);
-	SetStoreHUDHidden(MenuToClose, false);
-	MenuToClose->RemoveFromParent();
-}
-
-void ACSStorePlayerController::HandleSaveLoadMenuClosed()
-{
-	CloseSaveLoadMenu();
 }
 
 void ACSStorePlayerController::CloseTemporaryTitleScreen()
