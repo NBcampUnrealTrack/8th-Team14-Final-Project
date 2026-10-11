@@ -7,6 +7,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "UObject/SoftObjectPath.h"
 
+#include "Systems/Journal/CSJournalSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveParticipant.h"
 
@@ -15,6 +16,7 @@ void UCSSaveSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	Super::Initialize(Collection);
 	PendingLoadData = nullptr;
 	BasePlayTimeSeconds = 0.0f;
+	ActiveSlotName = NAME_None;
 }
 
 void UCSSaveSubsystem::Deinitialize()
@@ -159,7 +161,42 @@ bool UCSSaveSubsystem::SaveToSlot(FName SlotName)
 
 bool UCSSaveSubsystem::SaveToAutoSlot()
 {
+	// 타이틀에서 선택한 슬롯이 있으면 해당 슬롯에 저장
+	if (HasActiveSlot())
+	{
+		return SaveToSlot(ActiveSlotName);
+	}
+
+	// 타이틀을 거치지 않은 실행은 자동 세이브 슬롯에 저장
 	return SaveToSlot(GetAutoSaveSlotName());
+}
+
+bool UCSSaveSubsystem::StartNewGame(FName SlotName, TSoftObjectPtr<UWorld> GameLevel)
+{
+	UWorld* World = GetWorld();
+	if (SlotName.IsNone() || World == nullptr || GameLevel.IsNull())
+	{
+		return false;
+	}
+
+	// 이전 슬롯에서 이어받은 세이브와 플레이 시간을 초기화
+	// 같은 세션에서 다른 슬롯을 진행한 뒤 새 게임을 시작하는 경우를 처리
+	PendingLoadData = nullptr;
+	BasePlayTimeSeconds = 0.0f;
+	ActiveSlotName = SlotName;
+
+	// 레벨 전환 후에도 유지되는 수첩과 아티팩트를 초기화
+	// ResetJournal에서 아티팩트 초기화까지 함께 처리
+	if (UGameInstance* OwningGameInstance = GetGameInstance())
+	{
+		if (UCSJournalSubsystem* Journal = OwningGameInstance->GetSubsystem<UCSJournalSubsystem>())
+		{
+			Journal->ResetJournal();
+		}
+	}
+
+	UGameplayStatics::OpenLevelBySoftObjectPtr(World, GameLevel);
+	return true;
 }
 
 bool UCSSaveSubsystem::LoadFromSlot(FName SlotName)
@@ -198,6 +235,8 @@ bool UCSSaveSubsystem::LoadFromSlot(FName SlotName)
 
 	PendingLoadData = LoadedSave;
 	BasePlayTimeSeconds = LoadedSave->Header.PlayTimeSeconds;
+	// 이후 자동 저장이 불러온 슬롯에 기록되도록 현재 슬롯으로 설정
+	ActiveSlotName = SlotName;
 
 	// 헤더에 기록된 레벨을 열고 경로가 없으면 현재 레벨을 다시 열기
 	const FSoftObjectPath& LevelPath = LoadedSave->Header.LevelPath;
@@ -286,6 +325,13 @@ bool UCSSaveSubsystem::DeleteSlot(FName SlotName)
 	const bool bDeleted = UGameplayStatics::DeleteGameInSlot(ToSlotString(SlotName), 0);
 	UGameplayStatics::DeleteGameInSlot(MakeBackupSlotString(SlotName), 0);
 	RemoveMetaHeader(SlotName);
+
+	// 현재 슬롯을 삭제하면 지정을 해제해 이후 자동 저장을 자동 세이브 슬롯에 기록
+	if (SlotName == ActiveSlotName)
+	{
+		ActiveSlotName = NAME_None;
+	}
+
 	return bDeleted;
 }
 

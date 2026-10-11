@@ -7,6 +7,7 @@
 
 class UCSSaveGame;
 class UCSSaveMetaGame;
+class UWorld;
 
 // 슬롯 저장이 성공했을 때 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnSaveCompleted,FName,SlotName);
@@ -37,11 +38,28 @@ public:
 	// 수동 세이브 슬롯 개수를 반환
 	static int32 GetManualSlotCount() { return 3; }
 
+	// 타이틀 슬롯 카드 순서에 대응하는 세이브 파일 슬롯 이름(CS_Slot0~2)을 반환
+	UFUNCTION(BlueprintPure, Category = "Save")
+	static FName GetFileSlotName(int32 Index) { return MakeManualSlotName(Index); }
+
+	// 현재 플레이 중인 세이브 파일 슬롯을 반환하고 없으면 None을 반환
+	UFUNCTION(BlueprintPure, Category = "Save")
+	FName GetActiveSlotName() const { return ActiveSlotName; }
+
+	// 타이틀에서 세이브 파일 슬롯을 선택해 진입했는지 확인
+	UFUNCTION(BlueprintPure, Category = "Save")
+	bool HasActiveSlot() const { return !ActiveSlotName.IsNone(); }
+
+	// 지정 슬롯을 현재 슬롯으로 설정하고 본 게임 레벨을 새 게임으로 열어 성공 여부를 반환
+	// 슬롯 파일은 첫 영업 종료 자동 저장 시점에 생성
+	UFUNCTION(BlueprintCallable, Category = "Save")
+	bool StartNewGame(FName SlotName, TSoftObjectPtr<UWorld> GameLevel);
+
 	// 참가자 상태를 모아 지정 슬롯에 저장하고 성공 여부를 반환
 	UFUNCTION(BlueprintCallable, Category = "Save")
 	bool SaveToSlot(FName SlotName);
 
-	// 자동 세이브 슬롯에 저장하고 성공 여부를 반환
+	// 현재 슬롯이 있으면 해당 슬롯에, 없으면 자동 세이브 슬롯에 저장하고 성공 여부를 반환
 	// 영업 종료 후 손님 상품 떨어뜨림이 끝난 시점에 ACSStoreGameMode가 호출
 	UFUNCTION(BlueprintCallable, Category = "Save")
 	bool SaveToAutoSlot();
@@ -126,4 +144,9 @@ private:
 
 	// 불러온 세이브에서 이어받은 플레이 시간(초)
 	float BasePlayTimeSeconds = 0.0f;
+
+	// 현재 플레이 중인 세이브 파일 슬롯
+	// 타이틀을 거치지 않아 None이면 자동 저장을 자동 세이브 슬롯(CS_Auto)에 기록
+	UPROPERTY(Transient)
+	FName ActiveSlotName;
 };
