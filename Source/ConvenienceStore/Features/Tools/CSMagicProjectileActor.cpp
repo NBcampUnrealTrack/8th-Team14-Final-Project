@@ -2,6 +2,7 @@
 
 #include "Components/SphereComponent.h"
 #include "Features/Customers/CSCustomerCharacter.h"
+#include "Features/Employees/CSStoreEmployeeCharacter.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Features/Tools/CSHitReactable.h"
 #include "GameFramework/ProjectileMovementComponent.h"
@@ -113,13 +114,17 @@ void ACSMagicProjectileActor::HandleProjectileHit(
 	// 캐릭터처럼 피격 반응을 구현한 대상은 각자의 방식으로 넉백을 처리합니다.
 	if (OtherActor->Implements<UCSHitReactable>())
 	{
-		ICSHitReactable::Execute_ApplyMagicHit(
+		if (ACSStoreEmployeeCharacter* Employee = Cast<ACSStoreEmployeeCharacter>(OtherActor))
+		{
+			if (EmployeeBoostDuration > 0.0f) Employee->ApplyMagicWorkBoost(EmployeeBoostDuration, 1.5f);
+		}
+		else ICSHitReactable::Execute_ApplyMagicHit(
 			OtherActor,
 			HitResult.ImpactPoint,
 			TravelDirection,
 			CharacterKnockbackStrength);
 		// 같은 투사체의 뒤늦은 중복 Hit 콜백에서는 추가 재생하지 않습니다.
-		if (Cast<ACSCustomerCharacter>(OtherActor) && !IsActorBeingDestroyed())
+		if ((Cast<ACSCustomerCharacter>(OtherActor) || Cast<ACSStoreEmployeeCharacter>(OtherActor)) && !IsActorBeingDestroyed())
 			if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::MagicHitCustomer);
 	}
 	else if (IsValid(OtherComponent) && OtherComponent->IsSimulatingPhysics())

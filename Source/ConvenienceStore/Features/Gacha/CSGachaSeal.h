@@ -34,6 +34,10 @@ public:
 	void Launch(const FVector& Velocity);
 	bool IsOpened() const { return bOpened; }
 
+	// 우물 배출부터 첫 착지까지만 같은 궤적을 더 빠르게 재생합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Seal|Motion", meta=(ClampMin="1.0"))
+	float SpawnFlightSpeedMultiplier = 1.5f;
+
 	// [백무송]
 	// 보상을 보관 중이고 아직 개봉하지 않은 봉인석인지 확인
 	bool HasSealedReward() const { return bHasReward && !bOpened && !bOpening; }
@@ -58,6 +62,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Seal") FCSGachaSealOpened OnRewardRevealed;
 
 private:
+	void EndSpawnFlight();
 	void OpenSeal();
 	AActor* SpawnReward(FText& OutFailure);
 	UFUNCTION() void HandleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, FVector NormalImpulse, const FHitResult& Hit);
@@ -72,6 +77,9 @@ private:
 	FVector ImpactNormal = FVector::UpVector;
 	FVector RecoveryLocation = FVector::ZeroVector;
 	float BreakElapsed = 0.f;
+	float SpawnFlightSpeed = 1.f;
+	float SpawnFlightLinearDamping = 0.f;
+	bool bSpawnFlight = false;
 	bool bHasReward = false;
 	bool bAwaitingImpact = false;
 	bool bOpened = false;

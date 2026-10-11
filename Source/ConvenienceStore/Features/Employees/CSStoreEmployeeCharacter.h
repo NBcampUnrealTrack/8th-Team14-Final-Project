@@ -44,6 +44,8 @@ class CONVENIENCESTORE_API ACSStoreEmployeeCharacter : public ACharacter, public
 public:
 	ACSStoreEmployeeCharacter();
 	virtual void ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength) override;
+	void ApplyMagicWorkBoost(float Duration, float Multiplier);
+	float GetMagicWorkSpeedMultiplier() const { return WorkSpeedMultiplier; }
 	void RefreshArtifactMoveSpeed();
 	UFUNCTION(BlueprintPure, Category = "Employee|Magic") float GetMagicBoostRemainingSeconds() const;
 	UFUNCTION(BlueprintImplementableEvent, Category = "Employee|Magic") void OnMagicBoostChanged(bool bActive);

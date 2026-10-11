@@ -174,7 +174,6 @@ private:
 	void RefreshLocomotionAnimationPose();
 	bool PlayActionAnimation(UAnimSequence* Animation, bool bHoldTransformAfterFinish);
 	void HandleActionAnimationFinished();
-	void PlayPickSound();
 	void ApplyActionMeshRotation();
 	void RestoreActionMeshRotation();
 
@@ -194,7 +193,6 @@ private:
 	TObjectPtr<UAnimSequence> CurrentFallbackLoopAnimation;
 
 	FTimerHandle ActionAnimationTimerHandle;
-	FTimerHandle PickSoundTimerHandle;
 	// ShowHeadIcon()이 예약한 자동 숨김 타이머
 	FTimerHandle HeadIconHideTimerHandle;
 	bool bFallbackAnimationsInitialized = false;
