@@ -363,6 +363,31 @@ bool ACSStoreGameState::AddFunds(int32 Amount)
 	return true;
 }
 
+bool ACSStoreGameState::AddDeliveryIncome(int32 Amount)
+{
+	const int64 NewDailySales = static_cast<int64>(DailySalesGold) + Amount;
+	if (NewDailySales > MAX_int32 || !AddFunds(Amount))
+	{
+		return false;
+	}
+
+	DailySalesGold = static_cast<int32>(NewDailySales);
+	OnDailySalesChanged.Broadcast();
+	return true;
+}
+
+bool ACSStoreGameState::TrySpendNonStoreFunds(int32 Amount)
+{
+	if (Amount < 0 || !CanAfford(Amount))
+	{
+		return false;
+	}
+
+	CurrentFunds -= Amount;
+	OnFundsChanged.Broadcast(CurrentFunds);
+	return true;
+}
+
 bool ACSStoreGameState::InitializeStoreProgression(
 	UCSStoreProgressionDataAsset* InProgressionDataAsset)
 {

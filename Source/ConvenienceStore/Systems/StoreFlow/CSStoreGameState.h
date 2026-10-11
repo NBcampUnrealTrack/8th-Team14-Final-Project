@@ -364,6 +364,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Store|Funds")
 	bool AddFunds(int32 Amount);
 
+	// 배달 보상은 가게 장사로 번 돈이라 정산 매출에도 넣는다
+	bool AddDeliveryIncome(int32 Amount);
+
+	// 가챠, 엔딩처럼 가게 장사가 아닌 지출. 자금에서만 빼고 정산 총지출에는 넣지 않는다
+	bool TrySpendNonStoreFunds(int32 Amount);
+
 	bool InitializeStoreProgression(UCSStoreProgressionDataAsset* InProgressionDataAsset);
 	bool InitializeFreshnessSettings(UCSFreshnessSettingsDataAsset* InFreshnessSettingsDataAsset);
 	bool InitializeStoreEconomy(UCSStoreEconomyDataAsset* InStoreEconomyDataAsset);
