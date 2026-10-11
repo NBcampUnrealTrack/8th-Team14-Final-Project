@@ -80,6 +80,13 @@ void ACSStoreGameMode::BeginPlay()
 				UE_LOG(LogTemp, Warning,
 					TEXT("[StoreGameMode] StoreAudioConfigDataAsset으로 공용 사운드 시스템을 초기화하지 못했습니다."));
 			}
+			else if (const ACSStorePlayerController* StoreController =
+				Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController());
+				StoreController && StoreController->ShouldDeferStoreBGMForOpening())
+			{
+				// 새 게임 프롤로그 음성이 끝날 때까지 기본 BGM은 재생하지 않습니다.
+				AudioSubsystem->StopBGM();
+			}
 			else if (!AudioSubsystem->PlayBGM())
 			{
 				UE_LOG(LogTemp, Warning,

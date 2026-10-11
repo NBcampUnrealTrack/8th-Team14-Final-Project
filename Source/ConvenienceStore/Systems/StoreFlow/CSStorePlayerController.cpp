@@ -2,6 +2,7 @@
 #include "UI/Journal/CSJournalWidget.h"
 #include "Features/Journal/CSJournalWorldActors.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Components/InputComponent.h"
 #include "Engine/GameInstance.h"
 
@@ -38,6 +39,15 @@ void ACSStorePlayerController::SetupInputComponent()
 	if (UCSUnlockGuideSubsystem* Guide = GetWorld()->GetSubsystem<UCSUnlockGuideSubsystem>())
 	{
 		InputComponent->BindKey(UnlockGuideHistoryKey, IE_Pressed, Guide, &UCSUnlockGuideSubsystem::ShowGuideHistory);
+		// WBP 내부 포커스가 패널 전환 중 빠져도 스토리 진행 입력을 잃지 않도록 컨트롤러가 백업으로 받습니다.
+		FInputKeyBinding& SpaceBinding = InputComponent->BindKey(
+			EKeys::SpaceBar, IE_Pressed, Guide, &UCSUnlockGuideSubsystem::ContinuePresentation);
+		SpaceBinding.bExecuteWhenPaused = true;
+		SpaceBinding.bConsumeInput = true;
+		FInputKeyBinding& EnterBinding = InputComponent->BindKey(
+			EKeys::Enter, IE_Pressed, Guide, &UCSUnlockGuideSubsystem::ContinuePresentation);
+		EnterBinding.bExecuteWhenPaused = true;
+		EnterBinding.bConsumeInput = true;
 	}
 	InputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &ACSStorePlayerController::ToggleJournal);
 	InputComponent->BindKey(EKeys::C, IE_Pressed, this, &ACSStorePlayerController::ToggleDailySummary);
@@ -259,6 +269,15 @@ void ACSStorePlayerController::StartGameFromTemporaryTitle()
 	StartOpeningPresentation();
 }
 
+bool ACSStorePlayerController::ShouldDeferStoreBGMForOpening() const
+{
+	if (!bUseOpeningPresentation || !IsLocalPlayerController()) return false;
+	const UGameInstance* OwningGameInstance = GetGameInstance();
+	const UCSSaveSubsystem* SaveSubsystem = OwningGameInstance
+		? OwningGameInstance->GetSubsystem<UCSSaveSubsystem>() : nullptr;
+	return !SaveSubsystem || !SaveSubsystem->HasPendingLoad();
+}
+
 void ACSStorePlayerController::StartOpeningPresentation()
 {
 	if (!bUseOpeningPresentation || bOpeningPresentationPlayed ||
@@ -266,6 +285,9 @@ void ACSStorePlayerController::StartOpeningPresentation()
 	// 가게 앞 PlayerStart의 시점을 유지하며 눈뜨기와 대화만 진행합니다.
 	if (UCSUnlockGuideSubsystem* Guide = GetWorld()->GetSubsystem<UCSUnlockGuideSubsystem>())
 		bOpeningPresentationPlayed = Guide->StartOpeningStory();
+	// 위젯/데이터 설정 문제로 오프닝을 시작하지 못한 경우에는 BGM까지 영구히 막지 않습니다.
+	if (!bOpeningPresentationPlayed)
+		if (UCSAudioSubsystem* AudioSubsystem = UCSAudioSubsystem::Get(this)) AudioSubsystem->PlayBGM();
 }
 
 void ACSStorePlayerController::FinishOpeningPresentation()
@@ -787,14 +809,26 @@ void ACSStorePlayerController::UpdateClosingInputMode()
 	}
 	else if (bHasGameplayUIInputLock)
 	{
-		// 발주·계산 UI가 열린 동안에는 단계가 변경되어도 캐릭터 조작으로 돌아가지 않게 UI 입력만 받습니다.
-		FInputModeUIOnly InputMode;
-		if (UUserWidget* FocusedWidget = GetFocusedGameplayUIWidget())
+		const UCSUnlockGuideSubsystem* Guide = GetWorld() ? GetWorld()->GetSubsystem<UCSUnlockGuideSubsystem>() : nullptr;
+		if (Guide && Guide->IsPresentationActive())
 		{
-			InputMode.SetWidgetToFocus(FocusedWidget->TakeWidget());
+			// 스토리 연출은 컨트롤러의 Space/Enter 백업 바인딩도 받을 수 있어야 합니다.
+			// 이동과 시점은 위에서 계속 잠그므로 실제 게임 조작은 발생하지 않습니다.
+			FInputModeGameAndUI InputMode;
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			InputMode.SetHideCursorDuringCapture(false);
+			if (UUserWidget* FocusedWidget = GetFocusedGameplayUIWidget())
+				InputMode.SetWidgetToFocus(FocusedWidget->TakeWidget());
+			SetInputMode(InputMode);
 		}
-
-		SetInputMode(InputMode);
+		else
+		{
+			// 발주·계산 등 일반 조작 UI는 기존처럼 UI 입력만 받습니다.
+			FInputModeUIOnly InputMode;
+			if (UUserWidget* FocusedWidget = GetFocusedGameplayUIWidget())
+				InputMode.SetWidgetToFocus(FocusedWidget->TakeWidget());
+			SetInputMode(InputMode);
+		}
 	}
 	else
 	{

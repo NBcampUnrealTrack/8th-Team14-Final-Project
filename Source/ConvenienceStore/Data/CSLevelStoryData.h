@@ -7,7 +7,14 @@
 class UTexture2D;
 
 UENUM(BlueprintType)
-enum class ECSStorySpeaker : uint8 { Player, Other, Narration };
+enum class ECSStorySpeaker : uint8
+{
+	Player,
+	Other,
+	Narration,
+	// 기존 데이터 테이블의 enum 인덱스를 유지하기 위해 새 항목은 마지막에 추가합니다.
+	PlayerThought
+};
 
 UENUM(BlueprintType)
 enum class ECSStoryBackground : uint8 { PlayerView, Illustration, TaggedCamera };
@@ -18,6 +25,8 @@ struct FCSStoryLine
 	GENERATED_BODY()
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ECSStorySpeaker Speaker = ECSStorySpeaker::Player;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FText SpeakerName;
+	// Other 대사에서 지정하면 이후 플레이어 대사 중에도 유지되고, 스토리가 끝날 때 사라집니다.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TObjectPtr<UTexture2D> SpeakerPortrait;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (MultiLine = "true")) FText Text;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = "1")) float CharactersPerSecond = 30.0f;
 };

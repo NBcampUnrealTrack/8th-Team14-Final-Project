@@ -43,6 +43,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Unlock Guide") void ShowGuideHistory();
 	UFUNCTION(BlueprintCallable, Category = "Level Story") void ContinuePresentation();
 	UFUNCTION(BlueprintCallable, Category = "Level Story") void SkipStoryScene();
+	// 현재 재생 중인 새 게임 오프닝 전체를 종료합니다. 개발용 콘솔 명령에서 사용합니다.
+	void DebugSkipOpening();
 	bool StartOpeningStory();
 	bool IsPresentationActive() const { return bOpening || bLevelEvent; }
 private:
@@ -53,7 +55,7 @@ private:
 		TWeakObjectPtr<ACSUnlockGuideCamera> Camera;
 		float Duration = 2.5f;
 	};
-	enum class EStage : uint8 { Idle, Waiting, EyeOpening, LevelUp, Story, Camera, CameraHold, Returning, Summary, Goal };
+	enum class EStage : uint8 { Idle, Waiting, EyeOpening, LevelUp, StoryFadeOut, StoryFadeIn, Story, Camera, CameraHold, Returning, Summary, Goal };
 	EStage Stage = EStage::Idle;
 	UPROPERTY(Transient) TObjectPtr<ACSStoreGameState> StoreState;
 	UPROPERTY(Transient) TObjectPtr<ACSStorePlayerController> Controller;
@@ -115,8 +117,10 @@ private:
 	bool EnsurePresentationWidget();
 	void BeginNextLevel();
 	void BeginStory();
+	void BeginStoryFadeOut();
 	void NextStoryScene();
 	void EnterStoryLine();
+	void UpdateStoryTransition(float RealDelta);
 	void RefreshPresentation();
 	void ShowGoal();
 	UFUNCTION() void FinishEyeOpening();

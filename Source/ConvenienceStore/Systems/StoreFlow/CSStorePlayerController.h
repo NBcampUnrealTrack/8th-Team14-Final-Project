@@ -64,6 +64,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story", meta = (RequiredAssetDataTags = "RowStructure=/Script/ConvenienceStore.CSLevelStoryEvent")) TObjectPtr<UDataTable> LevelStoryTable;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story") TSubclassOf<UCSLevelPresentationWidget> LevelPresentationWidgetClass;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story") TSubclassOf<UCSWakeUpWidget> OpeningEyeWidgetClass;
+	// 모든 스토리 배경(PlayerView/Illustration/TaggedCamera)에 공통으로 적용됩니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story", meta = (ClampMin = "0.05", Units = "s")) float StoryFadeOutDuration = 0.35f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story", meta = (ClampMin = "0.05", Units = "s")) float StoryFadeInDuration = 0.45f;
+	// 레벨업 안내가 표시된 뒤 스토리로 자동 전환되기까지의 실제 시간입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Level Story", meta = (ClampMin = "0.1", Units = "s")) float LevelUpAutoAdvanceDelay = 3.0f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Unlock Guide|Input") FKey UnlockGuideHistoryKey = EKeys::F10;
 	bool CanStartUnlockGuide() const;
 	UFUNCTION(BlueprintCallable, Category = "UI|Summary")
@@ -89,6 +94,8 @@ public:
 	// 임시 타이틀의 시작 버튼에서 호출합니다. 정식 타이틀 도입 시 이 구역 전체를 제거할 수 있습니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Temporary Title")
 	void StartGameFromTemporaryTitle();
+	// 새 게임 오프닝이 예정되어 있으면 GameMode의 즉시 BGM 재생을 미룹니다.
+	bool ShouldDeferStoreBGMForOpening() const;
 
 	// ----- 세이브 / 로드 -----
 
