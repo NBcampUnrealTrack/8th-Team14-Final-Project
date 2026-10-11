@@ -73,6 +73,10 @@ class CONVENIENCESTORE_API ACSCraftStationActor : public AActor,
 {
 	GENERATED_BODY()
 
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FCSCraftFailureVisualPIETest;
+#endif
+
 public:
 	static constexpr int32 IngredientSlotCount = 4;
 	static constexpr int32 ResultSlotCount = 2;

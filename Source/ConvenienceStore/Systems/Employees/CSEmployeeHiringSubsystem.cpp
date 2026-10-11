@@ -1,4 +1,5 @@
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
@@ -207,5 +208,6 @@ bool UCSEmployeeHiringSubsystem::TryHire(ACSStoreEmployeeCharacter* Applicant, F
 	}
 	Applicant->RefreshEmploymentPresentation();
 	OnEmployeeHired.Broadcast();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::EmployeeHireSuccess);
 	return true;
 }

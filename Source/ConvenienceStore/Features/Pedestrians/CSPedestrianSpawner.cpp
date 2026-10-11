@@ -1,6 +1,7 @@
 ﻿#include "Features/Pedestrians/CSPedestrianSpawner.h"
 
 #include "Features/Pedestrians/CSPedestrianCharacter.h"
+#include "Features/Streets/CSStreetRoute.h"
 #include "Data/CSCustomerArchetypeDataAsset.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
@@ -198,15 +199,32 @@ void ACSPedestrianSpawner::TrySpawnPedestrian()
 	const FVector EndGround = PickGroundPointInArea(
 		EndArea, StartGround, BodyRadius, BodyHalfHeight);
 
-	// 출발지와 퇴장 위치를 연결하는 경로 점을 계산
-	// 경로 탐색에 실패해도 스폰은 건너뛰지 않음
+	// 길 기준선이 있으면 출발 위치의 옆 거리를 유지하는 레인 경로를 계산
+	// 레인 계산에서 몸 반경을 이미 빼므로 코너 보정은 하지 않음
 	TArray<FVector> PathPoints;
-	BuildPathPoints(StartGround, EndGround, PathPoints);
+	bool bBuiltLanePath = false;
 
-	// 설정이 켜져 있으면 큰 몸에 맞춰 코너 경로 점을 보정
-	if (bPushCornersForLargeBodies)
+	if (IsValid(Route))
 	{
-		PushPathCornersOutward(PathPoints, BodyRadius);
+		FCSStreetLaneRequest LaneRequest;
+		LaneRequest.StartGround = StartGround;
+		LaneRequest.EndGround = EndGround;
+		LaneRequest.BodyRadius = BodyRadius;
+
+		bBuiltLanePath = Route->BuildLanePath(LaneRequest, PathPoints);
+	}
+
+	// 기준선이 없거나 레인 경로 계산에 실패하면 NavMesh 경로를 사용
+	// 경로 탐색에 실패해도 스폰은 건너뛰지 않음
+	if (!bBuiltLanePath)
+	{
+		BuildPathPoints(StartGround, EndGround, PathPoints);
+
+		// 설정이 켜져 있으면 큰 몸에 맞춰 코너 경로 점을 보정
+		if (bPushCornersForLargeBodies)
+		{
+			PushPathCornersOutward(PathPoints, BodyRadius);
+		}
 	}
 
 	// 첫 경로 구간을 바라보도록 회전 설정

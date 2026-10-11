@@ -10,6 +10,7 @@
 
 class ACSCustomerCharacter;
 class ACSStoreGameState;
+class ACSStreetRoute;
 class UCSCustomerArchetypeDataAsset;
 class UCSCustomerTrafficDataAsset;
 class UCSCustomerVisualDataAsset;
@@ -83,6 +84,12 @@ protected:
 	// 영업 중이면 매장에 들어가고, 아니면 ExitPoint로 계속 걸어갑니다.
 	UPROPERTY(EditAnywhere, Category = "Spawn")
 	TObjectPtr<AActor> StorefrontPoint;
+
+	// 손님이 거리 구간에서 따라 걸을 길 기준선
+	// 지정하면 스폰 위치의 레인을 유지한 채 기준선을 따라 걷고, 입구 판정은 기준선의 입구 거리를 사용
+	// 비어 있으면 StorefrontPoint와 NavMesh 최단 경로를 사용
+	UPROPERTY(EditAnywhere, Category = "Spawn")
+	TObjectPtr<ACSStreetRoute> Route;
 
 
 	// 스폰 시 손님에게 확률적으로 배정할 종족 데이터 목록

@@ -9,6 +9,7 @@
 class UDataTable;
 class ACSCraftStationActor;
 class ACSProductPickupActor;
+class UCSCraftFailureVisualRegistry;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCraftIngredientAdded, int32, IngredientCount);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnManualCraftFinished, ECSCraftOutcome, Outcome);
@@ -21,6 +22,9 @@ class CONVENIENCESTORE_API UCSCraftingSubsystem : public UWorldSubsystem, public
 	GENERATED_BODY()
 
 public:
+	UCSCraftingSubsystem();
+	UCSCraftFailureVisualRegistry* GetFailureVisualRegistry() const;
+
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
@@ -110,6 +114,9 @@ public:
 	UDataTable* GetProductTable() const { return ProductTable; }
 
 private:
+	UPROPERTY(EditDefaultsOnly, Category = "Crafting|Failure Visual")
+	TSoftObjectPtr<UCSCraftFailureVisualRegistry> FailureVisualRegistry;
+
 	static TPair<FName, FName> MakeIngredientKey(FName IngredientA, FName IngredientB);
 	ACSCraftStationActor* FindCraftStation() const;
 	void BuildRecipeMap();

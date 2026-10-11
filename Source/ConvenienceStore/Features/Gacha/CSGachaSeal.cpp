@@ -1,4 +1,5 @@
 #include "Features/Gacha/CSGachaSeal.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
@@ -210,7 +211,8 @@ void ACSGachaSeal::OpenSeal()
 	SetActorEnableCollision(false);
 	ToolMesh->SetVisibility(false);
 	Flash->SetIntensity(3000.f);
-	if (BreakSound) UGameplayStatics::PlaySoundAtLocation(this, BreakSound, OpenOrigin);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+		Audio->PlaySFXAtLocation(ECSAudioEvent::GachaCapsuleBreak, OpenOrigin);
 	if (bUseDemoFragments && FragmentMesh)
 	{
 		for (int32 Index = 0; Index < 8; ++Index)
