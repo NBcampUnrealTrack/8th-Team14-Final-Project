@@ -665,6 +665,54 @@ static void CS_HandlePriceReactionThenBuy(
 	Data.ElapsedTime = 0.0f;
 }
 
+// 방금 담은 상품이 끌어당기는데 아직 하나도 안 담은 카테고리의 후보만 남긴다
+// 진열대가 따로면 PickNextShelf가 짝 매대로 끌고 가지만, 같은 진열대면 재방문이 없어서
+// 짝 상품이 앵커 카테고리 후보들 사이 추첨에 묻혀 거의 안 팔렸다
+// 장바구니 전체가 아니라 방금 담은 상품만 본다. 그래야 짝이 여럿이어도 굴림 없이 줄줄이 담지 않는다
+static TArray<FCSPurchaseCandidate> CS_FilterUnmetAffinityCandidates(
+	const TArray<FCSPurchaseCandidate>& Candidates,
+	const UCSCustomerStateComponent& State,
+	const UCSCustomerRuntimeSubsystem& Subsystem)
+{
+	TArray<FCSPurchaseCandidate> Result;
+	if (State.SelectProducts.IsEmpty())
+	{
+		return Result;
+	}
+
+	// 방금 담은 것 자체가 앞서 담은 상품의 짝이면 건너뛴다. 술, 과자, 음료처럼 짝이 사슬로 이어져 있다
+	TArray<FCSSelectProduct> EarlierProducts = State.SelectProducts;
+	const FCSSelectProduct LastProduct = EarlierProducts.Pop();
+	const FCSProductDataRow* LastRow = LastProduct.ProductRow.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates"));
+	if (LastRow == nullptr || Subsystem.GetAffinityTargetCategories(EarlierProducts).Contains(LastRow->Category))
+	{
+		return Result;
+	}
+
+	TSet<ECSProductCategory> Targets = Subsystem.GetAffinityTargetCategories({ LastProduct });
+	for (const FCSSelectProduct& Selected : State.SelectProducts)
+	{
+		if (const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates")))
+		{
+			Targets.Remove(Row->Category);
+		}
+	}
+
+	if (Targets.IsEmpty())
+	{
+		return Result;
+	}
+	for (const FCSPurchaseCandidate& Candidate : Candidates)
+	{
+		const FCSProductDataRow* Row = Candidate.ProductRowHandle.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates"));
+		if (Row != nullptr && Targets.Contains(Row->Category))
+		{
+			Result.Add(Candidate);
+		}
+	}
+	return Result;
+}
+
 // 상품을 담은 직후(즉시 담았든, 가격 반응 대기 후에 담았든) 공통으로 수행하는 세션 지속 여부 판단
 // 라운드상한 -> 목표달성 -> 예산바닥 -> 확률탈락 순으로 검사, 전부 통과하면 다음 라운드로 Running 반환
 // 두 진입 경로(즉시 구매 / 대기 후 구매)가 이 판단을 중복 작성하지 않도록 뽑아냄
@@ -695,6 +743,13 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 		return EStateTreeRunStatus::Succeeded;
 	}
 
+	// 진열대가 따로였으면 의욕 굴림에서 떨어져도 PickNextShelf가 짝 매대로 데려간다. 같은 진열대도 그만큼 남겨 둔다
+	const TArray<FCSPurchaseCandidate> RemainingCandidates = Subsystem.BuildPurchaseCandidates(&ShelfActor);
+	if (Decision.HasWorthwhileCandidateOnShelf(CS_FilterUnmetAffinityCandidates(RemainingCandidates, State, Subsystem)))
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
 	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
 	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
 	if (!Decision.RollContinueShopping(ItemsInBasket))
@@ -704,7 +759,6 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 
 	// 더 끌릴 게 없으면 머물지 않고 다음 진열대로 넘어간다 - 그래야 PickNextShelf의
 	// 카테고리 선호·연관구매 가중치가 동선에 반영된다
-	const TArray<FCSPurchaseCandidate> RemainingCandidates = Subsystem.BuildPurchaseCandidates(&ShelfActor);
 	if (!Decision.HasWorthwhileCandidateOnShelf(RemainingCandidates))
 	{
 		return EStateTreeRunStatus::Succeeded;
@@ -1003,7 +1057,17 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	// 진열대 위 상품들을 판단용 후보 목록으로 변환
 	// 캐싱하지 않고 매 라운드 재조회 - 그 사이 다른 손님이 먼저 집어간 상품도 자연스럽게 반영됨
-	const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+	TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+
+	// 짝 상품을 보러 남은 라운드는 짝 매대에 간 것처럼 그 카테고리 안에서만 고른다
+	if (Data.RoundCount > 0)
+	{
+		TArray<FCSPurchaseCandidate> AffinityCandidates = CS_FilterUnmetAffinityCandidates(Candidates, *State, *Subsystem);
+		if (Decision->HasWorthwhileCandidateOnShelf(AffinityCandidates))
+		{
+			Candidates = MoveTemp(AffinityCandidates);
+		}
+	}
 
 	// 실제로 비교 대상에 오르는 개수는 상위 TopCandidateCount개로 잘리므로(ScoreAndSelectTopCandidates)
 	// 봤다고 칠 개수도 진열대 상품 총개수가 아니라 그 상한을 넘지 않도록 함
