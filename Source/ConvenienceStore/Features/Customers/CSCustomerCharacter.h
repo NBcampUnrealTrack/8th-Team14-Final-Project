@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -179,7 +179,6 @@ private:
 	void RefreshLocomotionAnimationPose();
 	bool PlayActionAnimation(UAnimSequence* Animation, bool bHoldTransformAfterFinish);
 	void HandleActionAnimationFinished();
-	void PlayPickSound();
 	void ApplyActionMeshRotation();
 	void RestoreActionMeshRotation();
 	void LogSubduedPhysicsState(const TCHAR* Stage) const;
@@ -201,7 +200,6 @@ private:
 	TObjectPtr<UAnimSequence> CurrentFallbackLoopAnimation;
 
 	FTimerHandle ActionAnimationTimerHandle;
-	FTimerHandle PickSoundTimerHandle;
 	// 제압 직후 물리 폭주 여부를 한 번 기록하고 EndPlay에서 해제
 	FTimerHandle SubduedPhysicsDiagnosticTimerHandle;
 	// ShowHeadIcon()이 예약한 자동 숨김 타이머

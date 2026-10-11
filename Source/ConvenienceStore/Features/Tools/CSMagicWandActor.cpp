@@ -241,6 +241,7 @@ bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)
 
 	// 지팡이 끝에서 생성된 투사체가 지팡이 자체 충돌에 막히지 않도록 제외합니다.
 	Projectile->AddIgnoredActor(this);
+	Projectile->SetEmployeeBoostDuration(EmployeeBoostDuration);
 
 	// Spawn 회전과 초기 속도에 같은 Muzzle -> AimPoint 방향을 사용합니다.
 	Projectile->InitializeProjectile(TravelDirection);

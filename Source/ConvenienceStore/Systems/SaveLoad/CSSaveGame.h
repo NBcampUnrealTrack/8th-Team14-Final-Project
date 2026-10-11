@@ -61,6 +61,10 @@ public:
 	// 게임 인스턴스 서브시스템인 UCSJournalSubsystem이 기록하고 복원
 	UPROPERTY()
 	FCSJournalSaveRecord Journal;
+
+	// 기존 세이브에는 필드가 없으므로 NAME_None으로 읽고 StoreBGM을 사용합니다.
+	UPROPERTY()
+	FName SelectedBGMId = NAME_None;
 	UPROPERTY()
 	FCSArtifactSaveRecord Artifacts;
 

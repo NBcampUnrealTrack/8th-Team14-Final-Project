@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Data/CSAudioTypes.h"
+#include "Data/CSAudioConfigDataAsset.h"
+#include "Systems/SaveLoad/CSSaveParticipant.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "CSAudioSubsystem.generated.h"
 
@@ -9,9 +11,11 @@ class UAudioComponent;
 class UCSAudioConfigDataAsset;
 class USoundBase;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FCSBGMChanged);
+
 // 레벨 전환과 관계없이 볼륨 상태를 유지하며 BGM/SFX를 중앙 관리합니다.
 UCLASS()
-class CONVENIENCESTORE_API UCSAudioSubsystem : public UGameInstanceSubsystem
+class CONVENIENCESTORE_API UCSAudioSubsystem : public UGameInstanceSubsystem, public ICSSaveParticipant
 {
 	GENERATED_BODY()
 
@@ -23,6 +27,16 @@ public:
 	static UCSAudioSubsystem* Get(const UObject* WorldContextObject);
 
 	bool InitializeAudio(UCSAudioConfigDataAsset* InAudioConfig);
+
+	virtual void CaptureSaveData(UCSSaveGame& OutSave) const override;
+	virtual void RestoreSaveData(const UCSSaveGame& InSave) override;
+	void ResetBGMSelection();
+
+	UFUNCTION(BlueprintPure, Category = "Audio|BGM") TArray<FCSBGMTrack> GetBGMTracks() const;
+	UFUNCTION(BlueprintPure, Category = "Audio|BGM") FName GetSelectedBGMId() const;
+	UFUNCTION(BlueprintPure, Category = "Audio|BGM") FName GetPlayingBGMId() const;
+	UFUNCTION(BlueprintCallable, Category = "Audio|BGM") bool SelectBGM(FName Id);
+	UPROPERTY(BlueprintAssignable, Category = "Audio|BGM") FCSBGMChanged OnBGMChanged;
 
 	UFUNCTION(BlueprintCallable, Category = "Audio|Volume")
 	void SetBGMVolume(float NewVolume);
@@ -71,6 +85,13 @@ private:
 	void ApplyVolumeSettings();
 	void ReleaseSoundMix();
 	USoundBase* FindSFXSound(ECSAudioEvent AudioEvent) const;
+	void ClearBGMTransition();
+	UFUNCTION() void HandleBGMFinished();
+	FName SelectedBGMId = NAME_None;
+	FName PlayingBGMId = NAME_None;
+	bool bBGMPlaybackRequested = false;
+	FTimerHandle BGMTransitionTimer;
+	TWeakObjectPtr<UWorld> BGMTransitionWorld;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCSAudioConfigDataAsset> AudioConfig;

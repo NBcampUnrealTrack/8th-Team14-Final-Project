@@ -12,6 +12,7 @@
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
 #include "Systems/Artifact/CSArtifactSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
@@ -268,6 +269,10 @@ bool UCSJournalWidget::UseSelectedArtifact()
 	PendingUseAmount = -1;
 	ArtifactUseConfirmation = FText::GetEmpty();
 	const bool bUsed = Artifacts->TryUse(SelectedArtifactId, Player, ConfirmedAmount);
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+	{
+		Audio->PlaySFX(bUsed ? ECSAudioEvent::OrderSuccess : ECSAudioEvent::OrderFail);
+	}
 	RefreshJournal();
 	return bUsed;
 }

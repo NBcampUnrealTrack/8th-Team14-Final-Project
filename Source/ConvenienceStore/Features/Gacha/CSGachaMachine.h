@@ -17,6 +17,7 @@ class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UStaticMesh;
+class UCSGachaWellWidget;
 
 // 레벨에 직접 배치하고 자식 블루프린트에서 외형과 연출을 바꾸실 수 있습니다.
 UCLASS(Blueprintable)
@@ -29,6 +30,10 @@ public:
 	virtual void BeginPlay() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+	UFUNCTION(BlueprintCallable, Category="Gacha") bool TryStartDraw(AActor* Interactor);
+	UFUNCTION(BlueprintPure, Category="Gacha") TArray<FCSGachaPoolRow> GetBrowseRewards() const;
+	UPROPERTY(EditDefaultsOnly, Category="Gacha|UI") TSubclassOf<UCSGachaWellWidget> WellWidgetClass;
 	virtual void Interact_Implementation(AActor* Interactor) override;
 	virtual FText GetInteractionText_Implementation() const override;
 
@@ -70,6 +75,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gacha|Effects") TObjectPtr<UStaticMeshComponent> Beam;
 
 private:
+	UPROPERTY(Transient) TObjectPtr<UCSGachaWellWidget> ActiveWellWidget;
 	void CompleteDraw();
 	void FinishBeam();
 	UFUNCTION() void HandleRewardRevealed(ECSGachaRewardType Type, FName RewardId);

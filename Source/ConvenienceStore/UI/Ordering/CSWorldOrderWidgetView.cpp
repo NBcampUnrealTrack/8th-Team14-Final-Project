@@ -7,6 +7,7 @@
 #include "Components/TextBlock.h"
 #include "Components/UniformGridPanel.h"
 #include "Data/CSFacilityTypes.h"
+#include "Features/Tools/CSUsableToolActor.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
@@ -150,6 +151,9 @@ UTexture2D* UCSWorldOrderWidget::GetNativeIcon(const FDataTableRowHandle& Row, b
 {
 	if (bFacility)
 	{
+		const auto* Data = Row.GetRow<FCSFacilityDataRow>(TEXT("Order icon"));
+		if (Data && Data->DeliveredToolClass)
+			return Data->DeliveredToolClass.GetDefaultObject()->GetToolIcon();
 		const TObjectPtr<UTexture2D>* Icon = NativeFacilityIcons.Find(Row.RowName);
 		return Icon ? Icon->Get() : nullptr;
 	}
@@ -245,7 +249,9 @@ void UCSWorldOrderWidget::RefreshNativeDetails()
 		SetNativeText(TEXT("Text_SelectedProductName"), Data->FacilityName);
 		SetNativeText(TEXT("Text_SelectedBoxPrice"), FText::AsNumber(Data->PurchasePriceGold));
 		const auto* Inventory = GetWorld()->GetSubsystem<UCSFacilityInventorySubsystem>();
-		SetNativeText(TEXT("Text_SelectedProductMeta"), FText::Format(NSLOCTEXT("Order", "Owned", "현재 보유 {0}개"), FText::AsNumber(Inventory ? Inventory->GetOwnedFacilityCount(Selected.RowName) : 0)));
+		SetNativeText(TEXT("Text_SelectedProductMeta"), Data->DeliveredToolClass
+			? Data->Description
+			: FText::Format(NSLOCTEXT("Order", "Owned", "현재 보유 {0}개"), FText::AsNumber(Inventory ? Inventory->GetOwnedFacilityCount(Selected.RowName) : 0)));
 	}
 	else
 	{

@@ -3,6 +3,8 @@
 #include "Components/SceneComponent.h"
 #include "Engine/World.h"
 #include "Features/Facilities/CSBuildableFacility.h"
+#include "Data/CSFacilityTypes.h"
+#include "Features/Tools/CSUsableToolActor.h"
 #include "Systems/Ordering/CSOrderSubsystem.h"
 
 ACSFacilityDeliveryPortalActor::ACSFacilityDeliveryPortalActor()
@@ -68,6 +70,15 @@ ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::ValidateOrderFacili
 
 		const TSubclassOf<AActor>* FacilityActorClass =
 			FacilityActorClasses.Find(OrderLine.FacilityRow.RowName);
+		const FCSFacilityDataRow* Data = OrderLine.FacilityRow.GetRow<FCSFacilityDataRow>(TEXT("Delivery"));
+		if (!Data) return ECFacilityOrderFailureReason::InvalidFacilityRow;
+		UClass* ToolClass = Data->DeliveredToolClass.Get();
+		if (ToolClass)
+		{
+			if (!ToolClass->IsChildOf(ACSUsableToolActor::StaticClass()) || ToolClass->HasAnyClassFlags(CLASS_Abstract))
+				return ECFacilityOrderFailureReason::FacilityClassUnavailable;
+			continue;
+		}
 		UClass* FacilityClass = FacilityActorClass != nullptr
 			? FacilityActorClass->Get()
 			: nullptr;
@@ -128,8 +139,10 @@ ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilitie
 			continue;
 		}
 
-		const TSubclassOf<AActor> FacilityActorClass =
-			FacilityActorClasses.FindChecked(OrderLine.FacilityRow.RowName);
+		const FCSFacilityDataRow* Data = OrderLine.FacilityRow.GetRow<FCSFacilityDataRow>(TEXT("Delivery"));
+		const TSubclassOf<AActor> FacilityActorClass = Data->DeliveredToolClass
+			? TSubclassOf<AActor>(Data->DeliveredToolClass.Get())
+			: FacilityActorClasses.FindChecked(OrderLine.FacilityRow.RowName);
 		for (int32 FacilityIndex = 0;
 			FacilityIndex < OrderLine.Quantity;
 			++FacilityIndex)
@@ -164,6 +177,14 @@ ECFacilityOrderFailureReason ACSFacilityDeliveryPortalActor::SpawnOrderFacilitie
 			}
 
 			OutSpawnedFacilities.Add(SpawnedFacility);
+			if (Data->DeliveredToolClass)
+			{
+				SpawnedFacility->SetActorScale3D(Data->DeliveredToolScale);
+				// 도구는 설치 인터페이스를 부여하지 않고 기존 줍기/퀵슬롯 물리를 사용합니다.
+				CastChecked<ACSUsableToolActor>(SpawnedFacility)->EnableWorldDropPhysics();
+				++SpawnIndex;
+				continue;
+			}
 			if (!SpawnedFacility->Implements<UCSBuildableFacility>())
 			{
 				DestroySpawnedFacilities();
