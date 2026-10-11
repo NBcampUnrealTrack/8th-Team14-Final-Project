@@ -34,6 +34,10 @@ public:
 	bool CanEmployeeWork(const ACSStoreEmployeeCharacter* Employee) const;
 	bool CanHire(const ACSStoreEmployeeCharacter* Applicant, FText& OutReason) const;
 	bool TryHire(ACSStoreEmployeeCharacter* Applicant, FText& OutReason);
+	const FCSEmployeeContract* FindContract(const ACSStoreEmployeeCharacter* Employee) const;
+	// 그날 일급은 마감 때 이미 나가므로 해고는 영업이 끝난 뒤 잠들기 전에만 받는다
+	bool CanDismiss(const ACSStoreEmployeeCharacter* Employee, FText& OutReason) const;
+	bool TryDismiss(ACSStoreEmployeeCharacter* Employee, FText& OutReason);
 	int32 GetNextStartBusinessDay() const;
 
 	UFUNCTION(BlueprintPure, Category = "Employee|Hiring")

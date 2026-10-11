@@ -293,7 +293,7 @@ void ACSGachaMachine::CompleteDraw()
 		NotifyPlayer(NSLOCTEXT("Gacha", "SpawnFailed", "보상을 만들지 못해 뽑기가 취소되었습니다."));
 		return;
 	}
-	if (!State->TrySpendFunds(RewardPool->CostGold))
+	if (!State->TrySpendNonStoreFunds(RewardPool->CostGold))
 	{
 		Spawned->Destroy();
 		NotifyPlayer(NSLOCTEXT("Gacha", "PaymentFailed", "결제에 실패해 뽑기가 취소되었습니다."));
