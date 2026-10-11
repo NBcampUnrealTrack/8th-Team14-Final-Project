@@ -134,6 +134,15 @@ void ACSCustomerCharacter::ShowHeadIcon(bool bShowIcon, float Duration)
 		return;
 	}
 
+	// [백무송]
+	// 빌런으로 배정된 손님은 머리 위 아이콘 표시를 생략
+	// 표시 중인 아이콘을 정리하고 튜토리얼 아이콘 표시 알림을 방지
+	if (IsValid(CustomerState) && CustomerState->IsVillain())
+	{
+		HideHeadIcon();
+		return;
+	}
+
 	// 이 Tier엔 표시할 게 없음(Tiers.Icon이 None) - 기존 표시만 정리
 	if (!bShowIcon)
 	{
@@ -625,8 +634,10 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	}
 
 	// 제압 대상이 아닌 손님의 최근 구매 반응만 기존 공용 위젯에 표시
+	// [백무송]
+	// 빌런으로 배정된 손님은 속마음 표시를 생략
 	if (UCSCustomerStateComponent* State = GetCustomerState();
-		State != nullptr && IsValid(PurchaseDecision) &&
+		State != nullptr && !State->IsVillain() && IsValid(PurchaseDecision) &&
 		State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
 		(World->GetTimeSeconds() - State->LastRejectionTime) <=
 		PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
