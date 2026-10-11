@@ -549,6 +549,11 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Store")
 	FCSOnPurchaseRejected OnPurchaseRejected; // 구매 거절 순간 방송 거절 연출/애니메이션 파트 구독용
 
+	// 등록된 진열대 전체의 충진율(점유 슬롯 ÷ 전체 슬롯)을 계산
+	// const 함수라 무효 항목을 RemoveAll로 정리할 수 없어 건너뛰기만 한다
+	// Out 인수는 로그에서 전체 슬롯 0(등록 누락 의심)을 바로 보여주기 위한 것
+	float CalculateShelfFillRatio(int32& OutShelfCount, int32& OutFilledSlots, int32& OutTotalSlots) const;
+
 private:
 	UPROPERTY()
 	TArray<TObjectPtr<AActor>> Shelves; // 레벨에 있는 모든 진열대 목록
@@ -599,11 +604,6 @@ private:
 
 	// 타이머 콜백 - 위젯을 숨김(뷰포트에서 제거하지 않고 Collapsed 처리만 - 다음 호출 때 재사용하기 위함)
 	void HideInnerThought();
-
-	// 등록된 진열대 전체의 충진율(점유 슬롯 ÷ 전체 슬롯)을 계산
-	// const 함수라 무효 항목을 RemoveAll로 정리할 수 없어 건너뛰기만 한다
-	// Out 인수는 로그에서 전체 슬롯 0(등록 누락 의심)을 바로 보여주기 위한 것
-	float CalculateShelfFillRatio(int32& OutShelfCount, int32& OutFilledSlots, int32& OutTotalSlots) const;
 
 	// GetProductsOnShelf와 달리 IsSellable() 필터 없이 Attach된 상품 액터 수만 센다
 	// 충진율은 "겉보기 점유 여부"만 봐야 한다 - 유통기한이 지나 판매 불가여도 매장 밖에서는 구분되지 않는다

@@ -66,7 +66,12 @@ enum class ECSTutorialStepId : uint8
 	CraftAddIngredients,
 	CraftBrew,
 	CraftRecipeBook,
-	CraftWrapUp
+	CraftWrapUp,
+
+	// 진열 뒤 상자 하나를 더 받아 창고에 넣는다. 창고 쓰는 법을 처음 알려 주는 스텝
+	StoreCrate,
+	// 2부 팁. 튜토리얼 날 진열대가 비어 갈 때 창고와 즉시 배송을 알려 준다
+	TipRestock
 };
 
 // 대화창 힌트 줄 하나 (키 라벨 + 설명). 이동/건축 회전처럼 키가 여러 개라
