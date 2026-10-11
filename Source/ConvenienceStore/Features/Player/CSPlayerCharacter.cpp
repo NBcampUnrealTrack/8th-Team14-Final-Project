@@ -3735,6 +3735,8 @@ void ACSPlayerCharacter::ThrowHeldItem()
 	{
 		if (IsValid(PrimitiveComponent) && PrimitiveComponent->IsSimulatingPhysics())
 		{
+			// 세게 던지면 한 프레임에 벽 두께보다 멀리 가서 벽을 뚫는다
+			PrimitiveComponent->SetUseCCD(true);
 			PrimitiveComponent->AddImpulse(
 				ThrowDirection * ThrowStrength,
 				NAME_None,
@@ -5235,7 +5237,7 @@ void ACSPlayerCharacter::UpdateQuickbarHUD()
 		{
 			// 제조 실패물은 종류 이름으로 보여 준다
 			ToolNames.Add(Trash->GetTrashDisplayName());
-			ToolIcons.Add(TrashQuickbarIcon);
+			ToolIcons.Add(IsValid(Trash->GetTrashIcon()) ? Trash->GetTrashIcon() : TrashQuickbarIcon.Get());
 		}
 		else if (const ACSProductPickupActor* Product = Cast<ACSProductPickupActor>(Item))
 		{

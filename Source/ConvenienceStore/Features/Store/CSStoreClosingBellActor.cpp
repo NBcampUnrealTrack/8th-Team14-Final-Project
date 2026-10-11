@@ -9,6 +9,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/Tutorial/CSTutorialSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "UI/Store/CSStoreClosingBellConfirmWidget.h"
 #include "UI/Store/CSStoreSleepTransitionWidget.h"
 #include "UI/Store/CSWakeUpWidget.h"
@@ -69,6 +70,14 @@ void ACSStoreClosingBellActor::HandleConfirmed()
 	}
 	SleepingController = Controller;
 	DayBeforeSleep = StoreGameState->CurrentBusinessDay;
+	SleepAudioEndTime = GetWorld()->GetTimeSeconds();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+	{
+		Audio->FadeOutBGM(0.4f);
+		Audio->PlaySFX(ECSAudioEvent::EndOfDaySleep);
+		// 음소거/오디오 장치 유무와 무관하게 같은 연출 길이를 유지합니다.
+		SleepAudioEndTime += FMath::Max(0.4f, Audio->GetSFXDuration(ECSAudioEvent::EndOfDaySleep));
+	}
 	CloseConfirmWidget();
 	if (ACharacter* Character = Cast<ACharacter>(Controller->GetPawn()))
 	{
@@ -103,10 +112,8 @@ void ACSStoreClosingBellActor::AdvanceDayWhileBlack()
 	}
 	if (!IsValid(ActiveSleepTransitionWidget))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] SleepTransitionWidgetClass가 없어 기존 즉시 전환을 사용합니다."));
-		Mode->CompleteDailySummary();
-		GetWorldTimerManager().SetTimer(SleepTimer, this,
-			&ACSStoreClosingBellActor::WakeAndFadeIn, FMath::Max(0.01f, SleepBlackHoldDuration), false);
+		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] SleepTransitionWidgetClass가 없어 수면 SFX 종료 후 다음 날로 전환합니다."));
+		HandleSleepNextDayRequested();
 		return;
 	}
 
@@ -123,6 +130,15 @@ void ACSStoreClosingBellActor::HandleSleepNextDayRequested()
 {
 	ACSStoreGameMode* Mode = GetWorld()->GetAuthGameMode<ACSStoreGameMode>();
 	if (!IsValid(Mode) || !IsValid(StoreGameState) || !StoreGameState->bIsDailySummaryPending) return;
+	const double AudioRemaining = SleepAudioEndTime - GetWorld()->GetTimeSeconds();
+	if (AudioRemaining > 0.0)
+	{
+		// 정산/저장은 기존 시점에 처리하고, 빠른 다음 날 요청만 SFX 종료까지 보류합니다.
+		GetWorldTimerManager().SetTimer(SleepAudioWaitTimer, this,
+			&ThisClass::HandleSleepNextDayRequested, static_cast<float>(AudioRemaining), false);
+		return;
+	}
+	GetWorldTimerManager().ClearTimer(SleepAudioWaitTimer);
 	CloseSleepTransitionWidget();
 	Mode->CompleteDailySummary();
 	GetWorldTimerManager().SetTimer(SleepTimer, this,
@@ -185,6 +201,8 @@ void ACSStoreClosingBellActor::WakeAndFadeIn()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[ClosingBell] Next-day preparation was not completed; keeping player position."));
 	}
+	if (DayBeforeSleep == INDEX_NONE)
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlayBGM();
 	// 다음 날 준비가 완료된 경우에만 눈뜨기를 재생하며, 취소되면 기존 페이드로 돌아갑니다.
 	if (bMorningReady && bUseEyeOpening && WakeUpWidgetClass)
 	{
@@ -209,6 +227,8 @@ void ACSStoreClosingBellActor::WakeAndFadeIn()
 
 void ACSStoreClosingBellActor::FinishSleep()
 {
+	GetWorldTimerManager().ClearTimer(SleepAudioWaitTimer);
+	SleepAudioEndTime = 0.0;
 	GetWorldTimerManager().ClearTimer(SleepTimer);
 	if (IsValid(ActiveWakeUpWidget))
 	{

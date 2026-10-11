@@ -432,6 +432,9 @@ void ACSStoreGameMode::UpdateGameClock()
 	{
 		StoreGameState->SetCurrentGameMinutes(AutomaticClosingTimeMinutes);
 		BeginClosingCheckpoint();
+		// The time-of-day closing cue also plays when the sign was already closed.
+		// Keep it here so restoring a saved closing checkpoint stays silent.
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::StoreClose);
 		return;
 	}
 
@@ -539,6 +542,7 @@ void ACSStoreGameMode::StartNextBusinessDay()
 
 	// 자동 저장은 영업 종료 직후(BeginClosingCheckpoint)에만 수행
 	StartStoreFlow();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlayBGM();
 }
 
 ECEndOfDayTask ACSStoreGameMode::GetNextEndOfDayTask(ECEndOfDayTask Task) const

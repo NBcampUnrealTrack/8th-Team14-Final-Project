@@ -3,6 +3,7 @@
 #include "Features/Customers/CSCustomerSpawner.h"
 #include "Features/Customers/CSCustomerCharacter.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Streets/CSStreetRoute.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "TimerManager.h"
 #include "Features/Customers/CSPurchaseDecisionComponent.h"
@@ -604,6 +605,14 @@ void ACSCustomerSpawner::TrySpawnCustomer()
 		if (StorefrontPoint != nullptr)
 		{
 			State->StorefrontLocation = PickPointInArea(StorefrontPoint, FVector::ZeroVector, BodyRadius, BodyHalfHeight);
+		}
+
+		// 기준선이 있으면 스폰 위치의 레인 비율을 저장
+		// 매장에 들렀다 나와도 같은 레인으로 거리에 합류하도록 사용
+		if (IsValid(Route))
+		{
+			State->StreetRoute = Route.Get();
+			State->StreetLaneRatio = Route->GetLaneRatio(SpawnGround, BodyRadius);
 		}
 
 	}

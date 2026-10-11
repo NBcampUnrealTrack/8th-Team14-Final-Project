@@ -13,6 +13,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
+#include "Features/Customers/CSCustomerAIController.h"
+#include "Features/Streets/CSStreetRoute.h"
 
 // =====================================================================
 // PickNextShelf
@@ -663,6 +665,54 @@ static void CS_HandlePriceReactionThenBuy(
 	Data.ElapsedTime = 0.0f;
 }
 
+// 방금 담은 상품이 끌어당기는데 아직 하나도 안 담은 카테고리의 후보만 남긴다
+// 진열대가 따로면 PickNextShelf가 짝 매대로 끌고 가지만, 같은 진열대면 재방문이 없어서
+// 짝 상품이 앵커 카테고리 후보들 사이 추첨에 묻혀 거의 안 팔렸다
+// 장바구니 전체가 아니라 방금 담은 상품만 본다. 그래야 짝이 여럿이어도 굴림 없이 줄줄이 담지 않는다
+static TArray<FCSPurchaseCandidate> CS_FilterUnmetAffinityCandidates(
+	const TArray<FCSPurchaseCandidate>& Candidates,
+	const UCSCustomerStateComponent& State,
+	const UCSCustomerRuntimeSubsystem& Subsystem)
+{
+	TArray<FCSPurchaseCandidate> Result;
+	if (State.SelectProducts.IsEmpty())
+	{
+		return Result;
+	}
+
+	// 방금 담은 것 자체가 앞서 담은 상품의 짝이면 건너뛴다. 술, 과자, 음료처럼 짝이 사슬로 이어져 있다
+	TArray<FCSSelectProduct> EarlierProducts = State.SelectProducts;
+	const FCSSelectProduct LastProduct = EarlierProducts.Pop();
+	const FCSProductDataRow* LastRow = LastProduct.ProductRow.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates"));
+	if (LastRow == nullptr || Subsystem.GetAffinityTargetCategories(EarlierProducts).Contains(LastRow->Category))
+	{
+		return Result;
+	}
+
+	TSet<ECSProductCategory> Targets = Subsystem.GetAffinityTargetCategories({ LastProduct });
+	for (const FCSSelectProduct& Selected : State.SelectProducts)
+	{
+		if (const FCSProductDataRow* Row = Selected.ProductRow.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates")))
+		{
+			Targets.Remove(Row->Category);
+		}
+	}
+
+	if (Targets.IsEmpty())
+	{
+		return Result;
+	}
+	for (const FCSPurchaseCandidate& Candidate : Candidates)
+	{
+		const FCSProductDataRow* Row = Candidate.ProductRowHandle.GetRow<FCSProductDataRow>(TEXT("CS_FilterUnmetAffinityCandidates"));
+		if (Row != nullptr && Targets.Contains(Row->Category))
+		{
+			Result.Add(Candidate);
+		}
+	}
+	return Result;
+}
+
 // 상품을 담은 직후(즉시 담았든, 가격 반응 대기 후에 담았든) 공통으로 수행하는 세션 지속 여부 판단
 // 라운드상한 -> 목표달성 -> 예산바닥 -> 확률탈락 순으로 검사, 전부 통과하면 다음 라운드로 Running 반환
 // 두 진입 경로(즉시 구매 / 대기 후 구매)가 이 판단을 중복 작성하지 않도록 뽑아냄
@@ -693,6 +743,13 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 		return EStateTreeRunStatus::Succeeded;
 	}
 
+	// 진열대가 따로였으면 의욕 굴림에서 떨어져도 PickNextShelf가 짝 매대로 데려간다. 같은 진열대도 그만큼 남겨 둔다
+	const TArray<FCSPurchaseCandidate> RemainingCandidates = Subsystem.BuildPurchaseCandidates(&ShelfActor);
+	if (Decision.HasWorthwhileCandidateOnShelf(CS_FilterUnmetAffinityCandidates(RemainingCandidates, State, Subsystem)))
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
 	// 위 종료 조건에 안 걸리면 하나 더 담을 의욕이 있는지 확률적으로 판단
 	// (FCSCond_WantsMoreItems에 있던 RollContinueShopping 판정이 여기로 옮겨옴)
 	if (!Decision.RollContinueShopping(ItemsInBasket))
@@ -702,7 +759,6 @@ static EStateTreeRunStatus CS_EvaluateSessionContinuation(
 
 	// 더 끌릴 게 없으면 머물지 않고 다음 진열대로 넘어간다 - 그래야 PickNextShelf의
 	// 카테고리 선호·연관구매 가중치가 동선에 반영된다
-	const TArray<FCSPurchaseCandidate> RemainingCandidates = Subsystem.BuildPurchaseCandidates(&ShelfActor);
 	if (!Decision.HasWorthwhileCandidateOnShelf(RemainingCandidates))
 	{
 		return EStateTreeRunStatus::Succeeded;
@@ -1001,7 +1057,17 @@ EStateTreeRunStatus FCSTask_BrowseShelf::Tick(FStateTreeExecutionContext& Contex
 
 	// 진열대 위 상품들을 판단용 후보 목록으로 변환
 	// 캐싱하지 않고 매 라운드 재조회 - 그 사이 다른 손님이 먼저 집어간 상품도 자연스럽게 반영됨
-	const TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+	TArray<FCSPurchaseCandidate> Candidates = Subsystem->BuildPurchaseCandidates(ShelfActor);
+
+	// 짝 상품을 보러 남은 라운드는 짝 매대에 간 것처럼 그 카테고리 안에서만 고른다
+	if (Data.RoundCount > 0)
+	{
+		TArray<FCSPurchaseCandidate> AffinityCandidates = CS_FilterUnmetAffinityCandidates(Candidates, *State, *Subsystem);
+		if (Decision->HasWorthwhileCandidateOnShelf(AffinityCandidates))
+		{
+			Candidates = MoveTemp(AffinityCandidates);
+		}
+	}
 
 	// 실제로 비교 대상에 오르는 개수는 상위 TopCandidateCount개로 잘리므로(ScoreAndSelectTopCandidates)
 	// 봤다고 칠 개수도 진열대 상품 총개수가 아니라 그 상한을 넘지 않도록 함
@@ -1477,8 +1543,7 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 		}
 	}
 
-	const EPathFollowingRequestResult::Type Result =
-		Data.AIController->MoveToLocation(State->ExitLocation, Data.AcceptanceRadius);
+	const EPathFollowingRequestResult::Type Result = RequestExitMove(Data, *State);
 
 	if (Result == EPathFollowingRequestResult::AlreadyAtGoal)
 	{
@@ -1528,6 +1593,44 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::Tick(FStateTreeExecutionContext& Co
 	}
 
 	return EStateTreeRunStatus::Running;
+}
+
+// 퇴장 지점까지 이동을 요청
+EPathFollowingRequestResult::Type FCSTask_LeaveAndDespawn::RequestExitMove(FInstanceDataType& Data,
+	const UCSCustomerStateComponent& State) const
+{
+	// 기준선이 있으면 레인 경로로 퇴장
+	// 매장에 들어왔던 손님은 합류 지점까지 NavMesh 경로 뒤에 기억한 레인을 이어 붙이고,
+	// 거리에 있던 손님은 현재 위치의 레인 그대로 이동
+	const ACSStreetRoute* Route = State.GetStreetRoute();
+	ACSCustomerAIController* Controller = Cast<ACSCustomerAIController>(Data.AIController);
+
+	if (Route != nullptr && Controller != nullptr)
+	{
+		EPathFollowingRequestResult::Type LaneResult = EPathFollowingRequestResult::Failed;
+
+		if (State.HasEnteredStore())
+		{
+			LaneResult = Controller->MoveFromStoreToStreetLane(
+				*Route, State.StreetLaneRatio, State.ExitLocation, Data.AcceptanceRadius);
+		}
+		else
+		{
+			LaneResult = Controller->MoveAlongStreetLane(*Route, State.ExitLocation, Data.AcceptanceRadius);
+		}
+
+		if (LaneResult != EPathFollowingRequestResult::Failed)
+		{
+			return LaneResult;
+		}
+
+		// 레인 경로 요청에 실패해도 손님이 남지 않도록 최단 경로로 퇴장을 시도
+		UE_LOG(LogTemp, Warning,
+			TEXT("[퇴장] %s 레인 경로 요청 실패 - 최단 경로로 퇴장. 기준선 %s의 입구 거리와 NavMesh 범위 확인 필요"),
+			*Data.Actor->GetName(), *Route->GetName());
+	}
+
+	return Data.AIController->MoveToLocation(State.ExitLocation, Data.AcceptanceRadius);
 }
 
 // =====================================================================
@@ -1817,6 +1920,12 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::EnterState(FStateTreeExecutionCo
 		return EStateTreeRunStatus::Failed;
 	}
 
+	// 기준선이 있으면 StorefrontLocation 대신 기준선의 입구 거리로 판정
+	if (const ACSStreetRoute* Route = State->GetStreetRoute())
+	{
+		return EnterRouteApproach(Context, Data, *State, *Route);
+	}
+
 	// 판정 지점이 없을 때 조용히 입장시키지 않는다.
 	// 조용히 통과시키면 개폐 판정이 통째로 사라지는데 로그가 없어 원인 추적이 불가능하다.
 	// (스폰 초기화 순서 버그가 실제로 이 폴백에 가려 오래 발견되지 않았다.)
@@ -1859,12 +1968,84 @@ EStateTreeRunStatus FCSTask_ApproachStorefront::Tick(FStateTreeExecutionContext&
 		return EStateTreeRunStatus::Failed;
 	}
 
-	// 아직 걸어가는 중이면 대기
-	if (Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle)
+	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+	if (State == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	const bool bIsMoving = Data.AIController->GetMoveStatus() != EPathFollowingStatus::Idle;
+
+	// 기준선이 있으면 걷는 중 입구 거리를 지나는 순간 판정
+	// 지나기 전에 이동이 멈추면 그 자리에서 판정해 손님이 멈춘 채 남지 않도록 처리
+	if (const ACSStreetRoute* Route = State->GetStreetRoute())
+	{
+		if (bIsMoving && !Route->IsPastStorefront(Data.Actor->GetNavAgentLocation(), State->ExitLocation))
+		{
+			return EStateTreeRunStatus::Running;
+		}
+	}
+	// 기준선이 없으면 가게 앞 지점에 도착할 때까지 대기
+	else if (bIsMoving)
 	{
 		return EStateTreeRunStatus::Running;
 	}
 
+	return JudgeStoreEntry(Context, Data);
+}
+
+// 기준선을 따라 퇴장 지점까지 걷는 레인 경로 이동을 요청
+EStateTreeRunStatus FCSTask_ApproachStorefront::EnterRouteApproach(FStateTreeExecutionContext& Context,
+	FInstanceDataType& Data, const UCSCustomerStateComponent& State,
+	const ACSStreetRoute& Route) const
+{
+	// 입구 거리가 없으면 판정할 수 없으므로 통과 처리하고 원인을 기록
+	if (!Route.HasStorefront())
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 기준선 %s에 입구 거리가 없음 - StorefrontMarker 또는 StorefrontDistance 지정 필요"),
+			*Data.Actor->GetName(), *Route.GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 이미 입구 거리를 지난 위치면 이동 없이 바로 판정
+	if (Route.IsPastStorefront(Data.Actor->GetNavAgentLocation(), State.ExitLocation))
+	{
+		return JudgeStoreEntry(Context, Data);
+	}
+
+	ACSCustomerAIController* Controller = Cast<ACSCustomerAIController>(Data.AIController);
+	if (Controller == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 컨트롤러가 ACSCustomerAIController가 아니라 레인 경로를 요청할 수 없음"),
+			*Data.Actor->GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 입구에서 멈추지 않도록 퇴장 지점까지의 레인 경로를 요청
+	// 입구 거리를 지나는 순간은 Tick에서 확인
+	const EPathFollowingRequestResult::Type MoveResult =
+		Controller->MoveAlongStreetLane(Route, State.ExitLocation, Data.AcceptanceRadius);
+
+	if (MoveResult == EPathFollowingRequestResult::Failed)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[입장판정] %s 레인 경로 요청 실패 - 기준선 %s와 NavMesh 범위 확인 필요"),
+			*Data.Actor->GetName(), *Route.GetName());
+
+		return EStateTreeRunStatus::Failed;
+	}
+
+	return EStateTreeRunStatus::Running;
+}
+
+// 입장 여부를 1회 판정하고 입장이면 입장 상태를 기록
+EStateTreeRunStatus FCSTask_ApproachStorefront::JudgeStoreEntry(FStateTreeExecutionContext& Context,
+	FInstanceDataType& Data) const
+{
 	UCSCustomerRuntimeSubsystem* Subsystem =
 		Context.GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>();
 	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();

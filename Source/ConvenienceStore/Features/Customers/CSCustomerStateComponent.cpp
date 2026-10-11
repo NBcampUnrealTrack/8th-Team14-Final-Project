@@ -2,6 +2,7 @@
 
 
 #include "Features/Customers/CSCustomerStateComponent.h"
+#include "Features/Streets/CSStreetRoute.h"
 
 void UCSCustomerStateComponent::AddSelectProduct(
 	const FDataTableRowHandle& InProductRow,
@@ -95,6 +96,11 @@ bool UCSCustomerStateComponent::IsForcedToLeave() const
 void UCSCustomerStateComponent::MarkForcedToLeave()
 {
 	bForcedToLeave = true;
+}
+
+ACSStreetRoute* UCSCustomerStateComponent::GetStreetRoute() const
+{
+	return StreetRoute.Get();
 }
 
 bool UCSCustomerStateComponent::HasEnteredStore() const

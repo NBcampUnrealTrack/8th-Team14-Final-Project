@@ -112,9 +112,16 @@ public:
 	bool IsEmployeeCheckoutInProgress() const { return bIsEmployeeCheckoutPresenting; }
 	bool DidLastEmployeeCheckoutSucceed() const { return bLastEmployeeCheckoutSucceeded; }
 
+	// 대기열 변경/응대 종료 이벤트에서만 도착 감시를 시작합니다.
+	void NotifyCheckoutQueueChanged();
+
 protected:
 	// 현재 매장 단계에서 계산 처리가 허용되는지 확인합니다.
 	bool CanProcessCheckout() const;
+	void TryPlayWaitingBell();
+	FTimerHandle WaitingBellTimer;
+	bool bWaitingBellPlayed = false;
+	double LastWaitingBellTime = -1000.0;
 
 	// 손님의 주문을 계산 UI에 전달하고, 플레이어의 입력을 UI로 전환합니다.
 	bool OpenCheckoutWidget(AActor* Interactor);

@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
 #include "Features/Interaction/CSInteractable.h"
 #include "Features/Trash/CSTrashable.h"
@@ -9,7 +10,9 @@
 class USceneComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+class UTexture2D;
 struct FCSTrashRecord;
+struct FCSCraftFailureVisualEntry;
 
 // 튜토리얼 청소 단계에서 플레이어가 E로 줍는 쓰레기
 UCLASS()
@@ -21,6 +24,13 @@ class CONVENIENCESTORE_API ACSTrashActor : public AActor,
 
 public:
 	ACSTrashActor();
+	virtual void OnConstruction(const FTransform& Transform) override;
+
+	UFUNCTION(BlueprintCallable, Category = "Trash")
+	bool InitializeTrash(FDataTableRowHandle InTrashRow);
+
+	UFUNCTION(BlueprintPure, Category = "Trash")
+	FDataTableRowHandle GetTrashRow() const { return TrashRow; }
 	FVector GetCleaningLocation() const;
 	bool ReserveForCleaning(AActor* Cleaner);
 	void ReleaseCleaningReservation(AActor* Cleaner);
@@ -52,6 +62,8 @@ public:
 	FText GetTrashDisplayName() const { return TrashDisplayName; }
 	void SetTrashDisplayName(const FText& InDisplayName) { TrashDisplayName = InDisplayName; }
 	void SetTrashMesh(UStaticMesh* InMesh);
+	void ApplyCraftFailureVisual(const FCSCraftFailureVisualEntry& Visual);
+	UTexture2D* GetTrashIcon() const { return TrashIcon; }
 
 	// 현재 클래스·메시·위치·물리 상태를 세이브 레코드에 기록
 	void CaptureSaveRecord(FCSTrashRecord& OutRecord) const;
@@ -61,6 +73,27 @@ public:
 	void RestoreSaveRecord(const FCSTrashRecord& InRecord);
 
 protected:
+	virtual void BeginPlay() override;
+
+	// 선택한 제조 실패 행의 이름과 Visual Registry 외형을 함께 적용합니다. None이면 일반 쓰레기입니다.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trash",
+		meta = (RowType = "/Script/ConvenienceStore.CSCraftFailureRow"))
+	FDataTableRowHandle TrashRow;
+
+	bool ApplyTrashRow();
+
+	UPROPERTY(Transient)
+	bool bHasAppliedTrashRow = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> TrashIcon;
+
+	UPROPERTY(Transient)
+	FTransform FailureMeshRelativeTransform = FTransform::Identity;
+
+	UPROPERTY(Transient)
+	bool bHasFailureMeshTransform = false;
+
 	TWeakObjectPtr<AActor> CleaningReservation;
 	// 줍기·퀵바·버리기 안내에 쓰는 이름. 기본값은 "쓰레기"
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Trash")

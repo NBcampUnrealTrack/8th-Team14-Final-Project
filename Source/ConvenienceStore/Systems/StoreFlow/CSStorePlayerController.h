@@ -19,7 +19,6 @@ class UCSStatusAnnouncementWidget;
 class UCSClosingWarningWidget;
 class UCSDeliveryToastWidget;
 class UCSNoticeBannerWidgetBase;
-class UCSSaveLoadMenuWidget;
 class UTexture2D;
 class UInputAction;
 class UInputMappingContext;
@@ -97,16 +96,6 @@ public:
 	// 새 게임 오프닝이 예정되어 있으면 GameMode의 즉시 BGM 재생을 미룹니다.
 	bool ShouldDeferStoreBGMForOpening() const;
 
-	// ----- 세이브 / 로드 -----
-
-	// 저장·불러오기 메뉴를 열거나 닫음
-	UFUNCTION(BlueprintCallable, Category = "UI|Save")
-	void ToggleSaveLoadMenu();
-
-	// 열려 있는 저장·불러오기 메뉴를 닫고 입력 잠금과 HUD 숨김을 해제
-	UFUNCTION(BlueprintCallable, Category = "UI|Save")
-	void CloseSaveLoadMenu();
-
 	// 발주·계산처럼 게임 조작을 막아야 하는 UI가 열리고 닫힐 때 입력 잠금을 갱신합니다.
 	UFUNCTION(BlueprintCallable, Category = "UI|Input")
 	void SetGameplayUIInputLock(UUserWidget* RequestingWidget, bool bShouldLock);
@@ -122,7 +111,7 @@ public:
 	// 계산·발주 등 게임 조작을 막는 UI가 현재 열려 있는지 반환합니다.
 	bool IsGameplayUIInputLocked() const;
 
-	// C, Tab, P는 BindKey라 클로즈업 IMC에 막히지 않아서 이 값으로 거른다
+	// C, Tab은 BindKey라 클로즈업 IMC에 막히지 않아서 이 값으로 거른다
 	void SetCraftCloseupActive(bool bActive) { bCraftCloseupActive = bActive; }
 	bool IsCraftCloseupActive() const { return bCraftCloseupActive; }
 
@@ -252,19 +241,6 @@ protected:
 	void SetOpeningUIHidden(bool bShouldHide);
 	void StartOpeningPresentation();
 	UFUNCTION() void FinishOpeningPresentation();
-
-	// 메뉴 위젯의 닫기 요청을 처리
-	UFUNCTION()
-	void HandleSaveLoadMenuClosed();
-
-	// 저장·불러오기 메뉴 위젯 클래스
-	// 지정하지 않으면 메뉴가 열리지 않음
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI|Save")
-	TSubclassOf<UCSSaveLoadMenuWidget> SaveLoadMenuWidgetClass;
-
-	// 현재 열려 있는 저장·불러오기 메뉴
-	UPROPERTY(Transient)
-	TObjectPtr<UCSSaveLoadMenuWidget> ActiveSaveLoadMenuWidget;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "UI")
 	TSubclassOf<UCSStoreHUDWidget> StoreHUDWidgetClass;
