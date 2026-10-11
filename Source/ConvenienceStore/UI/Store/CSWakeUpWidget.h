@@ -24,6 +24,11 @@ protected:
 	virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry,
 		const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements,
 		int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
+	// 새 게임 프롤로그처럼 선행 연출이 있는 자식 위젯은 자동 시작을 끄고 원하는 시점에 호출합니다.
+	void StartEyeOpening();
+	void CopyEyeAppearanceFrom(const UCSWakeUpWidget& Template);
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up")
+	bool bAutoStartEyeOpening = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Wake Up", meta = (ClampMin = "0.1"))
 	float EyeOpeningDuration = 1.5f;
@@ -51,4 +56,5 @@ private:
 	double LastRealTime = 0.0;
 	float EyeOpenness = 0.0f;
 	bool bFinished = false;
+	bool bEyeOpeningStarted = false;
 };
