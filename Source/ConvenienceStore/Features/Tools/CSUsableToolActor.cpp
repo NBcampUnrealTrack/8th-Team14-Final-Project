@@ -1,5 +1,6 @@
 #include "Features/Tools/CSUsableToolActor.h"
 
+#include "Data/CSCollisionChannels.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Features/Player/CSPlayerCharacter.h"
@@ -10,6 +11,7 @@ ACSUsableToolActor::ACSUsableToolActor()
 	SetRootComponent(ToolMesh);
 	ToolMesh->SetSimulatePhysics(false);
 	ToolMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	ToolMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 
 	// [백무송]
 	// 바닥에 놓인 도구가 NavMesh를 변경하지 않도록 설정
@@ -93,6 +95,7 @@ void ACSUsableToolActor::EnableWorldDropPhysics()
 	// 상품·배송 상자와 동일하게 월드 충돌과 중력을 켜 자연스럽게 떨어지도록 합니다.
 	ToolMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	ToolMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ToolMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 	ToolMesh->SetGenerateOverlapEvents(true);
 	ToolMesh->SetSimulatePhysics(true);
 }

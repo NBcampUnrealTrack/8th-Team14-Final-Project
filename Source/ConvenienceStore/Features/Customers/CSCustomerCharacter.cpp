@@ -1,7 +1,8 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Features/Customers/CSCustomerCharacter.h"
+#include "Data/CSCollisionChannels.h"
 #include "Features/Customers/CSCustomerAnimInstance.h"
 #include "Features/Customers/CSCustomerStateComponent.h"
 #include "Features/Customers/CSCustomerAIController.h"
@@ -16,7 +17,10 @@
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/ConstraintInstance.h"
 #include "TimerManager.h"
 #include "Features//Customers/CSPurchaseDecisionComponent.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
@@ -26,6 +30,8 @@
 namespace
 {
 	const FName ShoppingBagAttachBoneName(TEXT("RightHand"));
+	const FName SubduedHipsBoneName(TEXT("Hips"));
+	const FName SubduedSpineConstraintName(TEXT("Spine"));
 }
 
 // Sets default values
@@ -93,6 +99,12 @@ void ACSCustomerCharacter::Tick(float DeltaSeconds)
 
 void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (bSubduedRagdollActive)
+	{
+		LogSubduedPhysicsState(TEXT("EndPlay"));
+		UE_LOG(LogTemp, Log, TEXT("[제압물리] %s 종료사유=%d"), *GetName(), static_cast<int32>(EndPlayReason));
+	}
+
 	if (IsValid(CustomerState))
 	{
 		CustomerState->OnEnteredStore.Remove(EnteredStoreHandle);
@@ -103,6 +115,7 @@ void ACSCustomerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		World->GetTimerManager().ClearTimer(ActionAnimationTimerHandle);
 		World->GetTimerManager().ClearTimer(HeadIconHideTimerHandle);
+		World->GetTimerManager().ClearTimer(SubduedPhysicsDiagnosticTimerHandle);
 	}
 	bActionAnimationPlaying = false;
 	bHoldActionTransformOnFinish = false;
@@ -116,6 +129,15 @@ void ACSCustomerCharacter::ShowHeadIcon(bool bShowIcon, float Duration)
 {
 	if (!IsValid(HeadIconMeshComponent))
 	{
+		return;
+	}
+
+	// [백무송]
+	// 빌런으로 배정된 손님은 머리 위 아이콘 표시를 생략
+	// 표시 중인 아이콘을 정리하고 튜토리얼 아이콘 표시 알림을 방지
+	if (IsValid(CustomerState) && CustomerState->IsVillain())
+	{
+		HideHeadIcon();
 		return;
 	}
 
@@ -228,7 +250,7 @@ void ACSCustomerCharacter::ReleaseActionTransitionHold()
 
 void ACSCustomerCharacter::UpdateLocomotionAnimation(bool bForce)
 {
-	if (!bFallbackAnimationsInitialized || bActionAnimationPlaying ||
+	if (bSubduedRagdollActive || !bFallbackAnimationsInitialized || bActionAnimationPlaying ||
 		bActionTransitionHoldActive)
 	{
 		return;
@@ -575,54 +597,212 @@ void ACSCustomerCharacter::ApplyMagicHit_Implementation(
 	FVector ImpactDirection,
 	float KnockbackStrength)
 {
-	// 공격 판정을 받았을 때 Subsystem에서 빌런인지 확인
 	UWorld* World = GetWorld();
-    UCSCustomerRuntimeSubsystem* Subsystem = IsValid(World) ? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
-    if (Subsystem != nullptr)
-    {
-        Subsystem->HandleMagicHitOnCustomer(this, ImpactDirection, KnockbackStrength);
-    }
-
-	// ==== 트리거 지점: 지금은 마법봉 히트, 나중에 다른 트리거로 바뀔 수 있음 ====
-	// Subsystem->ShowInnerThought()/Decision->BuildInnerThoughtText는 트리거가 뭐든 그대로 재사용됨
-	// 트리거를 옮길 때는 이 블록만 옮기면 되고, 저 두 함수는 안 건드림
-	// 위젯 자체(화면 하단 대화창)는 손님별로 안 만들고 Subsystem이 인스턴스 하나를 캐싱해서 재사용함
-	if (Subsystem != nullptr)
+	UCSCustomerRuntimeSubsystem* Subsystem = IsValid(World)
+		? World->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr;
+	if (Subsystem == nullptr)
 	{
-		UCSCustomerStateComponent* State = GetCustomerState();
-		// 실제 거절이든(안 삼) 가격 반응은 있었지만 결국 사는 케이스든 손님이 똑같이 멈춰서 있는
-		// 동안이라 대기시간 계산도 동일하게 GetInstantDisplayDuration 하나만 보면 됨
-		if (State != nullptr && IsValid(PurchaseDecision) &&
-			State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
-			(World->GetTimeSeconds() - State->LastRejectionTime) <= PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
-		{
-			// 표시 지속시간 - GetInstantDisplayDuration(판정 창)과는 별개 값
-			Subsystem->ShowInnerThought(InnerThoughtWidgetClass, PurchaseDecision->BuildInnerThoughtText(State->LastRejectionInfo), 4.0f);
-		}
+		return;
 	}
-	// ==== 트리거 지점 끝 ====
-
-	// 투사체가 배 쪽에서 들어오면 등 방향으로 밀리도록 공격 진행 방향을 사용합니다.
-	FVector LaunchVelocity = ImpactDirection.GetSafeNormal() * FMath::Max(0.0f, KnockbackStrength);
-	LaunchVelocity.Z += MagicKnockbackUpwardStrength;
-
-	// 넉백 연출을 점검하기 전까지는 실제 이동 대신 피격 정보만 출력합니다.
-	const FString DebugMessage = FString::Printf(
-		TEXT("[Magic Hit] Target: %s | Strength: %.0f | Direction: %s"),
-		*GetName(),
-		KnockbackStrength,
-		*LaunchVelocity.GetSafeNormal().ToCompactString());
-	UE_LOG(LogTemp, Warning, TEXT("%s"), *DebugMessage);
-	if (GEngine != nullptr)
+	const bool bSubdued = Subsystem->HandleMagicHitOnCustomer(this, ImpactDirection, KnockbackStrength);
+	if (bSubdued)
 	{
-		GEngine->AddOnScreenDebugMessage(
-			-1,
-			2.0f,
-			FColor::Cyan,
-			DebugMessage);
+		return;
 	}
 
-	// LaunchCharacter(LaunchVelocity, true, true);
+	// 제압 대상이 아닌 손님의 최근 구매 반응만 기존 공용 위젯에 표시
+	// [백무송]
+	// 빌런으로 배정된 손님은 속마음 표시를 생략
+	if (UCSCustomerStateComponent* State = GetCustomerState();
+		State != nullptr && !State->IsVillain() && IsValid(PurchaseDecision) &&
+		State->LastRejectionInfo.Reason != ECSPurchaseRejectReason::None &&
+		(World->GetTimeSeconds() - State->LastRejectionTime) <=
+		PurchaseDecision->GetInstantDisplayDuration(State->LastRejectionInfo.Reason))
+	{
+		Subsystem->ShowInnerThought(InnerThoughtWidgetClass,
+			PurchaseDecision->BuildInnerThoughtText(State->LastRejectionInfo), 4.0f);
+	}
+}
+
+void ACSCustomerCharacter::QueueSubduedReaction(
+	const FVector& ImpactDirection,
+	float KnockbackStrength)
+{
+	if (bSubduedReactionPending || bSubduedRagdollActive)
+	{
+		return;
+	}
+
+	PendingSubduedImpactDirection = ImpactDirection;
+	PendingSubduedKnockbackStrength = KnockbackStrength;
+	bSubduedReactionPending = true;
+}
+
+void ACSCustomerCharacter::BeginSubduedReaction()
+{
+	if (!bSubduedReactionPending || bSubduedRagdollActive)
+	{
+		return;
+	}
+
+	const FVector ImpactDirection = PendingSubduedImpactDirection;
+	const float KnockbackStrength = PendingSubduedKnockbackStrength;
+	// 물리 준비에 실패해도 같은 피격을 다시 적용하지 않고 기존 소멸 대기를 유지
+	bSubduedReactionPending = false;
+	PendingSubduedImpactDirection = FVector::ZeroVector;
+	PendingSubduedKnockbackStrength = 0.0f;
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!IsValid(MeshComponent) || MeshComponent->GetPhysicsAsset() == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 래그돌 Physics Asset 없음"), *GetName());
+		return;
+	}
+
+	const int32 HipsBoneIndex = MeshComponent->GetBoneIndex(SubduedHipsBoneName);
+	if (HipsBoneIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 골반 본 없음"), *GetName());
+		return;
+	}
+
+	// RecreatePhysicsState는 등록된 컴포넌트의 동기 물리 상태를 대상으로 한다.
+	if (!MeshComponent->IsRegistered() || MeshComponent->IsAsyncCreatePhysicsStateRunning() ||
+		MeshComponent->IsAsyncDestroyPhysicsStateRunning())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 물리 상태 준비 중: 래그돌 생략, 소멸 대기 유지"), *GetName());
+		return;
+	}
+
+	// 이전 프레임의 병렬 평가가 물리 재생성 뒤에 오래된 자세를 덮어쓰지 않게 완료한다.
+	MeshComponent->HandleExistingParallelEvaluationTask(true, true);
+	const FTransform RagdollMeshWorldTransform = MeshComponent->GetComponentTransform();
+	SubduedReactionStartTime = GetWorld() != nullptr ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	// 행동 취소 중 Idle/Walk 재시작을 막고 피격 순간의 메시 월드 변환을 유지한다.
+	// Thinking/Pick의 회전·높이 보정만 제거하면 같은 본 자세가 바닥 아래로 옮겨질 수 있다.
+	bSubduedRagdollActive = true;
+	CancelActionAnimation();
+	RestoreActionMeshRotation();
+	MeshComponent->SetWorldTransform(RagdollMeshWorldTransform, false, nullptr, ETeleportType::TeleportPhysics);
+	HideHeadIcon();
+	SetBasketDisplayVisible(false);
+	if (IsValid(ShoppingBagActor))
+	{
+		ShoppingBagActor->SetActorHiddenInGame(true);
+	}
+	// 현재 애니메이션 단위(다른 5종의 Hips 0.01, Dwarf 1)를 동기 평가한다.
+	// 이 설정은 제압된 메시의 남은 수명에만 적용하며 물리 결과의 본 갱신은 계속 허용한다.
+	MeshComponent->SetSimulatePhysics(false);
+	MeshComponent->SetAllBodiesPhysicsBlendWeight(0.0f, false);
+	MeshComponent->SetComponentTickEnabled(true);
+	MeshComponent->bEnableAnimation = true;
+	MeshComponent->bNoSkeletonUpdate = false;
+	MeshComponent->bEnableUpdateRateOptimizations = false;
+	MeshComponent->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	MeshComponent->bPauseAnims = false;
+	MeshComponent->TickAnimation(0.0f, false);
+	MeshComponent->RefreshBoneTransforms();
+	MeshComponent->HandleExistingParallelEvaluationTask(true, true);
+	MeshComponent->bPauseAnims = true;
+
+	const FTransform HipsWorldTransform = MeshComponent->GetBoneTransform(HipsBoneIndex);
+	if (HipsWorldTransform.ContainsNaN() || HipsWorldTransform.GetScale3D().GetMin() <= 0.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 골반 자세·스케일 오류: 래그돌 생략, 소멸 대기 유지"), *GetName());
+		return;
+	}
+
+	LogSubduedPhysicsState(TEXT("BeforeRecreate"));
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	MeshComponent->SetCollisionObjectType(CSCollisionChannels::SubduedBody);
+	MeshComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+	MeshComponent->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+	MeshComponent->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	MeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+
+	// 몸체 크기만 애니메이션으로 줄고 관절 연결 위치는 참조 자세 크기로 남는 경로를 제거한다.
+	// 엔진이 현재 본 변환으로 몸체와 관절 연결 위치를 함께 준비하도록 다시 생성한다.
+	MeshComponent->RecreatePhysicsState();
+	FBodyInstance* HipsBody = MeshComponent->GetBodyInstance(SubduedHipsBoneName);
+	if (HipsBody == nullptr || !HipsBody->IsValidBodyInstance())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 물리 재생성 후 골반 물리 몸체 없음"), *GetName());
+		return;
+	}
+
+	LogSubduedPhysicsState(TEXT("AfterRecreate"));
+	MeshComponent->SetAllBodiesCollisionObjectType(CSCollisionChannels::SubduedBody);
+	MeshComponent->SetSimulatePhysics(true);
+	if (!MeshComponent->IsSimulatingPhysics(SubduedHipsBoneName))
+	{
+		MeshComponent->SetSimulatePhysics(false);
+		UE_LOG(LogTemp, Warning, TEXT("[제압] %s 골반 물리 활성화 실패: 소멸 대기 유지"), *GetName());
+		return;
+	}
+
+	// 시뮬레이션 전환이 가져온 기존 운동량을 제거한 뒤 최초 피격 충격만 더한다.
+	MeshComponent->SetAllPhysicsLinearVelocity(FVector::ZeroVector, false);
+	MeshComponent->SetAllPhysicsAngularVelocityInRadians(FVector::ZeroVector, false);
+	MeshComponent->SetAllBodiesPhysicsBlendWeight(1.0f, false);
+	MeshComponent->WakeAllRigidBodies();
+
+	// 종족별 질량 차이를 없애고 투사체 진행 방향으로 골반에 한 번만 충격을 적용
+	FVector HorizontalDirection = FVector(ImpactDirection.X, ImpactDirection.Y, 0.0f).GetSafeNormal();
+	if (HorizontalDirection.IsNearlyZero())
+	{
+		HorizontalDirection = -GetActorForwardVector().GetSafeNormal2D();
+	}
+	const float HorizontalVelocityChange = FMath::Min(
+		FMath::Max(0.0f, KnockbackStrength) * FMath::Max(0.0f, SubduedHorizontalVelocityScale),
+		FMath::Max(0.0f, SubduedMaxHorizontalVelocityChange));
+	const FVector VelocityChange = HorizontalDirection * HorizontalVelocityChange +
+		FVector(0.0f, 0.0f, FMath::Max(0.0f, SubduedUpwardVelocityChange));
+	MeshComponent->AddImpulse(VelocityChange, SubduedHipsBoneName, true);
+	MeshComponent->UpdateBounds();
+	LogSubduedPhysicsState(TEXT("Started"));
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(SubduedPhysicsDiagnosticTimerHandle, this,
+			&ACSCustomerCharacter::LogSubduedPhysicsAfterSimulation, 0.1f, false);
+	}
+}
+
+void ACSCustomerCharacter::LogSubduedPhysicsState(const TCHAR* Stage) const
+{
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!IsValid(MeshComponent))
+	{
+		return;
+	}
+
+	const FBodyInstance* HipsBody = MeshComponent->GetBodyInstance(SubduedHipsBoneName);
+	const bool bHasHipsBody = HipsBody != nullptr && HipsBody->IsValidBodyInstance();
+	const float Elapsed = GetWorld() != nullptr ? GetWorld()->GetTimeSeconds() - SubduedReactionStartTime : 0.0f;
+	UE_LOG(LogTemp, Log, TEXT("[제압물리] %s 단계=%s 경과=%.3f Mesh=%s HipsBody=%d Sim=%d MeshScale=%s BoneScale=%s BodyScale=%s COM=%s Velocity=%s AngularVelocity=%s BoundsExtent=%s"),
+		*GetName(), Stage, Elapsed, *GetNameSafe(MeshComponent->GetSkeletalMeshAsset()),
+		bHasHipsBody, MeshComponent->IsSimulatingPhysics(SubduedHipsBoneName),
+		*MeshComponent->GetComponentScale().ToString(),
+		*MeshComponent->GetSocketTransform(SubduedHipsBoneName, RTS_World).GetScale3D().ToString(),
+		*(bHasHipsBody ? HipsBody->Scale3D : FVector::ZeroVector).ToString(),
+		*(bHasHipsBody ? HipsBody->GetCOMPosition() : FVector::ZeroVector).ToString(),
+		*MeshComponent->GetPhysicsLinearVelocity(SubduedHipsBoneName).ToString(),
+		*MeshComponent->GetPhysicsAngularVelocityInRadians(SubduedHipsBoneName).ToString(),
+		*MeshComponent->GetBounds().BoxExtent.ToString());
+
+	if (const FConstraintInstance* SpineConstraint = MeshComponent->FindConstraintInstance(SubduedSpineConstraintName))
+	{
+		UE_LOG(LogTemp, Log, TEXT("[제압물리] %s 단계=%s SpinePos1=%s SpinePos2=%s"),
+			*GetName(), Stage, *SpineConstraint->Pos1.ToString(), *SpineConstraint->Pos2.ToString());
+	}
+}
+
+void ACSCustomerCharacter::LogSubduedPhysicsAfterSimulation()
+{
+	if (bSubduedRagdollActive)
+	{
+		LogSubduedPhysicsState(TEXT("AfterSimulation"));
+	}
 }
 
 void ACSCustomerCharacter::SetVillainHighlight(bool bEnabled)

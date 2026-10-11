@@ -10,6 +10,7 @@
 
 class USceneComponent;
 class UStaticMeshComponent;
+class UBoxComponent;
 class UTexture2D;
 class UCSProductVisualRegistry;
 class ACSProductPickupActor;
@@ -149,6 +150,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> CrateMesh;
+
+	// 물리 상자 대신 제압된 손님만 막는 비시뮬레이션 충돌 상자
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UBoxComponent> SubduedCollisionProxy;
+
+	// 현재 상자 메시의 로컬 경계에 충돌 상자를 맞춰 설정
+	void UpdateSubduedCollisionProxy();
 
 	// 발주 시스템과 무관하게 레벨에 직접 배치한 상자의 초기 상품과 수량을 지정합니다.
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Delivery|Placed Initial",
