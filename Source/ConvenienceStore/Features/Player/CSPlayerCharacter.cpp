@@ -4783,15 +4783,6 @@ void ACSPlayerCharacter::TryInteract()
         ECC_Visibility,
         QueryParams);
 
-    DrawDebugLine(
-        GetWorld(),
-        TraceStart,
-        TraceEnd,
-        bHit ? FColor::Green : FColor::Red,
-        false,
-        1.0f,
-        0,
-        1.0f);
 
     if (!bHit)
     {
