@@ -61,6 +61,8 @@ public:
 	// 고용소에서 지연 생성한 직원의 BeginPlay 전에 설정합니다.
 	void ConfigureAsApplicant(ECSEmployeeHireSlot Slot, TSubclassOf<UCSEmployeeHiringWidget> WidgetClass = nullptr);
 	void RefreshEmploymentPresentation();
+	// 해고되면 하던 일을 정리하고 고용소 자리로 돌아가 다시 지원자가 된다
+	void ReturnToHiringSpot();
 
 	// 현재 역할이 처리할 수 있는 업무인지 서브시스템이 확인할 수 있도록 제공합니다.
 	bool CanHandleTask(ECSStoreEmployeeTaskType TaskType) const;
@@ -123,6 +125,10 @@ protected:
 	// TextRender에 사용할 한글 글리프가 포함된 오프라인 폰트입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Hiring") TObjectPtr<UFont> HiringNameplateFont;
 	UPROPERTY(Transient) TObjectPtr<UCSEmployeeHiringWidget> ActiveHiringWidget;
+	FTransform HiringHomeTransform;
+	// 영업 중에는 직원이 진열대 조준을 가리지 않도록 해고 가능한 동안에만 조준에 잡히게 한다
+	bool bDismissTargetable = false;
+	bool IsDismissableNow() const;
 	// 역할별 처리 가능 업무와 작업 시간을 지정하는 데이터 에셋입니다.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Employee|Role")
 	TObjectPtr<UCSStoreEmployeeRoleDataAsset> RoleData;

@@ -211,3 +211,36 @@ bool UCSEmployeeHiringSubsystem::TryHire(ACSStoreEmployeeCharacter* Applicant, F
 	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::EmployeeHireSuccess);
 	return true;
 }
+
+const FCSEmployeeContract* UCSEmployeeHiringSubsystem::FindContract(const ACSStoreEmployeeCharacter* Employee) const
+{
+	if (!IsValid(Employee)) return nullptr;
+	return Contracts.FindByPredicate([Employee](const FCSEmployeeContract& Contract) { return Contract.Employee.Get() == Employee; });
+}
+
+bool UCSEmployeeHiringSubsystem::CanDismiss(const ACSStoreEmployeeCharacter* Employee, FText& OutReason) const
+{
+	OutReason = FText::GetEmpty();
+	if (!FindContract(Employee))
+	{
+		OutReason = NSLOCTEXT("EmployeeHiring", "NotHired", "고용한 직원이 아닙니다.");
+		return false;
+	}
+	const ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
+	if (!IsValid(State) || !State->HasAuthority() || bHiringInProgress || State->bIsDailySummaryPending ||
+		State->CurrentPhase != ECStorePhase::ClosingFreeRoam)
+	{
+		OutReason = NSLOCTEXT("EmployeeHiring", "DismissAfterClosing", "해고는 영업이 끝난 뒤 잠들기 전에만 할 수 있습니다.");
+		return false;
+	}
+	return true;
+}
+
+bool UCSEmployeeHiringSubsystem::TryDismiss(ACSStoreEmployeeCharacter* Employee, FText& OutReason)
+{
+	if (!CanDismiss(Employee, OutReason)) return false;
+	// 고용비는 돌려주지 않는다
+	Contracts.RemoveAll([Employee](const FCSEmployeeContract& Contract) { return Contract.Employee.Get() == Employee; });
+	Employee->ReturnToHiringSpot();
+	return true;
+}

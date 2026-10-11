@@ -142,7 +142,7 @@ void ACSEndingManager::Purchase(ACSPlayerCharacter* Player, const FTransform& Sp
 	ACSEndingItemActor* Spawned = GetWorld()->SpawnActor<ACSEndingItemActor>(Item.ActorClass, SpawnTransform, Params);
 	// 생성과 결제가 모두 성공했을 때만 순서를 확정합니다.
 	if (!IsValid(Spawned)) return;
-	if (!State->TrySpendFunds(Item.PriceGold))
+	if (!State->TrySpendNonStoreFunds(Item.PriceGold))
 	{
 		Spawned->Destroy();
 		return;
@@ -245,7 +245,7 @@ void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)
 	if (!Widget) return;
 	// 화면과 일시정지가 준비되지 않으면 최종 비용을 차감하지 않습니다.
 	if (!UGameplayStatics::SetGamePaused(this, true)) return;
-	if (!State->TrySpendFunds(Data->ActivationGold))
+	if (!State->TrySpendNonStoreFunds(Data->ActivationGold))
 	{
 		UGameplayStatics::SetGamePaused(this, false);
 		return;
