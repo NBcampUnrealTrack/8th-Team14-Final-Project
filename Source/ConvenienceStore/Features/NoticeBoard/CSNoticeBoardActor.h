@@ -29,9 +29,12 @@ public:
 	virtual FText GetInteractionText_Implementation() const override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	/** 현재 열려 있는 전체 화면 게시판을 닫습니다. */
+	/** 현재 열려 있는 전체 화면 게시판에 퇴장 애니메이션을 요청합니다. */
 	UFUNCTION(BlueprintCallable, Category = "Notice Board")
 	void CloseNoticeBoardUI(UCSNoticeBoardWidget* RequestingWidget);
+
+	/** 퇴장 애니메이션이 끝난 게시판을 실제로 제거합니다. */
+	void CompleteCloseNoticeBoardUI(UCSNoticeBoardWidget* RequestingWidget);
 
 	UFUNCTION(BlueprintPure, Category = "Notice Board")
 	bool IsNoticeBoardOpen() const;

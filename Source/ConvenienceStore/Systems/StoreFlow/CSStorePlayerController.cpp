@@ -578,7 +578,7 @@ bool ACSStorePlayerController::BeginSleepTransition(AActor* Requester)
 	CloseJournal();
 	if (IsValid(ActiveDailySummaryWidget) && bDailySummaryReadOnly)
 	{
-		HandleDailySummaryConfirmed();
+		ActiveDailySummaryWidget->RequestClose();
 	}
 	SetStoreHUDHidden(Requester, true);
 	SetStoreTopBarHidden(Requester, true);
@@ -620,7 +620,7 @@ void ACSStorePlayerController::ToggleDailySummary()
 	if (IsValid(ActiveDailySummaryWidget))
 	{
 		// C는 조회용 화면만 닫으며, 실제 마감 정산의 확인을 대신하지 않습니다.
-		if (bDailySummaryReadOnly) HandleDailySummaryConfirmed();
+		if (bDailySummaryReadOnly) ActiveDailySummaryWidget->RequestClose();
 		return;
 	}
 	if (!IsLocalPlayerController() || IsGameplayUIInputLocked() || IsPaused()) return;

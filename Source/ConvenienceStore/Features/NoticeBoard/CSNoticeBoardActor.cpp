@@ -53,7 +53,7 @@ void ACSNoticeBoardActor::Interact_Implementation(AActor* Interactor)
 
 	if (IsValid(ActiveNoticeBoardWidget))
 	{
-		CloseNoticeBoardUI(ActiveNoticeBoardWidget);
+		CompleteCloseNoticeBoardUI(ActiveNoticeBoardWidget);
 	}
 
 	ActiveNoticeBoardWidget = CreateWidget<UCSNoticeBoardWidget>(
@@ -81,12 +81,22 @@ void ACSNoticeBoardActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (IsValid(ActiveNoticeBoardWidget))
 	{
-		CloseNoticeBoardUI(ActiveNoticeBoardWidget);
+		CompleteCloseNoticeBoardUI(ActiveNoticeBoardWidget);
 	}
 	Super::EndPlay(EndPlayReason);
 }
 
 void ACSNoticeBoardActor::CloseNoticeBoardUI(UCSNoticeBoardWidget* RequestingWidget)
+{
+	if (!IsValid(RequestingWidget) || RequestingWidget != ActiveNoticeBoardWidget)
+	{
+		return;
+	}
+
+	RequestingWidget->CloseNoticeBoardWindow();
+}
+
+void ACSNoticeBoardActor::CompleteCloseNoticeBoardUI(UCSNoticeBoardWidget* RequestingWidget)
 {
 	if (!IsValid(RequestingWidget) || RequestingWidget != ActiveNoticeBoardWidget)
 	{

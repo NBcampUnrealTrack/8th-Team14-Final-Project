@@ -102,6 +102,17 @@ void UCSJournalDesignedWidget::SetLabel(FName Name, const FString& Text)
 	SetLabel(Name, FText::FromString(Text));
 }
 
+namespace
+{
+FName GetRaceDetailLabelName(const TCHAR* BaseName, ECSJournalRace Race)
+{
+	// WBP_Journal에서 엘프 상세 텍스트만 접미사 없는 원래 이름을 사용합니다.
+	if (Race == ECSJournalRace::Elf)
+		return FName(BaseName);
+	return FName(*FString::Printf(TEXT("%s_%d"), BaseName, static_cast<int32>(Race)));
+}
+}
+
 void UCSJournalDesignedWidget::RefreshCalendarEvents()
 {
 	const TArray<FCSJournalEvent> Events = GetSelectedDayEvents();
@@ -177,8 +188,8 @@ void UCSJournalDesignedWidget::ApplyJournalView()
 		if (LifeText.IsEmpty()) LifeText = TEXT("이 종족과 관련된 건물을 방문해 상호작용해 주세요.");
 		if (PreferenceText.IsEmpty()) PreferenceText = TEXT("이 종족과 관련된 건물을 방문해 상호작용해 주세요.");
 		SetLabel(FName(*FString::Printf(TEXT("RaceBody_%d"), static_cast<int32>(Race))), Text);
-		SetLabel(FName(*FString::Printf(TEXT("RaceLifeBody_%d"), static_cast<int32>(Race))), LifeText);
-		SetLabel(FName(*FString::Printf(TEXT("RacePreferenceBody_%d"), static_cast<int32>(Race))), PreferenceText);
+		SetLabel(GetRaceDetailLabelName(TEXT("RaceLifeBody"), Race), LifeText);
+		SetLabel(GetRaceDetailLabelName(TEXT("RacePreferenceBody"), Race), PreferenceText);
 	}
 	if (SelectedPage == ECSJournalPage::Calendar)
 	{

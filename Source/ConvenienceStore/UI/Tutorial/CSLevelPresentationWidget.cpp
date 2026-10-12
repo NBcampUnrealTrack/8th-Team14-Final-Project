@@ -99,6 +99,8 @@ void UCSLevelPresentationWidget::NativeConstruct()
 	UnlockShotElapsed = 0.0f;
 	UnlockShotDuration = 0.0f;
 	bUnlockShotPlaying = false;
+	GoalPanelEnterElapsed = 0.0f;
+	bGoalPanelEnterPlaying = false;
 	ActiveSpeakerPortrait = nullptr;
 	UpdateCinematicVisuals();
 	for (UButton* Button : {StoryStartButton.Get(), DialogueNextButton.Get(), CameraNextButton.Get(), ResumeButton.Get()})
@@ -163,6 +165,23 @@ void UCSLevelPresentationWidget::NativeTick(const FGeometry& MyGeometry, float I
 		UnlockPanel->SetRenderTranslation(FVector2D(-SlideDistance * (1.0f - FMath::Clamp(VisibilityAlpha, 0.0f, 1.0f)), 0.0f));
 		UnlockPanel->SetRenderOpacity(FMath::Clamp(VisibilityAlpha, 0.0f, 1.0f));
 		if (UnlockShotElapsed >= Duration) bUnlockShotPlaying = false;
+	}
+	if (bGoalPanelEnterPlaying && GoalPanel)
+	{
+		GoalPanelEnterElapsed += RealDelta;
+		const float Progress = FMath::Clamp(
+			GoalPanelEnterElapsed / FMath::Max(0.05f, GoalPanelEnterDuration), 0.0f, 1.0f);
+		const float EasedProgress = FMath::InterpEaseOut(0.0f, 1.0f, Progress, 3.0f);
+		GoalPanel->SetRenderOpacity(EasedProgress);
+		GoalPanel->SetRenderTranslation(FVector2D(0.0f, GoalPanelEnterOffset * (1.0f - EasedProgress)));
+		GoalPanel->SetRenderScale(FVector2D(FMath::Lerp(GoalPanelEnterScale, 1.0f, EasedProgress)));
+		if (Progress >= 1.0f)
+		{
+			GoalPanel->SetRenderOpacity(1.0f);
+			GoalPanel->SetRenderTranslation(FVector2D::ZeroVector);
+			GoalPanel->SetRenderScale(FVector2D(1.0f));
+			bGoalPanelEnterPlaying = false;
+		}
 	}
 	UpdateCinematicVisuals();
 }
@@ -251,6 +270,8 @@ void UCSLevelPresentationWidget::Present(ECSLevelPresentationPhase Phase, ECSSto
 {
 	const bool bEnteringLevelUp = Phase == ECSLevelPresentationPhase::LevelUp &&
 		(!bHasPresented || CurrentPhase != ECSLevelPresentationPhase::LevelUp);
+	const bool bEnteringGoal = Phase == ECSLevelPresentationPhase::Goal &&
+		(!bHasPresented || CurrentPhase != ECSLevelPresentationPhase::Goal);
 	SetCinematicModeActive(Phase == ECSLevelPresentationPhase::Story);
 	if (Phase == ECSLevelPresentationPhase::Story && SpeakerType == ECSStorySpeaker::Other)
 		SetSpeakerPortrait(SpeakerPortrait);
@@ -277,6 +298,15 @@ void UCSLevelPresentationWidget::Present(ECSLevelPresentationPhase Phase, ECSSto
 	Show(StoryPanel, Phase == ECSLevelPresentationPhase::Story);
 	Show(UnlockPanel, Phase == ECSLevelPresentationPhase::Unlock);
 	Show(GoalPanel, Phase == ECSLevelPresentationPhase::Goal);
+	if (bEnteringGoal && GoalPanel)
+	{
+		GoalPanelEnterElapsed = 0.0f;
+		bGoalPanelEnterPlaying = true;
+		GoalPanel->SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+		GoalPanel->SetRenderOpacity(0.0f);
+		GoalPanel->SetRenderTranslation(FVector2D(0.0f, GoalPanelEnterOffset));
+		GoalPanel->SetRenderScale(FVector2D(GoalPanelEnterScale));
+	}
 	if (CameraNextButton) CameraNextButton->SetVisibility(Phase == ECSLevelPresentationPhase::Unlock && bCameraWaiting ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
 	if (IllustrationImage)
 	{
