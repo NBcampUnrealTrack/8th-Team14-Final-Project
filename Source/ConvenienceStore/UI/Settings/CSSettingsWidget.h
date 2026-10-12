@@ -46,10 +46,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Settings|Graphics")
 	static void ApplyStartupGraphicsDefault();
 
-	// 콘솔 명령 cs.TSkip과 동일한 UCSTutorialSubsystem::DebugSkipTutorial() 노출용.
-	UFUNCTION(BlueprintCallable, Category = "Settings|Tutorial")
-	void SkipTutorial();
-
 	UFUNCTION(BlueprintCallable, Category = "Settings|System")
 	void QuitGame();
 

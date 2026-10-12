@@ -39,6 +39,6 @@ void ACSTutorialTriggerVolume::HandleBeginOverlap(
 
 	if (UCSTutorialSubsystem* TutorialSubsystem = GetWorld()->GetSubsystem<UCSTutorialSubsystem>())
 	{
-		TutorialSubsystem->NotifyStepCompleted(TargetStepId);
+		TutorialSubsystem->NotifyTriggerEntered(TargetStepId, this);
 	}
 }

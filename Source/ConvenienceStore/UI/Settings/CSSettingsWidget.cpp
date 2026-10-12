@@ -6,7 +6,6 @@
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
-#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "Widgets/SWindow.h"
 
 // 화면 구성은 WBP 디자이너 그대로 유지, 닫기 버튼 연결만 초기화.
@@ -188,15 +187,6 @@ void UCSSettingsWidget::ApplyStartupGraphicsDefault()
 	{
 		Settings->SetResolutionScaleValueEx(GResolutionScaleByIndex[2]);
 		Settings->ApplySettings(false);
-	}
-}
-
-void UCSSettingsWidget::SkipTutorial()
-{
-	UWorld* World = GetWorld();
-	if (UCSTutorialSubsystem* Tutorial = World ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr)
-	{
-		Tutorial->DebugSkipTutorial();
 	}
 }
 

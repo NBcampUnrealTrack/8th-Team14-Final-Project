@@ -14,6 +14,10 @@ class CONVENIENCESTORE_API UCSTutorialBannerWidgetBase : public UUserWidget
 {
 	GENERATED_BODY()
 
+public:
+	// 배너만 있는 팁용. 앞 팁 배너가 떠 있으면 그게 사라진 뒤에 이어서 띄운다
+	void ShowTipBanner(const FText& Text);
+
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
@@ -41,7 +45,12 @@ private:
 	void HandleTutorialCompleted();
 
 	void HideBanner();
+	void DisplayBanner(const FText& Text);
+	void ShowNextTipBanner();
 
 	TObjectPtr<UCSTutorialSubsystem> TutorialSubsystem;
 	FTimerHandle BannerHideTimerHandle;
+	FTimerHandle TipBannerGapTimerHandle;
+	TArray<FText> PendingTipBanners;
+	bool bTipBannerShowing = false;
 };

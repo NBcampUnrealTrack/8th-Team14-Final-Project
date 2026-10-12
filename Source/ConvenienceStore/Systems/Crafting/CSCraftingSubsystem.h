@@ -13,6 +13,8 @@ class UCSCraftFailureVisualRegistry;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnCraftIngredientAdded, int32, IngredientCount);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCSOnManualCraftFinished, ECSCraftOutcome, Outcome);
+// 막을 이유를 돌려준다. 빈 문구면 허용
+DECLARE_DELEGATE_RetVal_OneParam(FText, FCSCraftInputGate, ECSCraftInput);
 
 // 레시피 표, 조합 판정, 한 판 동안의 레시피 발견 기록을 맡는다
 // 판정에 난수를 쓰지 않는다. 손님 RNG 스트림 순서가 밀리지 않게 하려는 것
@@ -50,6 +52,9 @@ public:
 	FCSOnManualCraftFinished OnManualCraftFinished;
 
 	void NotifyIngredientAdded(int32 IngredientCount);
+
+	// 튜토리얼이 정해진 순서대로만 만들게 할 때 건다. 안 걸려 있으면 전부 허용
+	FCSCraftInputGate CraftInputGate;
 
 	// 튜토리얼이 제조대 클래스를 몰라도 되게 레벨의 첫 제조대에 대신 시킨다. 제조대가 없으면 아무것도 안 한다
 	AActor* GetCraftStationActor() const;

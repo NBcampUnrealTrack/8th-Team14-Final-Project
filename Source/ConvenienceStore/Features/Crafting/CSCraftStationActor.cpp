@@ -257,6 +257,23 @@ void ACSCraftStationActor::ShowBanner(FName MessageRowName, bool bWarning) const
 	ShowMessage(GetMessage(MessageRowName), bWarning);
 }
 
+bool ACSCraftStationActor::ShowInputBlockReason(ECSCraftInput Input) const
+{
+	const UCSCraftingSubsystem* Crafting = GetCraftingSubsystem();
+	if (!IsValid(Crafting) || !Crafting->CraftInputGate.IsBound())
+	{
+		return false;
+	}
+
+	const FText Reason = Crafting->CraftInputGate.Execute(Input);
+	if (Reason.IsEmpty())
+	{
+		return false;
+	}
+	ShowMessage(Reason, true);
+	return true;
+}
+
 bool ACSCraftStationActor::IsBeforeCraftStart() const
 {
 	return (CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat) && !bIngredientsLocked;
@@ -1415,7 +1432,7 @@ TArray<FCSCraftAutoOption> ACSCraftStationActor::GetAutoCraftOptions() const
 
 void ACSCraftStationActor::HandleAutoCraftOpen()
 {
-	if (!bCloseupActive || IsAnyCloseupPanelOpen())
+	if (!bCloseupActive || IsAnyCloseupPanelOpen() || ShowInputBlockReason(ECSCraftInput::AutoCraft))
 	{
 		return;
 	}
@@ -1468,7 +1485,7 @@ void ACSCraftStationActor::CloseAutoPanel()
 
 void ACSCraftStationActor::HandleRecipeBookOpen()
 {
-	if (!bCloseupActive || IsAnyCloseupPanelOpen())
+	if (!bCloseupActive || IsAnyCloseupPanelOpen() || ShowInputBlockReason(ECSCraftInput::RecipeBook))
 	{
 		return;
 	}
@@ -1517,7 +1534,7 @@ void ACSCraftStationActor::CloseRecipeBook()
 
 void ACSCraftStationActor::HandleIngredientPanelOpen()
 {
-	if (!bCloseupActive || IsAnyCloseupPanelOpen())
+	if (!bCloseupActive || IsAnyCloseupPanelOpen() || ShowInputBlockReason(ECSCraftInput::IngredientPanel))
 	{
 		return;
 	}
@@ -1878,6 +1895,10 @@ void ACSCraftStationActor::HandleHeatDown()
 
 void ACSCraftStationActor::HandleStir()
 {
+	if (ShowInputBlockReason(ECSCraftInput::Stir))
+	{
+		return;
+	}
 	if (CraftStep == ECSCraftStep::Heat)
 	{
 		TryStartCraft();
@@ -1946,7 +1967,8 @@ void ACSCraftStationActor::HandleBubbleCycle()
 void ACSCraftStationActor::HandleBubblePop()
 {
 	// 재시도 대기 중에는 거품을 다 쓴 상태라 더 터트리면 횟수가 PopCount를 넘는다
-	if ((CraftStep != ECSCraftStep::Stir && CraftStep != ECSCraftStep::Pop) || bFinishRetryPending)
+	if ((CraftStep != ECSCraftStep::Stir && CraftStep != ECSCraftStep::Pop) || bFinishRetryPending ||
+		ShowInputBlockReason(ECSCraftInput::Pop))
 	{
 		return;
 	}
@@ -1976,6 +1998,17 @@ void ACSCraftStationActor::HandleBubblePop()
 
 	if (PopsUsed >= CurrentPopCount)
 	{
+		// 막히면 재료를 버리지 않고 거품 횟수만 되돌린다. 거품 주기는 그대로 이어진다
+		const UCSCraftingSubsystem* Crafting = GetCraftingSubsystem();
+		const bool bPopFailed = IsValid(Crafting) &&
+			Crafting->EvaluateCraft(CountIngredients(), CurrentHeat, StirCount, PopHits).Outcome == ECSCraftOutcome::PopFailed;
+		if (bPopFailed && ShowInputBlockReason(ECSCraftInput::FinishWithMissedPops))
+		{
+			PopsUsed = 0;
+			PopHits = 0;
+			RefreshInfoWidget();
+			return;
+		}
 		FinishCraft();
 	}
 	else if (CraftStep != ECSCraftStep::Pop)
