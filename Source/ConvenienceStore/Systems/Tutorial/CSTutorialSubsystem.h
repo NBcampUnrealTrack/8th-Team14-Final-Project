@@ -108,6 +108,14 @@ public:
 	// 1부 진행 중이고 아직 입간판 스텝이 아니면 true와 입간판에 띄울 문구
 	bool ShouldBlockStoreOpen(FText& OutMessage) const;
 
+	// 마감 튜토리얼이 진입 대기 중이거나 진행 중인지 확인
+	// 튜토리얼을 완료했거나 건너뛰었으면 false를 반환
+	bool IsPart3Pending() const;
+
+	// 1일차 마감 세이브를 불러온 뒤 3부 첫 스텝부터 튜토리얼을 시작
+	// 이미 완료했거나 튜토리얼 준비에 실패하면 시작하지 않음
+	void ResumePart3FromSave(ACSStoreGameMode* GameMode);
+
 	// 배달 튜토리얼 동안 손님이 이 상품을 한 개도 못 사게 막는다. 진열대 상품이 줄면 안내 외곽선이 사라진다
 	bool IsDeliveryTutorialProduct(FName ProductId) const { return bDeliveryTutorialActive && ProductId == DeliveryProductId; }
 
@@ -124,6 +132,11 @@ protected:
 	void EnterPart3();
 
 	void StartTutorial(ACSStoreGameMode* GameMode);
+
+	// 진행 상태 초기화, DataTable 스텝 수집, 위젯 생성, 이벤트 구독을 처리
+	// DataTable이 없거나 스텝 행이 없으면 false를 반환
+	bool PrepareTutorial(ACSStoreGameMode* GameMode);
+
 	void AdvanceStep();
 	// 스텝 시작 처리만 한다. 이전 스텝의 끝 처리는 부르는 쪽에서
 	void EnterStep(int32 StepIndex);

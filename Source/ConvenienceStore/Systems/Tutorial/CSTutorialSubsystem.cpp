@@ -142,7 +142,8 @@ void UCSTutorialSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	}
 
 	// 불러오기 중에는 복원 전 기본 영업일(1)로 위 검사를 통과하므로 별도로 확인
-	// 튜토리얼 진행 상태는 저장하지 않으므로 불러온 월드에서는 시작하지 않음
+	// 불러온 월드에서는 처음부터 시작하지 않음
+	// 1일차 마감 세이브의 3부 재개는 GameMode의 RestoreClosingCheckpoint에서 처리
 	if (const UGameInstance* GameInstance = InWorld.GetGameInstance())
 	{
 		const UCSSaveSubsystem* SaveSubsystem = GameInstance->GetSubsystem<UCSSaveSubsystem>();
@@ -236,6 +237,21 @@ void UCSTutorialSubsystem::Deinitialize()
 
 void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 {
+	if (!PrepareTutorial(GameMode))
+	{
+		return;
+	}
+
+	CurrentStepIndex = 0;
+	BroadcastCurrentStep();
+	StartAutoAdvanceTimerIfNeeded();
+	UpdateHighlightMarkersForCurrentStep();
+	TrySpawnTutorialShelfDelivery();
+	TrySpawnTutorialCrateDeliveries();
+}
+
+bool UCSTutorialSubsystem::PrepareTutorial(ACSStoreGameMode* GameMode)
+{
 	StepRows.Reset();
 	TipRows.Reset();
 	ShownTipIds.Reset();
@@ -263,7 +279,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("[Tutorial] TutorialStepDataTable이 지정되지 않았습니다. BP_TutorialGameMode를 확인하세요."));
-		return;
+		return false;
 	}
 
 	// DataTable에 행이 나열된 순서를 그대로 진행 순서로 사용
@@ -271,7 +287,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	for (const FName& RowName : StepDataTable->GetRowNames())
 	{
 		if (FCSTutorialStepRow* Row = StepDataTable->FindRow<FCSTutorialStepRow>(
-			RowName, TEXT("UCSTutorialSubsystem::StartTutorial")))
+			RowName, TEXT("UCSTutorialSubsystem::PrepareTutorial")))
 		{
 			if (Row->Part == ECSTutorialPart::DuringOpen)
 			{
@@ -287,7 +303,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	if (StepRows.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[Tutorial] TutorialStepDataTable에 행이 없습니다."));
-		return;
+		return false;
 	}
 
 	CreateTutorialWidgets(GameMode);
@@ -299,13 +315,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToCustomerRuntimeSubsystem();
 	SubscribeToCraftingSubsystem();
 	SubscribeToDeliverySubsystem();
-
-	CurrentStepIndex = 0;
-	BroadcastCurrentStep();
-	StartAutoAdvanceTimerIfNeeded();
-	UpdateHighlightMarkersForCurrentStep();
-	TrySpawnTutorialShelfDelivery();
-	TrySpawnTutorialCrateDeliveries();
+	return true;
 }
 
 void UCSTutorialSubsystem::AdvanceStep()
@@ -1746,6 +1756,40 @@ void UCSTutorialSubsystem::EnterPart3()
 	}
 
 	EnterStep(Part3Index);
+}
+
+bool UCSTutorialSubsystem::IsPart3Pending() const
+{
+	// 완료하거나 cs.TSkip으로 건너뛴 튜토리얼은 재개 대상에서 제외
+	if (bTutorialCompleted)
+	{
+		return false;
+	}
+
+	// 영업 종료 안내 재생 중인 3부 진입 대기 상태 또는 3부 스텝 진행 상태를 확인
+	// 마감 자동 저장은 ClosingFreeRoam 전환 뒤에 실행되어 두 상태 중 하나에 해당
+	return bPart3EntryScheduled ||
+		(StepRows.IsValidIndex(CurrentStepIndex) && StepRows[CurrentStepIndex]->Part == ECSTutorialPart::PostClose);
+}
+
+void UCSTutorialSubsystem::ResumePart3FromSave(ACSStoreGameMode* GameMode)
+{
+	if (bTutorialCompleted || !PrepareTutorial(GameMode))
+	{
+		return;
+	}
+
+	// 3부 스텝이 DataTable에 없으면 재개할 내용이 없으므로 튜토리얼을 종료
+	if (FindFirstStepIndexForPart(ECSTutorialPart::PostClose) == INDEX_NONE)
+	{
+		CompleteTutorial();
+		return;
+	}
+
+	// 불러오기 복귀에는 영업 종료 안내가 없으므로 3부 진입 대기를 직접 설정
+	// PrepareTutorial의 초기화 뒤에 설정해야 잠자기 차단과 다음 날 준비 단계의 튜토리얼 종료에 반영
+	bPart3EntryScheduled = true;
+	EnterPart3();
 }
 
 void UCSTutorialSubsystem::HandleInnerThoughtShown()

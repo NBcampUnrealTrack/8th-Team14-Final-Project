@@ -211,6 +211,11 @@ struct CONVENIENCESTORE_API FCSStoreStateRecord
 	UPROPERTY()
 	bool bVillainAlertShown = false;
 
+	// 1일차 마감 튜토리얼이 끝나지 않은 상태로 저장되었는지
+	// 불러온 뒤 true면 3부 첫 스텝부터 다시 시작하고 필드가 없는 구버전 세이브는 false로 읽음
+	UPROPERTY()
+	bool bTutorialPart3Pending = false;
+
 	// 당일 집계
 	// 필드 의미는 ACSStoreGameState의 같은 이름 멤버와 동일
 
