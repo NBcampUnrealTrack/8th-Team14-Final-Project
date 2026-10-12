@@ -206,6 +206,11 @@ struct CONVENIENCESTORE_API FCSStoreStateRecord
 	UPROPERTY()
 	int32 LastPayrollProcessedBusinessDay = INDEX_NONE;
 
+	// 이 게임에서 빌런 출몰 알림을 이미 표시했는지
+	// 필드가 없는 구버전 세이브는 false로 읽어 다음 빌런 등장 시 1회 표시
+	UPROPERTY()
+	bool bVillainAlertShown = false;
+
 	// 당일 집계
 	// 필드 의미는 ACSStoreGameState의 같은 이름 멤버와 동일
 
