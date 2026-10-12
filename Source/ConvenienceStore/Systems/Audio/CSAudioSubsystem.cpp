@@ -14,6 +14,13 @@
 void UCSAudioSubsystem::Deinitialize()
 {
 	StopBGM();
+	for (UAudioComponent* Component : PersistentSFXComponents)
+	{
+		if (!IsValid(Component)) continue;
+		Component->OnAudioFinishedNative.RemoveAll(this);
+		Component->Stop();
+	}
+	PersistentSFXComponents.Reset();
 	ReleaseSoundMix();
 	AudioConfig = nullptr;
 
@@ -125,7 +132,11 @@ bool UCSAudioSubsystem::IsSFXMuted() const
 
 bool UCSAudioSubsystem::PlayBGM()
 {
-	const FName Id = GetSelectedBGMId();
+	return PlayBGMTrack(GetSelectedBGMId());
+}
+
+bool UCSAudioSubsystem::PlayBGMTrack(FName Id)
+{
 	USoundBase* Sound = nullptr;
 	for (const FCSBGMTrack& Track : GetBGMTracks()) if (Track.Id == Id) { Sound = Track.Sound; break; }
 	if (!IsValid(Sound) || !IsValid(GetWorld()))
@@ -262,9 +273,10 @@ void UCSAudioSubsystem::ClearBGMTransition()
 
 void UCSAudioSubsystem::HandleBGMFinished()
 {
+	const FName FinishedId = PlayingBGMId;
 	PlayingBGMId = NAME_None;
 	// 페이드 전환은 타이머가 담당하고 자연 종료된 비반복 음원만 다시 재생합니다.
-	if (bBGMPlaybackRequested && !BGMTransitionTimer.IsValid()) PlayBGM();
+	if (bBGMPlaybackRequested && !BGMTransitionTimer.IsValid()) PlayBGMTrack(FinishedId);
 	else OnBGMChanged.Broadcast();
 }
 
@@ -307,7 +319,7 @@ bool UCSAudioSubsystem::PlaySFX(ECSAudioEvent AudioEvent)
 	return true;
 }
 
-UAudioComponent* UCSAudioSubsystem::CreateTrackedSFX2D(ECSAudioEvent AudioEvent)
+UAudioComponent* UCSAudioSubsystem::CreateTrackedSFX2D(ECSAudioEvent AudioEvent, bool bPersistAcrossLevelTransition)
 {
 	USoundBase* Sound = FindSFXSound(AudioEvent);
 	if (!IsValid(Sound) || !IsValid(GetWorld()))
@@ -323,15 +335,27 @@ UAudioComponent* UCSAudioSubsystem::CreateTrackedSFX2D(ECSAudioEvent AudioEvent)
 		return nullptr;
 	}
 
-	return UGameplayStatics::CreateSound2D(
+	UAudioComponent* Component = UGameplayStatics::CreateSound2D(
 		GetWorld(),
 		Sound,
 		1.0f,
 		1.0f,
 		0.0f,
 		nullptr,
-		false,
+		bPersistAcrossLevelTransition,
 		true);
+	if (Component && bPersistAcrossLevelTransition)
+	{
+		PersistentSFXComponents.RemoveAll([](const auto& Entry) { return !IsValid(Entry); });
+		PersistentSFXComponents.Add(Component);
+		Component->OnAudioFinishedNative.AddUObject(this, &ThisClass::HandlePersistentSFXFinished);
+	}
+	return Component;
+}
+
+void UCSAudioSubsystem::HandlePersistentSFXFinished(UAudioComponent* Component)
+{
+	PersistentSFXComponents.Remove(Component);
 }
 
 bool UCSAudioSubsystem::PlaySFXAtLocation(
