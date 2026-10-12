@@ -33,6 +33,15 @@ public:
 	virtual FText GetInteractionText_Implementation() const override;
 	// 제출 기록을 복원하거나 전시 외형을 다시 생성해야 할 때도 호출할 수 있습니다.
 	UFUNCTION(BlueprintCallable, Category = "Ending|Display") void RefreshSubmittedDisplay();
+
+	// ----- 세이브 / 로드 -----
+
+	// 전시 중인 아이템의 슬롯 번호를 조회하고 없으면 INDEX_NONE을 반환
+	int32 FindDisplayedItemSlot(const ACSEndingItemActor* Item) const;
+
+	// 복원한 아이템을 지정 슬롯에 전시하고 성공 여부를 반환
+	// 제출 기록 전시대이거나 슬롯이 차 있거나 슬롯과 아이템이 맞지 않으면 실패
+	bool RestoreDisplayedItem(ACSEndingItemActor* Item, int32 Index);
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

@@ -1148,6 +1148,56 @@ struct CONVENIENCESTORE_API FCSQuickbarSlotRecord
 	// 퀵바에 다시 보관하므로 위치와 바닥 물리 상태는 사용하지 않음
 	UPROPERTY()
 	FCSGachaSealRecord GachaSeal;
+
+	// 시설 발주로 구매한 마법 지팡이 여부
+	// 이전 세이브는 false로 읽혀 거치대 지팡이를 재사용하는 기존 복원을 유지
+	UPROPERTY()
+	bool bPurchasedTool = false;
+
+	// 레벨 거치대 지팡이가 소속된 시설의 식별자
+	// 비어 있으면 같은 클래스의 아무 거치대 지팡이를 사용
+	UPROPERTY()
+	FGuid ToolHomeDockOwnerSaveId;
+
+	// 엔딩 아이템 보관 여부
+	// 이전 세이브는 false로 읽혀 클래스만 기록된 엔딩 아이템과 구분
+	UPROPERTY()
+	bool bHasEndingItem = false;
+
+	// 보관 중인 엔딩 아이템 식별자
+	UPROPERTY()
+	FName EndingItemId;
+};
+
+// 퀵바 밖에 놓인 마법 지팡이 한 개의 레코드
+// 거치대에 꽂힌 레벨 지팡이는 레벨이 다시 생성하므로 기록하지 않음
+USTRUCT()
+struct CONVENIENCESTORE_API FCSMagicWandRecord
+{
+	GENERATED_BODY()
+
+	// 지팡이 클래스
+	UPROPERTY()
+	FSoftClassPath ToolClass;
+
+	// 지팡이의 월드 트랜스폼
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 바닥 물리 상태로 놓여 있던 지팡이 여부
+	// 복원 후 물리를 다시 켜서 바닥에 안착
+	UPROPERTY()
+	bool bWorldDropPhysics = false;
+
+	// 시설 발주로 구매한 지팡이 여부
+	// false면 레벨 거치대 지팡이를 거치대에서 분리해 저장 위치로 이동
+	UPROPERTY()
+	bool bPurchased = false;
+
+	// 레벨 거치대 지팡이가 소속된 시설의 식별자
+	// 비어 있으면 같은 클래스의 아무 거치대 지팡이를 사용
+	UPROPERTY()
+	FGuid HomeDockOwnerSaveId;
 };
 
 // 퀵바 전체 레코드
@@ -1206,6 +1256,11 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 	UPROPERTY()
 	TArray<FCSSummonedCartRecord> SummonedCarts;
 
+	// 퀵바 밖에 놓인 마법 지팡이 레코드 목록
+	// 퀵바에 보관한 지팡이와 거치대에 꽂힌 레벨 지팡이는 제외
+	UPROPERTY()
+	TArray<FCSMagicWandRecord> MagicWands;
+
 	// 플레이어 퀵바 레코드
 	UPROPERTY()
 	FCSQuickbarRecord Quickbar;
@@ -1214,6 +1269,52 @@ struct CONVENIENCESTORE_API FCSWorldSaveRecord
 // -----------------------------------------------------------------------------
 // 엔딩
 // -----------------------------------------------------------------------------
+
+// 바닥에 놓인 엔딩 아이템 한 개의 레코드
+USTRUCT()
+struct CONVENIENCESTORE_API FCSEndingWorldItemRecord
+{
+	GENERATED_BODY()
+
+	// 엔딩 아이템 식별자
+	UPROPERTY()
+	FName ItemId;
+
+	// 아이템 씬 루트의 월드 트랜스폼
+	// 물리 중 메시가 루트로 바뀐 상태에서도 생성 기준 위치를 유지
+	UPROPERTY()
+	FTransform Transform = FTransform::Identity;
+
+	// 바닥 물리 상태로 놓여 있던 아이템 여부
+	UPROPERTY()
+	bool bWorldDropPhysics = false;
+
+	// 구매 후 아직 줍지 않은 아이템 여부
+	// 복원 후에도 다음 구매 전에 먼저 줍도록 유지
+	UPROPERTY()
+	bool bPendingPickup = false;
+};
+
+// 가게 전시대에 올려둔 엔딩 아이템 한 개의 레코드
+// 제출 기록 전시대의 복제본은 제출 목록으로 다시 생성하므로 제외
+USTRUCT()
+struct CONVENIENCESTORE_API FCSEndingDisplayItemRecord
+{
+	GENERATED_BODY()
+
+	// 레벨 배치 전시대의 액터 이름
+	UPROPERTY()
+	FName DisplayActorName;
+
+	// 전시 슬롯 번호
+	// 엔딩 데이터의 아이템 배열 순서와 대응
+	UPROPERTY()
+	int32 SlotIndex = INDEX_NONE;
+
+	// 엔딩 아이템 식별자
+	UPROPERTY()
+	FName ItemId;
+};
 
 // 엔딩 진행 상태 레코드
 USTRUCT()
@@ -1233,4 +1334,13 @@ struct CONVENIENCESTORE_API FCSEndingSaveRecord
 	// 자금 복원 후 엔딩 조건이 다시 충족되어 재발동하는 상황을 방지
 	UPROPERTY()
 	bool bEndingStarted = false;
+
+	// 바닥에 놓인 엔딩 아이템 레코드 목록
+	// 퀵바에 보관한 아이템은 퀵바 레코드에 기록
+	UPROPERTY()
+	TArray<FCSEndingWorldItemRecord> WorldItems;
+
+	// 가게 전시대에 올려둔 엔딩 아이템 레코드 목록
+	UPROPERTY()
+	TArray<FCSEndingDisplayItemRecord> DisplayedItems;
 };

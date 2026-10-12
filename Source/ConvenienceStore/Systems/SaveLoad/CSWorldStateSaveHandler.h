@@ -9,6 +9,7 @@
 // 소환 수레 수집 선언에 사용
 class ACSCartActor;
 class ACSDeliveryCrateActor;
+class ACSEndingManager;
 class ACSFreshnessSafeZoneActor;
 class ACSGachaSeal;
 class ACSPlayerCharacter;
@@ -16,6 +17,7 @@ class ACSTrashActor;
 class UCSSaveGame;
 class UDataTable;
 struct FCSCrateRecord;
+struct FCSEndingSaveRecord;
 struct FCSGachaSealRecord;
 struct FCSTrashRecord;
 struct FCSWorldSaveRecord;
@@ -59,11 +61,27 @@ private:
 	// 아티팩트로 소환한 수레만 기록하고 레벨 배치 수레는 제외
 	void CaptureSummonedCarts(FCSWorldSaveRecord& OutRecord) const;
 
+	// 퀵바 밖에 놓인 마법 지팡이를 기록
+	// 퀵바에 보관한 지팡이와 거치대에 꽂힌 레벨 지팡이는 제외
+	void CaptureMagicWands(FCSWorldSaveRecord& OutRecord) const;
+
 	void CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const;
 
 	// 자금 복원 후 엔딩 조건이 다시 충족되므로 엔딩 진행 상태를 함께 기록
 	void CaptureEnding(UCSSaveGame& OutSave) const;
 	void RestoreEnding(const UCSSaveGame& InSave);
+
+	// 관리자가 발급한 엔딩 아이템 중 바닥과 가게 전시대에 있는 아이템을 기록
+	// 퀵바 아이템은 퀵바 레코드, 제출 아이템은 제출 목록이 담당
+	void CaptureEndingItems(const ACSEndingManager& EndingManager, FCSEndingSaveRecord& OutRecord) const;
+
+	// 바닥과 가게 전시대의 엔딩 아이템을 다시 생성
+	// 전시대를 찾지 못하거나 슬롯에 놓지 못하면 아이템 유실을 막기 위해 전시대 앞 바닥에 생성
+	void RestoreEndingItems(ACSEndingManager& EndingManager, const FCSEndingSaveRecord& InRecord);
+
+	// 바닥에 놓인 마법 지팡이를 저장 위치에 복원
+	// 레벨 지팡이는 거치대에서 분리해 옮기고 구매 지팡이는 새로 생성하므로 퀵바 복원보다 먼저 호출
+	void RestoreMagicWands(const FCSWorldSaveRecord& InRecord);
 
 	// 슬롯 점유 포인터가 어긋나지 않도록 부분 갱신 대신 월드의 모든 상품·상자를 제거
 	// 레벨 배치 진열대가 BeginPlay에서 채운 초기 상품도 함께 제거

@@ -568,7 +568,7 @@ void ACSStorePlayerController::HandleShopliftStarted(ACSCustomerCharacter* Custo
 	StoreGameState->MarkVillainAlertShown();
 	ShowGameplayToast(
 		NSLOCTEXT("Villain", "VillainAppearedTitle", "빌런 출몰!"),
-		NSLOCTEXT("Villain", "VillainAppearedToast", "마법 지팡이로 제압하세요."),
+		NSLOCTEXT("Villain", "VillainAppearedToast", "빨간색 테두리인 빌런을\n마법 지팡이로 제압하세요"),
 		true);
 }
 
