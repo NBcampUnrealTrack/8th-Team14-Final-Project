@@ -21,11 +21,17 @@ class CONVENIENCESTORE_API UCSDailySummaryWidget : public UUserWidget
 	GENERATED_BODY()
 public:
 	void RefreshSummary();
+
+	/** 퇴장 애니메이션을 재생한 뒤 정산 완료/닫기 요청을 전달합니다. */
+	UFUNCTION(BlueprintCallable, Category = "Store|Closing")
+	void RequestClose();
+
 	UPROPERTY(BlueprintAssignable, Category = "Store|Closing")
 	FCSOnDailySummaryConfirmed OnDailySummaryConfirmed;
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> BusinessDayResultText;
@@ -92,6 +98,18 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Style")
 	FLinearColor NegativeColor = FLinearColor(0.9f, 0.2f, 0.2f, 1.0f);
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Animation", meta = (ClampMin = "0.0"))
+	float OpenAnimationDuration = 0.3f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Animation", meta = (ClampMin = "0.0"))
+	float CloseAnimationDuration = 0.22f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Animation", meta = (ClampMin = "0.0"))
+	float AnimationVerticalOffset = 48.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Store|Summary|Animation", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float AnimationStartScale = 0.96f;
+
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> StoreGameState;
 
@@ -108,6 +126,21 @@ protected:
 	UFUNCTION() void HandleDailySummaryDataChanged();
 	UFUNCTION() void HandleReputationChanged(int32 NewReputationScore);
 	UFUNCTION() void HandleReputationStatsChanged();
+
+	enum class ESummaryAnimationState : uint8
+	{
+		Opening,
+		Idle,
+		Closing
+	};
+
+	ESummaryAnimationState AnimationState = ESummaryAnimationState::Opening;
+	float AnimationElapsedTime = 0.0f;
+	float CurrentAnimationAlpha = 0.0f;
+	float ClosingStartAlpha = 1.0f;
+
+	void ApplyWindowAnimation(float Alpha);
+	void FinishClosing();
 	void ApplyDeltaPresentation(
 		int32 Delta,
 		UTextBlock* DeltaText,

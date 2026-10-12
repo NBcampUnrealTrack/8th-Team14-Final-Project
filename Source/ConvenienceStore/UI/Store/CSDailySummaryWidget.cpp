@@ -10,6 +10,11 @@
 void UCSDailySummaryWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	AnimationState = ESummaryAnimationState::Opening;
+	AnimationElapsedTime = 0.0f;
+	ApplyWindowAnimation(0.0f);
+
 	// 기존 AddDynamic 직접 연결은 위젯 재구성 시 중복될 수 있어 수명 주기와 함께 관리합니다.
 	// if (IsValid(ConfirmButton)) ConfirmButton->OnClicked.AddDynamic(this, &UCSDailySummaryWidget::HandleConfirmClicked);
 	if (IsValid(ConfirmButton))
@@ -56,6 +61,79 @@ void UCSDailySummaryWidget::NativeConstruct()
 	}
 
 	RefreshSummary();
+}
+
+void UCSDailySummaryWidget::RequestClose()
+{
+	if (AnimationState == ESummaryAnimationState::Closing)
+	{
+		return;
+	}
+
+	AnimationState = ESummaryAnimationState::Closing;
+	AnimationElapsedTime = 0.0f;
+	ClosingStartAlpha = CurrentAnimationAlpha;
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+
+	if (CloseAnimationDuration <= 0.0f)
+	{
+		FinishClosing();
+	}
+}
+
+void UCSDailySummaryWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (AnimationState == ESummaryAnimationState::Idle)
+	{
+		return;
+	}
+
+	AnimationElapsedTime += InDeltaTime;
+	const float Duration = AnimationState == ESummaryAnimationState::Opening
+		? OpenAnimationDuration
+		: CloseAnimationDuration;
+	const float LinearAlpha = Duration > 0.0f
+		? FMath::Clamp(AnimationElapsedTime / Duration, 0.0f, 1.0f)
+		: 1.0f;
+	const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, LinearAlpha, 3.0f);
+	ApplyWindowAnimation(
+		AnimationState == ESummaryAnimationState::Opening
+			? EasedAlpha
+			: ClosingStartAlpha * (1.0f - EasedAlpha));
+
+	if (LinearAlpha < 1.0f)
+	{
+		return;
+	}
+
+	if (AnimationState == ESummaryAnimationState::Opening)
+	{
+		AnimationState = ESummaryAnimationState::Idle;
+		ApplyWindowAnimation(1.0f);
+	}
+	else
+	{
+		FinishClosing();
+	}
+}
+
+void UCSDailySummaryWidget::ApplyWindowAnimation(const float Alpha)
+{
+	const float ClampedAlpha = FMath::Clamp(Alpha, 0.0f, 1.0f);
+	CurrentAnimationAlpha = ClampedAlpha;
+	SetRenderOpacity(ClampedAlpha);
+	SetRenderTranslation(FVector2D(0.0f, AnimationVerticalOffset * (1.0f - ClampedAlpha)));
+	const float Scale = FMath::Lerp(AnimationStartScale, 1.0f, ClampedAlpha);
+	SetRenderScale(FVector2D(Scale, Scale));
+}
+
+void UCSDailySummaryWidget::FinishClosing()
+{
+	AnimationState = ESummaryAnimationState::Idle;
+	ApplyWindowAnimation(0.0f);
+	OnDailySummaryConfirmed.Broadcast();
 }
 
 void UCSDailySummaryWidget::NativeDestruct()
@@ -273,7 +351,7 @@ void UCSDailySummaryWidget::ApplyDeltaPresentation(
 	}
 }
 
-void UCSDailySummaryWidget::HandleConfirmClicked() { OnDailySummaryConfirmed.Broadcast(); }
+void UCSDailySummaryWidget::HandleConfirmClicked() { RequestClose(); }
 
 void UCSDailySummaryWidget::HandleProductAnalysisClicked()
 {

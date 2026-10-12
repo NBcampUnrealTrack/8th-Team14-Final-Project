@@ -415,10 +415,8 @@ bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
 	OutRewardGold = Order.RewardGold;
 	OutReputationReward = Order.ReputationReward;
 	OutMessage = FText::Format(
-		NSLOCTEXT("Delivery", "MagicCircleDeliverySuccess", "{0}에 배달을 완료했습니다. +{1} 골드 / 평판 +{2}"),
-		Order.RecipientDisplayName,
-		FText::AsNumber(OutRewardGold),
-		FText::AsNumber(OutReputationReward));
+		NSLOCTEXT("Delivery", "MagicCircleDeliverySuccess", "{0}에 배달을 완료했습니다."),
+		Order.RecipientDisplayName);
 	return true;
 }
 

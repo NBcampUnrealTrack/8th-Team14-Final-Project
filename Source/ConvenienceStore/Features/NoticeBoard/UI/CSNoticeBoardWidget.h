@@ -43,6 +43,7 @@ public:
 
 	virtual void NativeDestruct() override;
 	virtual void NativeConstruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Notice Board")
@@ -52,6 +53,7 @@ protected:
 	FName SelectedTabId = TEXT("Weather");
 
 	/** 장부 UI와 동일하게 선택 배경은 별도 위젯으로 표시하고 버튼은 클릭·호버만 담당합니다. */
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Close;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Weather;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Trend;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> Button_Event;
@@ -84,10 +86,37 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Tab Style")
 	FSlateColor HighlightedTabDescriptionColor = FSlateColor(FLinearColor(0.72f, 0.72f, 0.72f, 1.0f));
 
+	/** 게시판이 열릴 때 아래에서 올라오며 나타나는 시간입니다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Animation", meta = (ClampMin = "0.0"))
+	float OpenAnimationDuration = 0.3f;
+
+	/** 게시판이 내려간 뒤 실제로 닫히기까지의 시간입니다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Animation", meta = (ClampMin = "0.0"))
+	float CloseAnimationDuration = 0.22f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Animation", meta = (ClampMin = "0.0"))
+	float AnimationVerticalOffset = 48.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Notice Board|Animation", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float AnimationStartScale = 0.96f;
+
 private:
+	enum class ENoticeBoardAnimationState : uint8
+	{
+		Opening,
+		Idle,
+		Closing
+	};
+
 	FName HoveredTabId = NAME_None;
+	ENoticeBoardAnimationState AnimationState = ENoticeBoardAnimationState::Opening;
+	float AnimationElapsedTime = 0.0f;
+	float CurrentAnimationAlpha = 0.0f;
+	float ClosingStartAlpha = 1.0f;
 
 	void RefreshTabPresentations();
+	void ApplyWindowAnimation(float Alpha);
+	void FinishClosing();
 	void RefreshTabPresentation(
 		FName TabId,
 		UWidget* SelectedBackground,
