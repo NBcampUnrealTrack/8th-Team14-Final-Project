@@ -1,12 +1,14 @@
 #include "UI/Title/CSTitleSaveMenuWidget.h"
 
 #include "Components/Button.h"
+#include "Components/AudioComponent.h"
 #include "Components/PanelWidget.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 
 #include "Systems/SaveLoad/CSSaveSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "UI/Title/CSTitleSaveSlotCardWidget.h"
 
 void UCSTitleSaveMenuWidget::NativeConstruct()
@@ -104,6 +106,18 @@ void UCSTitleSaveMenuWidget::HandleSlotPrimaryRequested(FName SlotName, bool bIs
 	else
 	{
 		bIsTransitioning = SaveSubsystem->LoadFromSlot(SlotName);
+	}
+
+	if (bIsTransitioning)
+	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this))
+		{
+			Audio->StopBGM();
+			if (UAudioComponent* StartSound = Audio->CreateTrackedSFX2D(ECSAudioEvent::GameStart, true))
+			{
+				StartSound->Play();
+			}
+		}
 	}
 
 	// 버전 불일치나 파일 손상으로 실패하면 메뉴를 다시 사용할 수 있도록 복구

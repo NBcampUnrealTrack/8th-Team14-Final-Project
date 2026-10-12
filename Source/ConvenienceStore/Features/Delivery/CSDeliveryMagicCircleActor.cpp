@@ -11,6 +11,7 @@
 #include "Features/UI/CSDeliverySettlementWidget.h"
 #include "GameFramework/Pawn.h"
 #include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
+#include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "NiagaraComponent.h"
@@ -169,6 +170,7 @@ void ACSDeliveryMagicCircleActor::Interact_Implementation(AActor* Interactor)
 	const APawn* Pawn = Cast<APawn>(Interactor);
 	if (bSucceeded)
 	{
+		if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::DeliveryDispatch);
 		const int32 Index = IsValid(StoreState) ? StoreState->GetMagicCircleLevel() - 1 : 0;
 		if (LevelVFX.IsValidIndex(Index)) PlayOneShotVFX(LevelVFX[Index].DispatchEffect);
 		OnDeliveryDispatched();
@@ -232,6 +234,7 @@ bool ACSDeliveryMagicCircleActor::PlaceProduct(ACSProductPickupActor* Product)
 	Product->SetActorEnableCollision(true);
 	Product->SetHeldByPlayerForFreshness(false);
 	Product->EnableWorldDropPhysics();
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::ProductStock);
 	return true;
 }
 
@@ -250,5 +253,6 @@ bool ACSDeliveryMagicCircleActor::PlaceOneProductFromCrate(ACSDeliveryCrateActor
 		Product->Destroy();
 		return false;
 	}
+	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::ProductStock);
 	return true;
 }

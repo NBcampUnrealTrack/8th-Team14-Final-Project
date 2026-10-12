@@ -65,6 +65,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio|BGM")
 	bool PlayBGM();
 
+	// 메뉴 음악처럼 저장된 주크박스 선택을 바꾸지 않는 일시적인 BGM 요청입니다.
+	bool PlayBGMTrack(FName Id);
+
 	UFUNCTION(BlueprintCallable, Category = "Audio|BGM")
 	void StopBGM();
 
@@ -76,7 +79,7 @@ public:
 	bool PlaySFX(ECSAudioEvent AudioEvent);
 
 	// 호출 측에서 완료 Delegate를 먼저 연결할 수 있도록 재생 전 2D 컴포넌트만 생성합니다.
-	UAudioComponent* CreateTrackedSFX2D(ECSAudioEvent AudioEvent);
+	UAudioComponent* CreateTrackedSFX2D(ECSAudioEvent AudioEvent, bool bPersistAcrossLevelTransition = false);
 
 	UFUNCTION(BlueprintCallable, Category = "Audio|SFX")
 	bool PlaySFXAtLocation(ECSAudioEvent AudioEvent, FVector Location);
@@ -86,6 +89,7 @@ private:
 	void ReleaseSoundMix();
 	USoundBase* FindSFXSound(ECSAudioEvent AudioEvent) const;
 	void ClearBGMTransition();
+	void HandlePersistentSFXFinished(UAudioComponent* Component);
 	UFUNCTION() void HandleBGMFinished();
 	FName SelectedBGMId = NAME_None;
 	FName PlayingBGMId = NAME_None;
@@ -98,6 +102,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> ActiveBGMComponent;
+
+	// 레벨 전환 GC에서도 짧은 시작 효과음이 완료될 때까지 참조를 유지합니다.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAudioComponent>> PersistentSFXComponents;
 
 	float BGMVolume = 1.0f;
 	float SFXVolume = 1.0f;
