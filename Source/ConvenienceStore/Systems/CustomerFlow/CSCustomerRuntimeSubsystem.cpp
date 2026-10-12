@@ -19,7 +19,10 @@
 #include "Features/Store/CSStoreInteriorActor.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Components/CapsuleComponent.h"
+#include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
+#include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Systems/Pricing/CSStorePricingSubsystem.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStoreGameMode.h"
 #include "Engine/World.h"
@@ -372,6 +375,31 @@ TArray<AActor*> UCSCustomerRuntimeSubsystem::GetProductsOnShelf(const AActor* Sh
 	return Result;
 }
 
+bool UCSCustomerRuntimeSubsystem::IsProductHeldFromCustomers(FName ProductId) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || ProductId.IsNone())
+	{
+		return false;
+	}
+
+	if (const UCSTutorialSubsystem* Tutorial = World->GetSubsystem<UCSTutorialSubsystem>();
+		IsValid(Tutorial) && Tutorial->IsDeliveryTutorialProduct(ProductId))
+	{
+		return true;
+	}
+
+	// 재고 집계는 월드 상품을 전부 돌아서 예약이 있는 상품일 때만 센다
+	const UCSDeliveryOrderSubsystem* Delivery = World->GetSubsystem<UCSDeliveryOrderSubsystem>();
+	const int32 ReservedQuantity = IsValid(Delivery) ? Delivery->GetReservedQuantity(ProductId) : 0;
+	if (ReservedQuantity <= 0)
+	{
+		return false;
+	}
+	const UCSStoreStockSubsystem* Stock = World->GetSubsystem<UCSStoreStockSubsystem>();
+	return IsValid(Stock) && Stock->GetProductStock(ProductId).TotalQuantity <= ReservedQuantity;
+}
+
 bool UCSCustomerRuntimeSubsystem::WasProductEverStocked(FName ProductRowName) const
 {
 	return ProductsEverStocked.Contains(ProductRowName);
@@ -399,6 +427,12 @@ TArray<FCSPurchaseCandidate> UCSCustomerRuntimeSubsystem::BuildPurchaseCandidate
 			continue;  // 같은 SKU는 먼저 발견된 액터 하나만 대표로 남김
 		}
 		SeenProductIds.Add(ProductId);
+
+		// 점수 계산을 건너뛰는 계획 구매도 이 후보 목록을 쓰므로 여기서 빼야 둘 다 막힌다
+		if (IsProductHeldFromCustomers(ProductId))
+		{
+			continue;
+		}
 
 		// TakeProduct()가 쓰는 것과 동일한 GetProductRow()로 상품 마스터 데이터 참조를 가져옴
 		FCSPurchaseCandidate Candidate;
@@ -756,6 +790,18 @@ FName UCSCustomerRuntimeSubsystem::TakeProduct(AActor* ShelfActor, AActor* Produ
 	// ProductId는 DT_ProductMaster에서 ProductRow가 가리키는 RowName입니다.
 	const FName ProductId = Product->GetProductId();
 	if (ProductId.IsNone())
+	{
+		return NAME_None;
+	}
+
+	// 고른 뒤 집는 동작 사이에 플레이어가 먼저 집었을 수 있다. 그대로 가져가면 플레이어 손의 상품이 파괴된다
+	if (Product->GetAttachParentActor() != ShelfActor)
+	{
+		return NAME_None;
+	}
+
+	// 고른 뒤에 배달 주문이 수락됐을 수 있어서 가져가기 직전에 한 번 더 본다
+	if (IsProductHeldFromCustomers(ProductId))
 	{
 		return NAME_None;
 	}

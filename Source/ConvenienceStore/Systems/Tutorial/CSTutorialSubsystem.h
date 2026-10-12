@@ -28,7 +28,9 @@ class UCSTutorialChoiceWidget;
 class ACSProductPickupActor;
 class ACSDeliveryCrateActor;
 class UInputComponent;
+class UCSDeliveryOrderSubsystem;
 struct FCSOrderResult;
+struct FCSDeliveryOrderRuntime;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
 // 위젯들이 이걸 구독해서 화면 내용을 갱신함
@@ -105,6 +107,9 @@ public:
 
 	// 1부 진행 중이고 아직 입간판 스텝이 아니면 true와 입간판에 띄울 문구
 	bool ShouldBlockStoreOpen(FText& OutMessage) const;
+
+	// 배달 튜토리얼 동안 손님이 이 상품을 한 개도 못 사게 막는다. 진열대 상품이 줄면 안내 외곽선이 사라진다
+	bool IsDeliveryTutorialProduct(FName ProductId) const { return bDeliveryTutorialActive && ProductId == DeliveryProductId; }
 
 	// 제조 튜토리얼 중 솥 상태에 맞는 스텝. 실패하거나 솥에서 나오면 앞 스텝으로 돌아간다
 	static ECSTutorialStepId ResolveCraftStep(
@@ -206,6 +211,22 @@ protected:
 	// 2부 원포인트 팁(TipRows) 중 TipId에 해당하는 행을 찾아 한 번만 표시
 	// 배너/대화창/목표 위젯은 기존 OnTutorialStepChanged 구독을 그대로 재사용
 	void ShowOneShotTip(ECSTutorialStepId TipId);
+	void DisplayTip(const FCSTutorialStepRow& TipRow);
+	const FCSTutorialStepRow* FindTipRow(ECSTutorialStepId TipId) const;
+
+	// 배달 튜토리얼
+	void SubscribeToDeliverySubsystem();
+	void UnsubscribeFromDeliverySubsystem();
+	void EnterDeliveryStep(ECSTutorialStepId StepId);
+	void FinishDeliveryTutorial(bool bOrderEndedEarly);
+	void CheckDeliveryPickUp();
+	void AttachDeliveryProductMarkers();
+	// N 건너뛰기. 수락 단계는 대신 수락하고, 집기 단계는 배달 장소로, 배달 장소 단계는 튜토리얼을 끝낸다
+	void SkipDeliveryStep();
+	AActor* FindDeliveryPlaceActor() const;
+
+	UFUNCTION()
+	void HandleDeliveryOrderChanged(const FCSDeliveryOrderRuntime& Order);
 
 	// TipId 행의 ExpectedWidgetClass와 Widget의 클래스가 일치하는지 확인
 	bool DoesTipExpectWidget(ECSTutorialStepId TipId, const UUserWidget* Widget) const;
@@ -478,7 +499,33 @@ private:
 
 	// 확인 창을 띄운 스텝. 창이 떠 있는 동안 스텝이 바뀌면 예를 골라도 넘기지 않는다
 	int32 SkipConfirmStepIndex = INDEX_NONE;
+	// 배달 단계는 일반 스텝 번호가 안 바뀌어서 단계 이름으로 따로 확인한다
+	bool bSkipConfirmForDelivery = false;
+	ECSTutorialStepId SkipConfirmDeliveryStepId = ECSTutorialStepId::DeliveryAccept;
 
 	// 입구에서 되돌릴 때마다 배너가 쌓이지 않게 마지막으로 띄운 시각을 기억한다
 	double LastCraftHouseWarningTime = -1.0e9;
+
+	UPROPERTY()
+	TObjectPtr<UCSDeliveryOrderSubsystem> SubscribedDeliverySubsystem;
+
+	bool bDeliveryTutorialActive = false;
+	bool bDeliveryTutorialDone = false;
+	ECSTutorialStepId DeliveryStepId = ECSTutorialStepId::DeliveryAccept;
+	int32 DeliveryTutorialOrderId = INDEX_NONE;
+	FName DeliveryProductId;
+	FText DeliveryProductName;
+	FTimerHandle DeliveryCheckTimerHandle;
+	// 다 팔렸다는 배너를 한 번만 띄우고, 재고가 다시 생기면 마커를 새로 붙인다
+	bool bDeliveryProductSoldOut = false;
+
+	// 상품 이름을 채운 배달 안내 행. 정산창을 닫을 때 되살릴 수 있게 멤버로 둔다
+	FCSTutorialStepRow DeliveryShownRow;
+
+	// 다이어리·게시판·정산창 팁 중 지금 해야 하는 것. 배달 중에는 화면에 안 띄우고 기억만 했다가 끝나면 띄운다
+	bool bHasPendingChainTip = false;
+	ECSTutorialStepId PendingChainTipId = ECSTutorialStepId::TipDiary;
+
+	// 배달 중에 차례가 된 배너 팁. 끝나면 이어서 띄운다
+	TArray<ECSTutorialStepId> DeferredBannerTipIds;
 };

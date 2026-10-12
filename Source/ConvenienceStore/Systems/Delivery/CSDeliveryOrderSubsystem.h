@@ -117,6 +117,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Delivery Order|Debug")
 	bool GenerateOrderNow(FText& OutMessage);
 
+	// 다음에 만드는 주문 하나를 지금 매장에 있는 상품 1개로 만든다. 진열대 상품이 우선이다.
+	// 튜토리얼이 첫 주문을 연습용으로 쓴다. 영업일이 바뀌면 요청은 사라진다.
+	// 만든 주문은 연습 주문이 되어 거절·취소와 기한 만료가 막히고 영업이 끝날 때만 끝난다
+	void RequestStockedNextOrder() { bStockedNextOrderRequested = true; }
+
+	// 연습 주문을 일반 주문으로 되돌린다. 연습 중에는 기한을 안 봐서 기한은 지금부터 다시 센다
+	void ReleaseGuidedOrder();
+
 	UPROPERTY(BlueprintAssignable, Category = "Delivery Order")
 	FCSOnDeliveryOrderChanged OnDeliveryOrderChanged;
 
@@ -181,9 +189,13 @@ private:
 	UPROPERTY(Transient)
 	int32 ActiveDispatchOrderId = INDEX_NONE;
 
+	bool bStockedNextOrderRequested = false;
+	int32 GuidedOrderId = INDEX_NONE;
+
 	float AcceptanceWindowMinutes = 120.0f;
 	float DeliveryWindowMinutes = 180.0f;
 	int32 MinimumProductQuantity = 1;
 	int32 MaximumProductQuantity = 3;
 	float InStockProductPreference = 0.7f;
+	float StockedOrderRetryMinutes = 15.0f;
 };

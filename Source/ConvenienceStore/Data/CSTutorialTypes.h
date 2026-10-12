@@ -79,7 +79,13 @@ enum class ECSTutorialStepId : uint8
 	CraftStir,
 
 	// 도감 다음. 자동 제조 창을 열어 보게 한다
-	CraftAutoCraft
+	CraftAutoCraft,
+
+	// 2부 배달 튜토리얼. 첫 배달 주문이 오면 수락, 상품 집기, 배달 장소 발송 순으로 진행한다.
+	// 팁처럼 TipRows에 담지만 조건을 채워야 다음으로 넘어간다
+	DeliveryAccept,
+	DeliveryPickUp,
+	DeliveryDispatch
 };
 
 // 대화창 힌트 줄 하나 (키 라벨 + 설명). 이동/건축 회전처럼 키가 여러 개라

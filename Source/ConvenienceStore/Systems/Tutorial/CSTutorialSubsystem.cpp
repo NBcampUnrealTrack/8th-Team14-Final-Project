@@ -14,8 +14,15 @@
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Tutorial/CSTutorialShelfSpawnPoint.h"
 #include "Features/Tutorial/CSTutorialCrateSpawnPoint.h"
+#include "Components/StaticMeshComponent.h"
+#include "Data/CSProductTypes.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Delivery/CSDeliveryMagicCircleActor.h"
 #include "Features/Delivery/CSDeliveryPortalActor.h"
+#include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
+#include "Systems/Inventory/CSStoreStockSubsystem.h"
 #include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
@@ -74,6 +81,16 @@ namespace
 	// 입구 트리거 가장자리에서 이만큼 더 안쪽으로 되돌려야 다시 겹치지 않는다
 	constexpr float CraftHousePushBackMargin = 100.0f;
 	constexpr double CraftHouseWarningCooldown = 3.0;
+	// 배달 마법진 밑 바닥 타일 메시. 맵 액터 이름표는 패키지 빌드에 없어서 메시와 거리로 찾는다
+	const FName DeliveryPlaceMeshName(TEXT("Village_Plaza"));
+	constexpr double DeliveryPlaceMaxDistance = 1000.0;
+
+	// 배너만 있는 팁은 대화창을 건드리지 않고 배너 줄로만 보낸다
+	bool IsBannerOnlyTip(const FCSTutorialStepRow& Row)
+	{
+		return !Row.BannerText.IsEmpty() && Row.PromptText.IsEmpty() &&
+			Row.PromptHintText.IsEmpty() && Row.PromptHintList.IsEmpty();
+	}
 }
 
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
@@ -198,8 +215,10 @@ void UCSTutorialSubsystem::Deinitialize()
 		World->GetTimerManager().ClearTimer(StoreCrateCheckTimerHandle);
 		World->GetTimerManager().ClearTimer(RestockTipCheckTimerHandle);
 		World->GetTimerManager().ClearTimer(CraftStateCheckTimerHandle);
+		World->GetTimerManager().ClearTimer(DeliveryCheckTimerHandle);
 	}
 	HideAllActiveMarkers();
+	UnsubscribeFromDeliverySubsystem();
 	UnsubscribeFromLevelDisposables();
 	UnsubscribeFromLevelShelves();
 	UnsubscribeFromPlayerCharacter();
@@ -233,6 +252,11 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	bSkippingCraftBundle = false;
 	bCraftIngredientsPlaced = false;
 	bCraftBrewSucceeded = false;
+	bDeliveryTutorialActive = false;
+	bDeliveryTutorialDone = false;
+	DeliveryTutorialOrderId = INDEX_NONE;
+	bHasPendingChainTip = false;
+	DeferredBannerTipIds.Reset();
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -274,6 +298,7 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	SubscribeToStoreGameState();
 	SubscribeToCustomerRuntimeSubsystem();
 	SubscribeToCraftingSubsystem();
+	SubscribeToDeliverySubsystem();
 
 	CurrentStepIndex = 0;
 	BroadcastCurrentStep();
@@ -373,6 +398,12 @@ void UCSTutorialSubsystem::HandlePart1Finished()
 	// 다이어리 팁은 고정 시간이 아니라 "영업을 시작하였습니다" 안내가 끝나는 시점(HandleStoreOpenedAnnouncementFinished)에 뜸
 	bTipChainActive = true;
 
+	// 개점 뒤 첫 배달 주문을 매장에 있는 상품 1개로 받아 배달 튜토리얼에 쓴다
+	if (IsValid(SubscribedDeliverySubsystem))
+	{
+		SubscribedDeliverySubsystem->RequestStockedNextOrder();
+	}
+
 	// 진열대가 비어도 손님은 반응 없이 지나가서 이벤트로 잡을 수 없다. 진열률을 직접 본다
 	if (UWorld* World = GetWorld())
 	{
@@ -401,6 +432,16 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromOrderSubsystem();
 	UnsubscribeFromStoreGameState();
 	UnsubscribeFromCustomerRuntimeSubsystem();
+	if (bDeliveryTutorialActive && IsValid(SubscribedDeliverySubsystem))
+	{
+		SubscribedDeliverySubsystem->ReleaseGuidedOrder();
+	}
+	UnsubscribeFromDeliverySubsystem();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DeliveryCheckTimerHandle);
+	}
+	bDeliveryTutorialActive = false;
 	CleanUpCraftTutorial();
 	UnsubscribeFromCraftingSubsystem();
 	CloseSkipConfirmWidget();
@@ -690,23 +731,51 @@ void UCSTutorialSubsystem::ShowOneShotTip(ECSTutorialStepId TipId)
 		return;
 	}
 
-	FCSTutorialStepRow** FoundRow = TipRows.FindByPredicate(
-		[TipId](const FCSTutorialStepRow* Row) { return Row->StepId == TipId; });
-	if (FoundRow == nullptr)
+	const FCSTutorialStepRow* TipRow = FindTipRow(TipId);
+	if (TipRow == nullptr)
 	{
 		return;
 	}
 
 	ShownTipIds.Add(TipId);
-	const FCSTutorialStepRow& TipRow = **FoundRow;
 
+	// 배달 안내를 덮지 않게 배달이 끝날 때까지 미룬다
+	if (bDeliveryTutorialActive)
+	{
+		if (IsBannerOnlyTip(*TipRow))
+		{
+			DeferredBannerTipIds.Add(TipId);
+		}
+		else
+		{
+			bHasPendingChainTip = true;
+			PendingChainTipId = TipId;
+		}
+		return;
+	}
+
+	DisplayTip(*TipRow);
+}
+
+const FCSTutorialStepRow* UCSTutorialSubsystem::FindTipRow(ECSTutorialStepId TipId) const
+{
+	FCSTutorialStepRow* const* FoundRow = TipRows.FindByPredicate(
+		[TipId](const FCSTutorialStepRow* Row) { return Row->StepId == TipId; });
+	return FoundRow != nullptr ? *FoundRow : nullptr;
+}
+
+void UCSTutorialSubsystem::DisplayTip(const FCSTutorialStepRow& TipRow)
+{
 	// 배너만 있는 팁을 방송하면 떠 있던 대화창 팁과 마커까지 지워져서 배너로만 보낸다
-	if (IsValid(BannerWidgetInstance) && !TipRow.BannerText.IsEmpty() && TipRow.PromptText.IsEmpty() &&
-		TipRow.PromptHintText.IsEmpty() && TipRow.PromptHintList.IsEmpty())
+	if (IsBannerOnlyTip(TipRow) && IsValid(BannerWidgetInstance))
 	{
 		BannerWidgetInstance->ShowTipBanner(TipRow.BannerText);
 		return;
 	}
+
+	// 배달 안내에 가려졌다가 끝나면 다시 띄울 수 있게 지금 해야 할 팁으로 기억한다
+	bHasPendingChainTip = true;
+	PendingChainTipId = TipRow.StepId;
 
 	// 기존 배너/대화창/목표 위젯 구독을 그대로 재사용. 여기서는 CurrentStepIndex를 건드리지 않고
 	// 방송만 함. 이전에 켜져 있던 마커는 여기서 새로 켜기 전에 정리
@@ -726,6 +795,14 @@ void UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished()
 	if (!bTipChainActive)
 	{
 		return;
+	}
+
+	// 연습 주문 상품은 튜토리얼 동안 손님이 못 사서, 손님이 막 들어오기 시작할 때 받아야 덜 어색하다.
+	// 주문이 오면 배달 튜토리얼이 먼저 뜨고 다이어리 팁은 끝난 뒤로 밀린다
+	if (!bDeliveryTutorialDone && IsValid(SubscribedDeliverySubsystem))
+	{
+		FText IgnoredMessage;
+		SubscribedDeliverySubsystem->GenerateOrderNow(IgnoredMessage);
 	}
 
 	ShowOneShotTip(ECSTutorialStepId::TipDiary);
@@ -779,6 +856,19 @@ void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWid
 		return;
 	}
 
+	// 배달 중에 팁의 창을 열면 그 팁은 한 것으로 치되, 화면의 배달 안내는 지우지 않는다
+	const auto MarkChainTipDone = [this](ECSTutorialStepId TipId)
+	{
+		if (bHasPendingChainTip && PendingChainTipId == TipId)
+		{
+			bHasPendingChainTip = false;
+		}
+		if (!bDeliveryTutorialActive)
+		{
+			ClearTutorialDisplay();
+		}
+	};
+
 	if (DoesTipExpectWidget(ECSTutorialStepId::TipDiary, RequestingWidget))
 	{
 		if (bLocked)
@@ -786,7 +876,7 @@ void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWid
 			// 팁이 아직 안 떴어도(안내 애니메이션이 끝나길 대기 중) 다이어리를 직접 열었으면
 			// 나중에 안내가 끝나도 다시 뜨지 않도록 이미 본 것으로 표시함
 			ShownTipIds.Add(ECSTutorialStepId::TipDiary);
-			ClearTutorialDisplay();
+			MarkChainTipDone(ECSTutorialStepId::TipDiary);
 		}
 		else
 		{
@@ -801,11 +891,12 @@ void UCSTutorialSubsystem::HandleTipWidgetLockChanged(UUserWidget* RequestingWid
 		if (bLocked)
 		{
 			// 게시판과 상호작용(열림)하는 순간 바로 숨김
-			ClearTutorialDisplay();
+			MarkChainTipDone(ECSTutorialStepId::TipNoticeBoard);
 		}
-		else
+		else if (!bDeliveryTutorialActive || ShownTipIds.Contains(ECSTutorialStepId::TipNoticeBoard))
 		{
 			// 게시판을 닫는 순간 정산창 팁으로 넘어감 (이미 봤으면 ShowOneShotTip이 알아서 무시)
+			// 배달 수락하러 연 게시판은 다이어리 팁이 남아 있으면 순서를 건너뛰지 않는다
 			ShowOneShotTip(ECSTutorialStepId::TipSettlement);
 		}
 		return;
@@ -822,6 +913,12 @@ void UCSTutorialSubsystem::HandleDailySummaryWidgetLockChanged(UUserWidget* Requ
 
 	if (bLocked)
 	{
+		// 정산창 팁은 정산창을 열면 한 것으로 친다. 배달이 끝난 뒤 다시 띄우지 않게
+		if (bHasPendingChainTip && PendingChainTipId == ECSTutorialStepId::TipSettlement)
+		{
+			bHasPendingChainTip = false;
+		}
+
 		// 정산창이 튜토리얼 안내 위에 겹치지 않도록 지금 화면을 잠깐 숨김
 		// (ClearTutorialDisplay는 되살릴 화면이 없는 것으로 취급해버리므로 여기서 직접 블랭크 방송)
 		bDisplaySuspendedForDailySummary = true;
@@ -1618,6 +1715,12 @@ void UCSTutorialSubsystem::HandleStorePhaseChanged(ECStorePhase NewPhase)
 	// 이 시점 이후엔 HandleStoreOpenedAnnouncementFinished가 와도 bTipChainActive 검사로 걸러짐
 	bTipChainActive = false;
 
+	// 마감으로 배달 주문은 실패한다. 남은 2부 팁은 3부에 띄우지 않는다
+	if (bDeliveryTutorialActive)
+	{
+		FinishDeliveryTutorial(false);
+	}
+
 	// 3부 진입은 "영업시간이 종료되었습니다" 안내가 끝나는 시점(HandleStoreClosedAnnouncementFinished)에 함
 	// 여기서 바로 EnterPart3()를 부르면 안내 애니메이션과 겹쳐서 뜸 - bPart3EntryScheduled는 이 함수가
 	// 같은 전환에 대해 두 번 반응하지 않게 막는 용도(페이즈 방송 중복 대비)
@@ -1647,13 +1750,17 @@ void UCSTutorialSubsystem::EnterPart3()
 
 void UCSTutorialSubsystem::HandleInnerThoughtShown()
 {
-	ShowOneShotTip(ECSTutorialStepId::TipInnerThought);
+	// 배달 중에는 아예 무시한다. 본 것으로 치지 않아서 끝난 뒤 다음 손님 아이콘에 뜬다
+	if (!bDeliveryTutorialActive)
+	{
+		ShowOneShotTip(ECSTutorialStepId::TipInnerThought);
+	}
 }
 
 void UCSTutorialSubsystem::HandleHeadIconShown(ACSCustomerCharacter* Customer)
 {
 	(void)Customer;   // 어느 손님인지는 안 봐도 됨 - 팁은 손님 구분 없이 1회만 표시
-	ShowOneShotTip(ECSTutorialStepId::TipInnerThought);
+	HandleInnerThoughtShown();
 }
 
 bool UCSTutorialSubsystem::DoesStepExpectWidget(int32 StepIndex, const UUserWidget* Widget) const
@@ -2327,6 +2434,10 @@ bool UCSTutorialSubsystem::CanPlayerSkipCurrentStep() const
 	{
 		return false;
 	}
+	if (bDeliveryTutorialActive)
+	{
+		return true;
+	}
 
 	// 제조는 선택 창의 아니요로 통째로 건너뛴다. 입간판과 잠자기는 넘겨도 그 행동은 해야 해서 안내만 사라진다.
 	// 2부와 3부 시작 전에는 현재 스텝이 입간판에 머물러 있어서 여기서 같이 걸러진다
@@ -2357,6 +2468,8 @@ void UCSTutorialSubsystem::HandleSkipKeyPressed()
 	}
 
 	SkipConfirmStepIndex = CurrentStepIndex;
+	bSkipConfirmForDelivery = bDeliveryTutorialActive;
+	SkipConfirmDeliveryStepId = DeliveryStepId;
 	SkipConfirmWidgetInstance->SetTexts(
 		NSLOCTEXT("Tutorial", "SkipStepQuestion", "이 단계를 건너뛸까요?"),
 		NSLOCTEXT("Tutorial", "SkipStepYes", "예"),
@@ -2369,6 +2482,7 @@ void UCSTutorialSubsystem::HandleSkipKeyPressed()
 void UCSTutorialSubsystem::CloseSkipConfirmWidget()
 {
 	SkipConfirmStepIndex = INDEX_NONE;
+	bSkipConfirmForDelivery = false;
 	if (!IsValid(SkipConfirmWidgetInstance))
 	{
 		SkipConfirmWidgetInstance = nullptr;
@@ -2388,8 +2502,24 @@ void UCSTutorialSubsystem::CloseSkipConfirmWidget()
 void UCSTutorialSubsystem::HandleSkipConfirmChoice(bool bYes)
 {
 	const bool bSameStep = SkipConfirmStepIndex == CurrentStepIndex;
+	const bool bForDelivery = bSkipConfirmForDelivery;
+	const ECSTutorialStepId ConfirmedDeliveryStepId = SkipConfirmDeliveryStepId;
 	CloseSkipConfirmWidget();
-	if (bYes && bSameStep && CanPlayerSkipCurrentStep())
+	if (!bYes)
+	{
+		return;
+	}
+
+	// 배달 중에는 일반 스텝이 입간판에 머물러 있어서 그쪽을 넘기면 안 된다
+	if (bForDelivery)
+	{
+		if (bDeliveryTutorialActive && DeliveryStepId == ConfirmedDeliveryStepId)
+		{
+			SkipDeliveryStep();
+		}
+		return;
+	}
+	if (bSameStep && !bDeliveryTutorialActive && CanPlayerSkipCurrentStep())
 	{
 		DebugForceAdvanceStep();
 	}
@@ -2662,4 +2792,325 @@ void UCSTutorialSubsystem::CleanUpCraftTutorial()
 	}
 
 	RemoveCraftMarkers();
+}
+
+void UCSTutorialSubsystem::SubscribeToDeliverySubsystem()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UCSDeliveryOrderSubsystem* DeliverySubsystem = World->GetSubsystem<UCSDeliveryOrderSubsystem>())
+		{
+			SubscribedDeliverySubsystem = DeliverySubsystem;
+			DeliverySubsystem->OnDeliveryOrderChanged.AddUniqueDynamic(
+				this, &UCSTutorialSubsystem::HandleDeliveryOrderChanged);
+		}
+	}
+}
+
+void UCSTutorialSubsystem::UnsubscribeFromDeliverySubsystem()
+{
+	if (IsValid(SubscribedDeliverySubsystem))
+	{
+		SubscribedDeliverySubsystem->OnDeliveryOrderChanged.RemoveDynamic(
+			this, &UCSTutorialSubsystem::HandleDeliveryOrderChanged);
+	}
+
+	SubscribedDeliverySubsystem = nullptr;
+}
+
+void UCSTutorialSubsystem::HandleDeliveryOrderChanged(const FCSDeliveryOrderRuntime& Order)
+{
+	if (!bDeliveryTutorialActive)
+	{
+		// 개점 뒤 첫 주문이 연습용 주문이다
+		if (bDeliveryTutorialDone || bTutorialCompleted || !bTipChainActive ||
+			Order.Status != ECSDeliveryOrderStatus::PendingAcceptance || Order.RequiredProducts.IsEmpty())
+		{
+			return;
+		}
+
+		bDeliveryTutorialActive = true;
+		DeliveryTutorialOrderId = Order.OrderId;
+		const FDataTableRowHandle& ProductRow = Order.RequiredProducts[0].ProductRow;
+		const FCSProductDataRow* ProductData = ProductRow.GetRow<FCSProductDataRow>(TEXT("UCSTutorialSubsystem::HandleDeliveryOrderChanged"));
+		DeliveryProductId = ProductRow.RowName;
+		DeliveryProductName = ProductData != nullptr ? ProductData->DisplayName : FText::FromName(DeliveryProductId);
+		EnterDeliveryStep(ECSTutorialStepId::DeliveryAccept);
+		return;
+	}
+
+	if (Order.OrderId != DeliveryTutorialOrderId)
+	{
+		return;
+	}
+
+	switch (Order.Status)
+	{
+	case ECSDeliveryOrderStatus::PendingAcceptance:
+		break;
+	case ECSDeliveryOrderStatus::Accepted:
+		if (DeliveryStepId == ECSTutorialStepId::DeliveryAccept)
+		{
+			EnterDeliveryStep(ECSTutorialStepId::DeliveryPickUp);
+		}
+		break;
+	case ECSDeliveryOrderStatus::Completed:
+		FinishDeliveryTutorial(false);
+		break;
+	default:
+		// 만료, 실패, 거절, 취소. 1일차는 주문 한도가 1건이라 다시 시키지 않는다
+		FinishDeliveryTutorial(true);
+		break;
+	}
+}
+
+void UCSTutorialSubsystem::EnterDeliveryStep(ECSTutorialStepId StepId)
+{
+	DeliveryStepId = StepId;
+	RemoveCraftMarkers();
+	HideAllActiveMarkers();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DeliveryCheckTimerHandle);
+	}
+
+	const FCSTutorialStepRow* Row = FindTipRow(StepId);
+	if (Row == nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Tutorial] DT_TutorialStep에 배달 튜토리얼 행이 없습니다. 안내 없이 주문 상태만 따라갑니다."));
+		return;
+	}
+
+	// 행 문구의 {Product} 자리에 주문 상품 이름을 넣는다
+	FFormatNamedArguments Args;
+	Args.Add(TEXT("Product"), DeliveryProductName);
+	DeliveryShownRow = *Row;
+	DeliveryShownRow.PromptText = FText::Format(Row->PromptText, Args);
+	DeliveryShownRow.ObjectiveText = FText::Format(Row->ObjectiveText, Args);
+	BroadcastStepRow(DeliveryShownRow);
+	OnTutorialObjectiveProgress.Broadcast(0, DeliveryShownRow.ObjectiveGoal);
+	// 팁과 달리 끝날 때까지 남는 안내라 정산창을 닫으면 되살린다
+	LastBroadcastRow = &DeliveryShownRow;
+	LastBroadcastObjectiveCurrent = 0;
+
+	switch (StepId)
+	{
+	case ECSTutorialStepId::DeliveryAccept:
+		ShowMarkersForTag(Row->HighlightMarkerTag, Row->MarkerLabelText);
+		break;
+	case ECSTutorialStepId::DeliveryPickUp:
+		bDeliveryProductSoldOut = false;
+		AttachDeliveryProductMarkers();
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(
+				DeliveryCheckTimerHandle, this, &UCSTutorialSubsystem::CheckDeliveryPickUp, CraftStatePollInterval, true);
+		}
+		break;
+	case ECSTutorialStepId::DeliveryDispatch:
+		AttachCraftMarker(FindDeliveryPlaceActor(), Row->MarkerLabelText);
+		break;
+	default:
+		break;
+	}
+}
+
+void UCSTutorialSubsystem::CheckDeliveryPickUp()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+	if (!bDeliveryTutorialActive || DeliveryStepId != ECSTutorialStepId::DeliveryPickUp)
+	{
+		World->GetTimerManager().ClearTimer(DeliveryCheckTimerHandle);
+		return;
+	}
+
+	// 낱개로 들어도, 그 상품 상자를 들어도 마법진에 올릴 수 있다
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	const ACSPlayerCharacter* PlayerCharacter = PlayerController != nullptr ? Cast<ACSPlayerCharacter>(PlayerController->GetPawn()) : nullptr;
+	const AActor* HeldActor = IsValid(PlayerCharacter) ? PlayerCharacter->GetHeldActor() : nullptr;
+	FName HeldProductId;
+	if (const ACSProductPickupActor* HeldProduct = Cast<ACSProductPickupActor>(HeldActor))
+	{
+		HeldProductId = HeldProduct->GetProductId();
+	}
+	else if (const ACSDeliveryCrateActor* HeldCrate = Cast<ACSDeliveryCrateActor>(HeldActor); IsValid(HeldCrate) && HeldCrate->GetRemainingQuantity() > 0)
+	{
+		HeldProductId = HeldCrate->GetProductId();
+	}
+	if (!HeldProductId.IsNone() && HeldProductId == DeliveryProductId)
+	{
+		EnterDeliveryStep(ECSTutorialStepId::DeliveryDispatch);
+		return;
+	}
+
+	// 예약은 손님 구매를 막지 않아서 수락한 뒤에 다 팔릴 수 있다. 한 번 알리고, 다시 생기면 마커를 새로 붙인다
+	const UCSStoreStockSubsystem* StockSubsystem = World->GetSubsystem<UCSStoreStockSubsystem>();
+	const bool bSoldOut = IsValid(StockSubsystem) && StockSubsystem->GetProductStock(DeliveryProductId).TotalQuantity <= 0;
+	if (bSoldOut && !bDeliveryProductSoldOut)
+	{
+		bDeliveryProductSoldOut = true;
+		RemoveCraftMarkers();
+		if (IsValid(BannerWidgetInstance))
+		{
+			BannerWidgetInstance->ShowTipBanner(NSLOCTEXT("Tutorial", "DeliveryProductSoldOut",
+				"주문 상품이 다 팔렸어요.\n창고나 즉시 배송으로 채운 뒤 집어 보세요."));
+		}
+	}
+	else if (!bSoldOut && bDeliveryProductSoldOut)
+	{
+		bDeliveryProductSoldOut = false;
+		AttachDeliveryProductMarkers();
+	}
+}
+
+void UCSTutorialSubsystem::AttachDeliveryProductMarkers()
+{
+	RemoveCraftMarkers();
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	bool bMarkedShelfProduct = false;
+	for (TActorIterator<ACSProductPickupActor> It(World); It; ++It)
+	{
+		if (IsValid(*It) && !It->IsHidden() && It->GetProductId() == DeliveryProductId &&
+			Cast<ACSShelfActor>(It->GetAttachParentActor()) != nullptr)
+		{
+			AttachCraftMarker(*It, FText::GetEmpty());
+			bMarkedShelfProduct = true;
+		}
+	}
+	if (bMarkedShelfProduct)
+	{
+		return;
+	}
+
+	// 진열대에 없으면 창고나 바닥에 있는 그 상품 상자를 알려 준다
+	for (TActorIterator<ACSDeliveryCrateActor> It(World); It; ++It)
+	{
+		if (IsValid(*It) && It->GetProductId() == DeliveryProductId && It->GetRemainingQuantity() > 0)
+		{
+			AttachCraftMarker(*It, FText::GetEmpty());
+		}
+	}
+}
+
+AActor* UCSTutorialSubsystem::FindDeliveryPlaceActor() const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return nullptr;
+	}
+
+	ACSDeliveryMagicCircleActor* MagicCircle = nullptr;
+	for (TActorIterator<ACSDeliveryMagicCircleActor> It(World); It && MagicCircle == nullptr; ++It)
+	{
+		MagicCircle = *It;
+	}
+	if (!IsValid(MagicCircle))
+	{
+		return nullptr;
+	}
+
+	AActor* ClosestPlace = nullptr;
+	double ClosestDistanceSquared = FMath::Square(DeliveryPlaceMaxDistance);
+	for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
+	{
+		const UStaticMeshComponent* MeshComponent = It->GetStaticMeshComponent();
+		const UStaticMesh* Mesh = IsValid(MeshComponent) ? MeshComponent->GetStaticMesh() : nullptr;
+		if (!IsValid(Mesh) || Mesh->GetFName() != DeliveryPlaceMeshName)
+		{
+			continue;
+		}
+		const double DistanceSquared = FVector::DistSquared2D(It->GetActorLocation(), MagicCircle->GetActorLocation());
+		if (DistanceSquared < ClosestDistanceSquared)
+		{
+			ClosestDistanceSquared = DistanceSquared;
+			ClosestPlace = *It;
+		}
+	}
+
+	// 바닥 타일을 못 찾으면 마법진 자체를 표시한다
+	return ClosestPlace != nullptr ? ClosestPlace : MagicCircle;
+}
+
+void UCSTutorialSubsystem::SkipDeliveryStep()
+{
+	switch (DeliveryStepId)
+	{
+	case ECSTutorialStepId::DeliveryAccept:
+	{
+		// 수락되면 주문 상태 방송으로 집기 단계가 시작된다
+		FText Message;
+		if ((!IsValid(SubscribedDeliverySubsystem) || !SubscribedDeliverySubsystem->AcceptOrder(DeliveryTutorialOrderId, Message)) &&
+			IsValid(BannerWidgetInstance) && !Message.IsEmpty())
+		{
+			BannerWidgetInstance->ShowTipBanner(Message);
+		}
+		break;
+	}
+	case ECSTutorialStepId::DeliveryPickUp:
+		EnterDeliveryStep(ECSTutorialStepId::DeliveryDispatch);
+		break;
+	default:
+		FinishDeliveryTutorial(false);
+		break;
+	}
+}
+
+void UCSTutorialSubsystem::FinishDeliveryTutorial(bool bOrderEndedEarly)
+{
+	// 남은 주문은 거절·취소·기한이 막힌 연습 주문이라 일반 주문으로 되돌려야 처리할 수 있다
+	if (IsValid(SubscribedDeliverySubsystem))
+	{
+		SubscribedDeliverySubsystem->ReleaseGuidedOrder();
+	}
+
+	bDeliveryTutorialActive = false;
+	bDeliveryTutorialDone = true;
+	DeliveryTutorialOrderId = INDEX_NONE;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(DeliveryCheckTimerHandle);
+	}
+	RemoveCraftMarkers();
+	ClearTutorialDisplay();
+
+	// 마감 뒤에는 2부 팁을 3부에 끌고 가지 않는다
+	if (!bTipChainActive)
+	{
+		bHasPendingChainTip = false;
+		DeferredBannerTipIds.Reset();
+		return;
+	}
+
+	if (bOrderEndedEarly && IsValid(BannerWidgetInstance))
+	{
+		BannerWidgetInstance->ShowTipBanner(NSLOCTEXT("Tutorial", "DeliveryTutorialOrderEnded",
+			"배달 주문이 끝났어요. 다음 주문 때 다시 해 봐요."));
+	}
+
+	// 배달 전에 떠 있었거나 배달 중에 차례가 된 대화창 팁을 다시 띄운다
+	if (bHasPendingChainTip)
+	{
+		if (const FCSTutorialStepRow* ChainTipRow = FindTipRow(PendingChainTipId))
+		{
+			DisplayTip(*ChainTipRow);
+		}
+	}
+	for (const ECSTutorialStepId TipId : DeferredBannerTipIds)
+	{
+		if (const FCSTutorialStepRow* BannerTipRow = FindTipRow(TipId))
+		{
+			DisplayTip(*BannerTipRow);
+		}
+	}
+	DeferredBannerTipIds.Reset();
 }
