@@ -30,6 +30,10 @@ public:
 	AActor* GetHomeDockOwner() const;
 
 protected:
+	// 기본 지팡이는 0(직원 버프 없음), 고급 지팡이 BP는 30초로 설정합니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Magic|Employee", meta=(ClampMin="0"))
+	float EmployeeBoostDuration = 0.0f;
+
 	// 블루프린트에서 지팡이 끝에 배치하는 실제 투사체 발사 위치입니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<USceneComponent> Muzzle;

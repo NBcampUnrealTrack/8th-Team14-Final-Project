@@ -27,6 +27,21 @@ namespace
 			&& Info.Severity >= PriceUpsetSeverityFloor;
 	}
 
+	// 가챠 전설 물품은 예산 점수 때문에 늘 싼 상품에 밀려 지갑이 되는 손님도 안 산다
+	// 그 손님이 집어 가게 만드는 보너스다. 제조 고급품은 뉴스 날 수요로 팔리게 짜여 있어 뺀다
+	// 근사 시뮬로 정한 값이라 PIE 확인 전이다. 1500G짜리 하나가 2~3일에 팔리는 정도
+	constexpr float RareItemAppealBonus = 0.3f;
+
+	float ComputeRareItemAppealBonus(const FCSProductDataRow& Row, float PriceScore)
+	{
+		// 비싸다고 느끼면 끌리지 않는다. 이게 없으면 하드컷 직전까지 값을 올려도 팔린다
+		if (Row.Rarity != ECSProductRarity::Legendary || PriceScore < PriceReactionNeutralPoint)
+		{
+			return 0.f;
+		}
+		return RareItemAppealBonus;
+	}
+
 	// 같은 상품을 한 손님이 이만큼 담으면 더 담지 않는다.
 	// 제한이 없으면 앞 손님 몇 명이 인기 상품을 쓸어 가서 뒤 손님이 전부 "없네"로 돌아간다
 	constexpr int32 MaxSameProductPerVisit = 2;
@@ -288,8 +303,10 @@ float UCSPurchaseDecisionComponent::ScoreCandidate(const FCSPurchaseCandidate& C
 	// 여기서 구매 불가로 바꾸지는 않는다 - 추첨에서 빼는 일은 ScoreAndSelectTopCandidates가 한다
 	const float WeatherBonus = ComputeWeatherDemandBonus(Candidate.ProductRowHandle);
 
+	const float RareItemBonus = ComputeRareItemAppealBonus(*ProductRow, PriceScore);
+
 	// Clamp는 모두 더한 뒤 한 번만 - 항마다 자르면 음수 보정이 양수 보너스에 묻힌다
-	return FMath::Clamp(Normalized + AffinityBonus + NewsBonus + WeatherBonus, 0.f, 1.f);
+	return FMath::Clamp(Normalized + AffinityBonus + NewsBonus + WeatherBonus + RareItemBonus, 0.f, 1.f);
 }
 
 // 전달받은 후보 전체에 점수를 매긴 뒤 점수가 높은 순으로 정렬하고
@@ -508,7 +525,8 @@ FCSPurchaseRejectionInfo UCSPurchaseDecisionComponent::BuildScoreShortfallReject
 	// 아래 "얼마나 깎았나" 비교가 하한 0에 잘려 과소평가되기 때문
 	const float NormalizedWithRepeat = ComputeNormalizedScore(PriceEval.PriceScore, AdjustedCategoryScore, BudgetScore);
 	const float NormalizedWithoutRepeat = ComputeNormalizedScore(PriceEval.PriceScore, RawCategoryScore, BudgetScore);
-	const float CommonBonus = AffinityBonus + WeatherBonus;
+	// 귀한 물건 보너스도 날씨와 같은 이유로 모든 재계산식에 넣는다
+	const float CommonBonus = AffinityBonus + WeatherBonus + ComputeRareItemAppealBonus(*ProductRow, PriceEval.PriceScore);
 
 	const float RawActual = NormalizedWithRepeat + CommonBonus + NewsBonus;
 	const float RawWithoutNews = NormalizedWithRepeat + CommonBonus;

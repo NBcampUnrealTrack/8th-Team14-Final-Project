@@ -1444,13 +1444,24 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::EnterState(FStateTreeExecutionConte
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
-	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	if (Data.Actor == nullptr)
 	{
 		return EStateTreeRunStatus::Failed;
 	}
 
 	UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
 	if (State == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 제압 전이를 기다리는 손님은 퇴장 이동 요청이나 도착/실패에 따른 삭제를 하지 않는다.
+	if (State->IsSubdued())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	if (Data.AIController == nullptr)
 	{
 		return EStateTreeRunStatus::Failed;
 	}
@@ -1574,7 +1585,19 @@ EStateTreeRunStatus FCSTask_LeaveAndDespawn::Tick(FStateTreeExecutionContext& Co
 {
 	FInstanceDataType& Data = Context.GetInstanceData(*this);
 
-	if (Data.Actor == nullptr || Data.AIController == nullptr)
+	if (Data.Actor == nullptr)
+	{
+		return EStateTreeRunStatus::Failed;
+	}
+
+	// 활성 태스크 Tick이 전이 검사보다 먼저 실행되어도 제압 손님을 일반 퇴장으로 삭제하지 않는다.
+	if (const UCSCustomerStateComponent* State = Data.Actor->GetCustomerState();
+		State != nullptr && State->IsSubdued())
+	{
+		return EStateTreeRunStatus::Running;
+	}
+
+	if (Data.AIController == nullptr)
 	{
 		return EStateTreeRunStatus::Failed;
 	}
@@ -1820,22 +1843,23 @@ EStateTreeRunStatus FCSTask_SubduedDespawn::EnterState(FStateTreeExecutionContex
 		return EStateTreeRunStatus::Failed;
 	}
 
-	// 이전 상태의 ExitState가 이미 StopMovement를 불렀지만,
-	// 어느 상태에서 들어왔는지에 의존하지 않도록 여기서도 한 번 확실히 끊는다.
+	// 어느 상태에서 진입해도 래그돌 시작 전에 AI 이동을 확실히 중지한다.
 	if (Data.AIController != nullptr)
 	{
 		Data.AIController->StopMovement();
 	}
 
-	// Shoplift가 올려둔 도주 속도가 남아 있어도 밀려나지 않게 이동 자체를 막는다.
+	// 도주 상태의 CharacterMovement가 래그돌과 함께 계속 움직이지 않도록 중지
 	if (UCharacterMovementComponent* Movement = Data.Actor->GetCharacterMovement())
 	{
 		Movement->StopMovementImmediately();
 		Movement->DisableMovement();
 	}
 
-	// 제압된 손님은 그 자리에서 소멸을 기다리므로 장바구니도 함께 숨긴다.
-	// 제압 시점에 상품 목록이 이미 비워지므로 절도 연출을 지킬 이유가 없다.
+	// 최초 명중에서 저장한 방향과 강도를 제압 상태 진입 시 한 번 사용
+	Data.Actor->BeginSubduedReaction();
+
+	// 래그돌 준비에 실패해도 장바구니를 숨기고 기존 3초 소멸 대기를 유지
 	Data.Actor->SetBasketDisplayVisible(false);
 
 	Data.ElapsedTime = 0.0f;
@@ -1870,10 +1894,6 @@ EStateTreeRunStatus FCSTask_SubduedDespawn::Tick(FStateTreeExecutionContext& Con
 	{
 		return EStateTreeRunStatus::Running;
 	}
-
-	// TODO(제압 연출): 랙돌/몬타주 작업 시 주석 해제. 상세는 VillainSubdue_Design.md 4-6절
-	// 연출 정리 자리. 랙돌이 들어오더라도 소멸 시점은 아래 그대로 유지된다.
-	//Data.Actor->EndSubduedReaction();
 
 	// 통계 방송. 제압 시점에 상품 목록이 비워졌으므로
 	// 이 안의 ReportShopliftEscaped는 손실을 방송하지 않고 조용히 빠져나간다.

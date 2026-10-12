@@ -63,6 +63,8 @@ const FName BuildPlacementCollisionTag(TEXT("BuildPlacementCollision"));
 const FName BuildPlacementAreaTag(TEXT("BuildPlacementArea"));
 const FName BuildPlacementAccessZoneTag(TEXT("BuildPlacementAccessZone"));
 const FName MagicWandAttachBoneName(TEXT("RightHand"));
+// 건축 모드에서 들기를 막을 시설에 지정하는 액터 태그
+const FName BuildLockedTag(TEXT("CS.BuildLocked"));
 
 bool TryCalculateProspectiveBox(
 	const UBoxComponent* BoxComponent,
@@ -1636,8 +1638,10 @@ void ACSPlayerCharacter::UpdateBuildModeHUD()
 		return;
 	}
 
+	// 고정 태그가 있는 시설은 들기 안내를 표시하지 않음
 	AActor* TargetActor = HitResult.GetActor();
-	if (IsValid(TargetActor) && TargetActor->Implements<UCSBuildableFacility>())
+	if (IsValid(TargetActor) && TargetActor->Implements<UCSBuildableFacility>() &&
+		!TargetActor->ActorHasTag(BuildLockedTag))
 	{
 		StorePlayerController->SetInteractionPrompt(
 			NSLOCTEXT("Interaction", "BuildPickUpFacilityPrompt", "[E] 들기"),
@@ -3751,11 +3755,13 @@ void ACSPlayerCharacter::ThrowHeldItem()
 
 bool ACSPlayerCharacter::TryPickUpBuildableFacility(AActor* FacilityActor)
 {
+	// 고정 태그가 있는 시설은 들기 요청을 거부
 	if (!IsBuildMode() ||
 		IsValid(HeldActor) ||
 		!IsValid(FacilityActor) ||
 		HeldItemAnchor == nullptr ||
-		!FacilityActor->Implements<UCSBuildableFacility>())
+		!FacilityActor->Implements<UCSBuildableFacility>() ||
+		FacilityActor->ActorHasTag(BuildLockedTag))
 	{
 		return false;
 	}

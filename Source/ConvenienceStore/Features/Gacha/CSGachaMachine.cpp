@@ -1,6 +1,7 @@
 #include "Features/Gacha/CSGachaMachine.h"
 
 #include "Components/BoxComponent.h"
+#include "UI/Gacha/CSGachaWellWidget.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -65,6 +66,7 @@ ACSGachaMachine::ACSGachaMachine()
 	static ConstructorHelpers::FClassFinder<ACSProductPickupActor> ProductClass(TEXT("/Game/ConvenienceStore/Blueprints/Items/BP_ProductBase"));
 	if (ProductClass.Succeeded()) ProductActorClass = ProductClass.Class;
 	ArtifactActorClass = ACSGachaArtifactPickup::StaticClass();
+	WellWidgetClass = UCSGachaWellWidget::StaticClass();
 }
 
 void ACSGachaMachine::OnConstruction(const FTransform& Transform)
@@ -204,27 +206,44 @@ bool ACSGachaMachine::IsRewardAvailable(const FCSGachaPoolRow& Reward) const
 
 FText ACSGachaMachine::GetInteractionText_Implementation() const
 {
-	if (bDrawing) return NSLOCTEXT("Gacha", "Drawing", "뽑는 중입니다.");
-	if (HasPendingReward()) return NSLOCTEXT("Gacha", "TakePending", "나온 보상을 먼저 가져가 주세요.");
-	const TArray<FCSGachaPoolRow> Rewards = BuildRewards();
-	if (SealActorClass && !Rewards.IsEmpty() && !Rewards.ContainsByPredicate([this](const FCSGachaPoolRow& Row) { return !IsRewardAvailable(Row); }))
-	{
-		return FText::Format(NSLOCTEXT("Gacha", "UseMachine", "우물에 {0}G 넣기"), FText::AsNumber(RewardPool->CostGold));
-	}
-	return NSLOCTEXT("Gacha", "NoRewards", "보상 설정을 확인해 주세요.");
+	return NSLOCTEXT("Gacha", "WellName", "신비한 우물");
+}
+
+TArray<FCSGachaPoolRow> ACSGachaMachine::GetBrowseRewards() const
+{
+	auto Rewards = BuildRewards();
+	if (!SealActorClass || Rewards.ContainsByPredicate([this](const auto& Row) { return !IsRewardAvailable(Row); })) Rewards.Reset();
+	return Rewards;
+}
+
+void ACSGachaMachine::EndPlay(const EEndPlayReason::Type Reason)
+{
+	if (ActiveWellWidget) ActiveWellWidget->Close();
+	Super::EndPlay(Reason);
 }
 
 void ACSGachaMachine::Interact_Implementation(AActor* Interactor)
 {
+	const APawn* Pawn=Cast<APawn>(Interactor);
+	auto* PC=Pawn ? Cast<ACSStorePlayerController>(Pawn->GetController()) : nullptr;
+	if (!PC || !PC->IsLocalController() || PC->IsGameplayUIInputLocked() || PC->IsPaused() || bDrawing || HasPendingReward()) return;
+	if (IsValid(ActiveWellWidget) && ActiveWellWidget->IsInViewport()) return;
+	if (!WellWidgetClass || WellWidgetClass->HasAnyClassFlags(CLASS_Abstract)) return;
+	ActiveWellWidget=CreateWidget<UCSGachaWellWidget>(PC,WellWidgetClass);
+	if (ActiveWellWidget) { ActiveWellWidget->SetMachine(this); ActiveWellWidget->AddToViewport(20); }
+}
+
+bool ACSGachaMachine::TryStartDraw(AActor* Interactor)
+{
 	ACSPlayerCharacter* Player = Cast<ACSPlayerCharacter>(Interactor);
-	if (!IsValid(Player) || !Player->IsLocallyControlled() || !GetWorld() || bDrawing || HasPendingReward() || !RewardPool || !SealActorClass) return;
+	if (!IsValid(Player) || !Player->IsLocallyControlled() || !GetWorld() || bDrawing || HasPendingReward() || !RewardPool || !SealActorClass) return false;
 	DrawingPlayer = Player;
 	ACSStoreGameState* State = GetWorld()->GetGameState<ACSStoreGameState>();
-	if (!State || RewardPool->CostGold < 0) return;
+	if (!State || RewardPool->CostGold < 0) return false;
 	if (!State->CanAfford(RewardPool->CostGold))
 	{
 		NotifyPlayer(NSLOCTEXT("Gacha", "InsufficientFunds", "골드가 부족합니다."));
-		return;
+		return false;
 	}
 	const TArray<FCSGachaPoolRow> Rewards = BuildRewards();
 	int64 TotalWeight = 0;
@@ -234,14 +253,14 @@ void ACSGachaMachine::Interact_Implementation(AActor* Interactor)
 		if (!IsRewardAvailable(Reward))
 		{
 			NotifyPlayer(NSLOCTEXT("Gacha", "InvalidPool", "보상 설정을 확인해 주세요."));
-			return;
+			return false;
 		}
 		TotalWeight += Reward.Weight;
 	}
 	if (TotalWeight <= 0 || TotalWeight > MAX_int32)
 	{
 		NotifyPlayer(NSLOCTEXT("Gacha", "EmptyPool", "준비된 보상이 없습니다."));
-		return;
+		return false;
 	}
 	int32 Draw = FMath::RandRange(1, static_cast<int32>(TotalWeight));
 	for (const FCSGachaPoolRow& Reward : Rewards)
@@ -250,6 +269,7 @@ void ACSGachaMachine::Interact_Implementation(AActor* Interactor)
 		if (Draw <= 0) { SelectedReward = Reward; break; }
 	}
 	bDrawing = true;
+	if (ActiveWellWidget) ActiveWellWidget->Close();
 	bBeamActive = true;
 	EffectElapsed = 0.f;
 	// 실제 빛 연출이 시작되는 단일 지점에서만 재생합니다.
@@ -258,6 +278,7 @@ void ACSGachaMachine::Interact_Implementation(AActor* Interactor)
 	if (UCSAudioSubsystem* Audio = UCSAudioSubsystem::Get(this)) Audio->PlaySFX(ECSAudioEvent::GachaWellBlessing);
 	if (DrawDelaySeconds <= 0.0f) FinishBeam();
 	else GetWorldTimerManager().SetTimer(DrawTimer, this, &ACSGachaMachine::FinishBeam, DrawDelaySeconds, false);
+	return true;
 }
 
 void ACSGachaMachine::FinishBeam()
@@ -293,7 +314,7 @@ void ACSGachaMachine::CompleteDraw()
 		NotifyPlayer(NSLOCTEXT("Gacha", "SpawnFailed", "보상을 만들지 못해 뽑기가 취소되었습니다."));
 		return;
 	}
-	if (!State->TrySpendFunds(RewardPool->CostGold))
+	if (!State->TrySpendNonStoreFunds(RewardPool->CostGold))
 	{
 		Spawned->Destroy();
 		NotifyPlayer(NSLOCTEXT("Gacha", "PaymentFailed", "결제에 실패해 뽑기가 취소되었습니다."));

@@ -409,7 +409,7 @@ bool UCSDeliveryOrderSubsystem::TryCompleteDispatchOrder(
 	}
 	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState))
 	{
-		StoreGameState->AddFunds(Order.RewardGold);
+		StoreGameState->AddDeliveryIncome(Order.RewardGold);
 		StoreGameState->AddReputation(Order.ReputationReward, TEXT("배달 주문 완료 보상"));
 	}
 	OutRewardGold = Order.RewardGold;

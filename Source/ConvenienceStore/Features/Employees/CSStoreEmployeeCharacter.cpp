@@ -132,13 +132,19 @@ void ACSStoreEmployeeCharacter::OnConstruction(const FTransform& Transform)
 void ACSStoreEmployeeCharacter::ApplyMagicHit_Implementation(FVector HitLocation, FVector ImpactDirection, float KnockbackStrength)
 {
 	if (!HasAuthority() || !CanWork() || !CanHandleTask(ECSStoreEmployeeTaskType::RestockShelf)) return;
+	ApplyMagicWorkBoost(MagicBoostDuration, MagicWorkMultiplier);
+}
+
+void ACSStoreEmployeeCharacter::ApplyMagicWorkBoost(float Duration, float Multiplier)
+{
+	if (!HasAuthority() || !CanWork() || Duration <= 0.0f) return;
 	if (!GetWorldTimerManager().IsTimerActive(MagicBoostTimer))
 	{
 		MoveSpeedBeforeBoost = GetCharacterMovement()->MaxWalkSpeed;
 	}
 	GetCharacterMovement()->MaxWalkSpeed = MoveSpeedBeforeBoost * FMath::Max(1.0f, MagicMoveMultiplier);
-	WorkSpeedMultiplier = FMath::Max(1.0f, MagicWorkMultiplier);
-	GetWorldTimerManager().SetTimer(MagicBoostTimer, this, &ThisClass::EndMagicBoost, FMath::Max(0.1f, MagicBoostDuration), false);
+	WorkSpeedMultiplier = FMath::Max(1.0f, Multiplier);
+	GetWorldTimerManager().SetTimer(MagicBoostTimer, this, &ThisClass::EndMagicBoost, FMath::Max(0.1f, Duration), false);
 	MagicBoostNameplate->SetHiddenInGame(false);
 	OnMagicBoostChanged(true);
 }
@@ -173,6 +179,7 @@ void ACSStoreEmployeeCharacter::BeginPlay()
 	RefreshArtifactMoveSpeed();
 	// 블루프린트의 Pawn 통과 설정과 별개로 마법 투사체를 감지합니다.
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	if (bRequiresHiring) HiringHomeTransform = GetActorTransform();
 	RefreshEmploymentPresentation();
 
 	if (UWorld* World = GetWorld())
@@ -224,6 +231,8 @@ void ACSStoreEmployeeCharacter::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	// 다음 날 근무가 가능해진 시점에 출근 대기 표시를 한 번만 갱신합니다.
 	if (bAwaitingEmploymentStart && CanWork()) RefreshEmploymentPresentation();
+	// 영업이 끝나거나 다음 날이 되면 해고 가능 여부가 바뀌므로 조준 판정을 다시 맞춘다
+	if (bRequiresHiring && bDismissTargetable != IsDismissableNow()) RefreshEmploymentPresentation();
 	AActor* CarriedInventory = GetCarriedInventoryForPlayer();
 	InventoryInteractionBox->SetCollisionEnabled(CarriedInventory ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
 	if (CarriedInventory) InventoryInteractionBox->SetWorldLocation(CarriedInventory->GetActorLocation());

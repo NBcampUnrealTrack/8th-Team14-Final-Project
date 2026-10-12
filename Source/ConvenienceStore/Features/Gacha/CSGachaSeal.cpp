@@ -60,9 +60,24 @@ void ACSGachaSeal::InitializeReward(const FCSGachaPoolRow& InReward, TSubclassOf
 void ACSGachaSeal::Launch(const FVector& Velocity)
 {
 	// 우물에서 배출될 때는 개봉을 활성화하지 않습니다.
+	EndSpawnFlight();
 	EnableWorldDropPhysics();
 	ToolMesh->SetEnableGravity(true);
-	ToolMesh->AddImpulse(Velocity, NAME_None, true);
+	SpawnFlightSpeed = FMath::Max(1.f, SpawnFlightSpeedMultiplier);
+	SpawnFlightLinearDamping = ToolMesh->GetLinearDamping();
+	bSpawnFlight = SpawnFlightSpeed > 1.f;
+	// x(t)와 같은 궤적의 x(k*t): 초기 속도 k배, 중력 k²배, 선형 감쇠 k배.
+	ToolMesh->SetLinearDamping(SpawnFlightLinearDamping * SpawnFlightSpeed);
+	ToolMesh->AddImpulse(Velocity * SpawnFlightSpeed, NAME_None, true);
+	if (bSpawnFlight) SetActorTickEnabled(true);
+}
+
+void ACSGachaSeal::EndSpawnFlight()
+{
+	if (!bSpawnFlight) return;
+	bSpawnFlight = false;
+	ToolMesh->SetLinearDamping(SpawnFlightLinearDamping);
+	if (!bOpened) SetActorTickEnabled(false);
 }
 
 void ACSGachaSeal::Interact_Implementation(AActor* Interactor)
@@ -73,6 +88,7 @@ void ACSGachaSeal::Interact_Implementation(AActor* Interactor)
 
 void ACSGachaSeal::OnEquipped(ACSPlayerCharacter* NewOwner)
 {
+	EndSpawnFlight();
 	Super::OnEquipped(NewOwner);
 	bAwaitingImpact = false;
 	GetWorldTimerManager().ClearTimer(OpenTimer);
@@ -96,6 +112,7 @@ void ACSGachaSeal::OnReleasedToWorld(bool bThrown)
 
 void ACSGachaSeal::HandleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, FVector NormalImpulse, const FHitResult& Hit)
 {
+	if (Hit.bBlockingHit && Hit.ImpactNormal.Z > 0.5f) EndSpawnFlight();
 	if (!bAwaitingImpact || bOpened || OtherActor == LastHolder.Get() || !Hit.bBlockingHit) return;
 	bAwaitingImpact = false;
 	ImpactNormal = Hit.ImpactNormal;
@@ -237,6 +254,11 @@ void ACSGachaSeal::OpenSeal()
 void ACSGachaSeal::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (bSpawnFlight)
+	{
+		if (!ToolMesh->IsSimulatingPhysics() || bIsEquipped) EndSpawnFlight();
+		else ToolMesh->AddForce(FVector(0, 0, GetWorld()->GetGravityZ() * (FMath::Square(SpawnFlightSpeed) - 1.f)), NAME_None, true);
+	}
 	if (!bOpened) return;
 	BreakElapsed += DeltaSeconds;
 	const float Alpha = FMath::Clamp(BreakElapsed / FMath::Max(0.2f, BreakDuration), 0.f, 1.f);
@@ -254,6 +276,7 @@ void ACSGachaSeal::Tick(float DeltaSeconds)
 void ACSGachaSeal::FellOutOfWorld(const UDamageType& DamageType)
 {
 	if (bOpened) { Super::FellOutOfWorld(DamageType); return; }
+	EndSpawnFlight();
 	// 아직 개봉하지 않은 유료 보상은 맵 밖으로 떨어져도 마지막 안전 위치로 돌려놓습니다.
 	GetWorldTimerManager().ClearTimer(OpenTimer);
 	bAwaitingImpact = false;

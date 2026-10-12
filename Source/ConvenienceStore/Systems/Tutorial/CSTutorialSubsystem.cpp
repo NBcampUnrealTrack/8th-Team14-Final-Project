@@ -11,6 +11,8 @@
 #include "Features/Tutorial/CSTutorialShelfSpawnPoint.h"
 #include "Features/Tutorial/CSTutorialCrateSpawnPoint.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
+#include "Features/Delivery/CSDeliveryPortalActor.h"
+#include "Features/Storage/CSFreshnessSafeZoneActor.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Features/Trash/CSTrashCanActor.h"
 #include "Features/Tutorial/CSTutorialMarkerComponent.h"
@@ -54,6 +56,12 @@ namespace
 	const FName TutorialRetryMessageRow(TEXT("TutorialRetry"));
 	// 잎 우산 재료. 첫 제조를 정답 레시피로 안내한다
 	const TArray<FName> TutorialIngredientIds = { TEXT("TOI_ElfHerbSoap"), TEXT("SNK_SlimeJelly") };
+	// 창고 스텝에서 보내는 상자. 냉장 상품이라 냉장 창고와 신선도 유지를 같이 보여 줄 수 있다
+	const TCHAR* StoreCrateProductTablePath = TEXT("/Game/ConvenienceStore/Data/DT_ProductMaster.DT_ProductMaster");
+	const FName StoreCrateProductId(TEXT("BEV_SlimePearlMilkTea"));
+	// 진열률이 이 아래로 내려가면 품절 팁을 띄운다. 다 비기 전에 채울 시간을 주려는 값
+	constexpr float RestockTipFillRatio = 0.25f;
+	constexpr float TutorialPollInterval = 0.5f;
 }
 
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
@@ -175,6 +183,8 @@ void UCSTutorialSubsystem::Deinitialize()
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(TitleScreenWaitTimerHandle);
+		World->GetTimerManager().ClearTimer(StoreCrateCheckTimerHandle);
+		World->GetTimerManager().ClearTimer(RestockTipCheckTimerHandle);
 	}
 	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
@@ -331,6 +341,13 @@ void UCSTutorialSubsystem::HandlePart1Finished()
 
 	// 다이어리 팁은 고정 시간이 아니라 "영업을 시작하였습니다" 안내가 끝나는 시점(HandleStoreOpenedAnnouncementFinished)에 뜸
 	bTipChainActive = true;
+
+	// 진열대가 비어도 손님은 반응 없이 지나가서 이벤트로 잡을 수 없다. 진열률을 직접 본다
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			RestockTipCheckTimerHandle, this, &UCSTutorialSubsystem::CheckRestockTip, TutorialPollInterval, true);
+	}
 }
 
 void UCSTutorialSubsystem::CompleteTutorial()
@@ -1710,6 +1727,9 @@ void UCSTutorialSubsystem::HandleStepStarted()
 	case ECSTutorialStepId::CraftChoice:
 		OpenChoiceWidget(Row);
 		break;
+	case ECSTutorialStepId::StoreCrate:
+		BeginStoreCrateStep();
+		break;
 	case ECSTutorialStepId::CraftAddIngredients:
 		for (ACSProductPickupActor* Ingredient : PlaceTutorialIngredients())
 		{
@@ -1743,6 +1763,14 @@ void UCSTutorialSubsystem::HandleStepEnded()
 		break;
 	case ECSTutorialStepId::CraftChoice:
 		CloseChoiceWidget();
+		break;
+	case ECSTutorialStepId::StoreCrate:
+		// cs.TNext로 건너뛸 때도 확인 타이머와 마커가 남지 않게 여기서 정리한다
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(StoreCrateCheckTimerHandle);
+		}
+		RemoveCraftMarkers();
 		break;
 	case ECSTutorialStepId::CraftRecipeBook:
 		// 만든 잎 우산을 회수한다. 도감을 본 뒤라 결과 슬롯을 비워도 된다
@@ -1913,6 +1941,101 @@ void UCSTutorialSubsystem::RemoveCraftMarkers()
 	}
 
 	CraftMarkerComponents.Reset();
+}
+
+void UCSTutorialSubsystem::BeginStoreCrateStep()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || !StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	ACSDeliveryPortalActor* Portal = nullptr;
+	for (TActorIterator<ACSDeliveryPortalActor> It(World); It && Portal == nullptr; ++It)
+	{
+		if (It->IsDeliveryConfigured())
+		{
+			Portal = *It;
+		}
+	}
+
+	FCSOrderLine Line;
+	Line.ProductRow.DataTable = LoadObject<UDataTable>(nullptr, StoreCrateProductTablePath);
+	Line.ProductRow.RowName = StoreCrateProductId;
+	Line.CrateCount = 1;
+	TArray<ACSDeliveryCrateActor*> SpawnedCrates;
+	if (IsValid(Portal) && IsValid(Line.ProductRow.DataTable) && Portal->SpawnOrderCrates({ Line }, SpawnedCrates) &&
+		!SpawnedCrates.IsEmpty())
+	{
+		StoreCrateTarget = SpawnedCrates[0];
+		AttachCraftMarker(SpawnedCrates[0], FText::GetEmpty());
+		for (TActorIterator<ACSFreshnessSafeZoneActor> It(World); It; ++It)
+		{
+			if (It->GetStorageType() == ECSProductShelfType::ChilledShelf)
+			{
+				AttachCraftMarker(*It, StepRows[CurrentStepIndex]->MarkerLabelText);
+			}
+		}
+	}
+	else
+	{
+		// 상자가 없으면 아래 확인에서 바로 다음 스텝으로 넘어간다
+		StoreCrateTarget = nullptr;
+		UE_LOG(LogTemp, Warning, TEXT("[Tutorial] 창고 스텝 상자를 보내지 못해 이 스텝을 건너뜁니다."));
+	}
+
+	World->GetTimerManager().SetTimer(
+		StoreCrateCheckTimerHandle, this, &UCSTutorialSubsystem::CheckStoreCrateStored, TutorialPollInterval, true);
+}
+
+void UCSTutorialSubsystem::CheckStoreCrateStored()
+{
+	// 창고 보관은 상자를 창고 액터에 붙이는 방식이라 부모 액터로 판정한다
+	// 상자를 진열에 다 써서 비거나 사라진 경우도 넘겨야 튜토리얼이 막히지 않는다
+	const ACSDeliveryCrateActor* Crate = StoreCrateTarget.Get();
+	if (IsValid(Crate) && Crate->GetRemainingQuantity() > 0 &&
+		Cast<ACSFreshnessSafeZoneActor>(Crate->GetAttachParentActor()) == nullptr)
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(StoreCrateCheckTimerHandle);
+	}
+	NotifyObjectiveProgress(ECSTutorialStepId::StoreCrate, 1);
+}
+
+void UCSTutorialSubsystem::CheckRestockTip()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+	if (!bTipChainActive || ShownTipIds.Contains(ECSTutorialStepId::TipRestock))
+	{
+		World->GetTimerManager().ClearTimer(RestockTipCheckTimerHandle);
+		return;
+	}
+
+	// 마감 뒤에는 다 팔린 게 정상이라 영업 중에만 본다
+	const ACSStoreGameState* State = World->GetGameState<ACSStoreGameState>();
+	const UCSCustomerRuntimeSubsystem* Runtime = World->GetSubsystem<UCSCustomerRuntimeSubsystem>();
+	if (!IsValid(State) || !State->bIsStoreOpen || !IsValid(Runtime))
+	{
+		return;
+	}
+
+	int32 ShelfCount = 0;
+	int32 FilledSlots = 0;
+	int32 TotalSlots = 0;
+	const float FillRatio = Runtime->CalculateShelfFillRatio(ShelfCount, FilledSlots, TotalSlots);
+	if (TotalSlots > 0 && FillRatio <= RestockTipFillRatio)
+	{
+		ShowOneShotTip(ECSTutorialStepId::TipRestock);
+	}
 }
 
 void UCSTutorialSubsystem::HandleCraftIngredientAdded(int32 IngredientCount)

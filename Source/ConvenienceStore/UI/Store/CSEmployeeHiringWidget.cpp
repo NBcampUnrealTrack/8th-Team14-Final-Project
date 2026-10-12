@@ -91,6 +91,7 @@ void UCSEmployeeHiringWidget::RefreshView()
 		ViewData = FCSEmployeeHiringViewData();
 		ViewData.HireCost = ViewData.DailyWage = ViewData.TotalDailyWage = ViewData.CurrentFunds = ViewData.StartBusinessDay = 0;
 		ViewData.bCanHire = false;
+		bDismissMode = false;
 		const ACSStoreEmployeeCharacter* Employee = Applicant.Get();
 		const ACSStoreGameState* State = GetWorld() ? GetWorld()->GetGameState<ACSStoreGameState>() : nullptr;
 		const UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
@@ -111,6 +112,16 @@ void UCSEmployeeHiringWidget::RefreshView()
 			ViewData.bStartsToday = ViewData.StartBusinessDay == State->CurrentBusinessDay;
 			ViewData.bCanHire = Hiring->CanHire(Employee, ViewData.UnavailableReason);
 			if (ViewData.bCanHire) ViewData.UnavailableReason = PaymentError;
+			// 이미 고용한 직원과 대화하면 해고 창이 된다
+			const FCSEmployeeContract* Contract = Hiring->FindContract(Employee);
+			bDismissMode = Contract != nullptr;
+			if (bDismissMode)
+			{
+				ViewData.DailyWage = Contract->DailyWage;
+				ViewData.TotalDailyWage = Hiring->GetTotalDailyWage() - Contract->DailyWage;
+				ViewData.bCanHire = Hiring->CanDismiss(Employee, ViewData.UnavailableReason);
+				if (ViewData.bCanHire) ViewData.UnavailableReason = PaymentError;
+			}
 		}
 		else ViewData.UnavailableReason = NSLOCTEXT("EmployeeHiring", "Gone", "지원자 또는 매장 정보를 찾을 수 없습니다.");
 	}
@@ -131,6 +142,21 @@ void UCSEmployeeHiringWidget::RefreshView()
 		: FText::GetEmpty());
 	if (IsValid(WagePaymentNoticeText)) WagePaymentNoticeText->SetText(
 		NSLOCTEXT("EmployeeHiring", "WagePaymentNotice", "일급은 매일 영업 종료 시 자동 지급됩니다."));
+	if (bDismissMode)
+	{
+		if (IsValid(HireCostLabelText)) HireCostLabelText->SetText(NSLOCTEXT("EmployeeHiring", "RefundLabel", "환불"));
+		if (IsValid(HireCostText)) HireCostText->SetText(NSLOCTEXT("EmployeeHiring", "NoRefund", "없음"));
+		// 환불 바로 아래, 고용 창에서 가게 레벨 조건이 뜨던 자리에 재고용 안내를 띄운다
+		if (IsValid(RequiredStoreLevelText)) RequiredStoreLevelText->SetText(
+			NSLOCTEXT("EmployeeHiring", "RehireNotice", "다시 고용하려면 고용비를 다시 내야 합니다."));
+		if (IsValid(TotalDailyWageLabelText)) TotalDailyWageLabelText->SetText(
+			NSLOCTEXT("EmployeeHiring", "TotalWageAfterDismissLabel", "해고 후 전체 직원 일급"));
+		if (IsValid(StartDayLabelText)) StartDayLabelText->SetText(NSLOCTEXT("EmployeeHiring", "WorkEndLabel", "근무 종료"));
+		if (IsValid(StartDayText)) StartDayText->SetText(NSLOCTEXT("EmployeeHiring", "WorkEndToday", "오늘부터"));
+		// 일급 지급 안내는 해고 창에 맞지 않는다. 접으면 줄 위치가 배경 구분선과 어긋나므로 자리는 남긴다
+		if (IsValid(WagePaymentNoticeText)) WagePaymentNoticeText->SetVisibility(ESlateVisibility::Hidden);
+		if (IsValid(ConfirmButtonText)) ConfirmButtonText->SetText(NSLOCTEXT("EmployeeHiring", "DismissButton", "해고하기"));
+	}
 	if (IsValid(AvailabilityText)) AvailabilityText->SetText(ViewData.UnavailableReason);
 	if (IsValid(ConfirmButton)) ConfirmButton->SetIsEnabled(ViewData.bCanHire);
 	OnHiringViewUpdated();
@@ -149,7 +175,21 @@ bool UCSEmployeeHiringWidget::ConfirmHire()
 	return false;
 }
 
-void UCSEmployeeHiringWidget::HandleConfirmClicked() { ConfirmHire(); }
+void UCSEmployeeHiringWidget::HandleConfirmClicked()
+{
+	if (!bDismissMode)
+	{
+		ConfirmHire();
+		return;
+	}
+	UCSEmployeeHiringSubsystem* Hiring = GetWorld() ? GetWorld()->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
+	if (Hiring && Hiring->TryDismiss(Applicant.Get(), PaymentError))
+	{
+		Close();
+		return;
+	}
+	RefreshView();
+}
 void UCSEmployeeHiringWidget::HandleFundsChanged(int32 NewFunds) { PaymentError = FText::GetEmpty(); RefreshView(); }
 void UCSEmployeeHiringWidget::HandlePhaseChanged(ECStorePhase NewPhase) { RefreshView(); }
 void UCSEmployeeHiringWidget::HandleBusinessDayChanged(int32 NewDay) { RefreshView(); }

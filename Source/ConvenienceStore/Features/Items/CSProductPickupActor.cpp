@@ -1,4 +1,5 @@
 #include "Features/Items/CSProductPickupActor.h"
+#include "Data/CSCollisionChannels.h"
 
 #include "Features/Employees/CSStoreEmployeeCharacter.h"
 
@@ -26,6 +27,7 @@ ACSProductPickupActor::ACSProductPickupActor()
 	ProductMesh->SetupAttachment(SceneRoot);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ProductMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 
 	// [백무송]
 	// 바닥에 떨어진 상품이 NavMesh를 변경해 손님 이동 경로를 막지 않도록 설정
@@ -51,6 +53,7 @@ void ACSProductPickupActor::BeginPlay()
 	if (IsValid(ProductMesh))
 	{
 		ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+		ProductMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 		ProductMesh->SetGenerateOverlapEvents(true);
 	}
 
@@ -288,6 +291,7 @@ void ACSProductPickupActor::EnableWorldDropPhysics()
 	SetStoredForPlayerInteraction(false);
 	ProductMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	ProductMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 	ProductMesh->SetGenerateOverlapEvents(true);
 	ProductMesh->SetSimulatePhysics(true);
 }
@@ -312,6 +316,8 @@ void ACSProductPickupActor::SetStoredForPlayerInteraction(bool bStoredForPlayerI
 		bStoredForPlayerInteraction ? ECR_Ignore : ECR_Block);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	ProductMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	// 보관 상태를 바꿀 때 전체 응답을 재설정해도 제압된 몸체와의 충돌은 제외
+	ProductMesh->SetCollisionResponseToChannel(CSCollisionChannels::SubduedBody, ECR_Ignore);
 	ProductMesh->SetCollisionEnabled(
 		bStoredForPlayerInteraction ? ECollisionEnabled::QueryOnly : ECollisionEnabled::QueryAndPhysics);
 }
