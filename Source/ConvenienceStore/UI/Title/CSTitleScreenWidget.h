@@ -6,6 +6,7 @@
 
 class UButton;
 class UCSTitleSaveMenuWidget;
+class UCSAudioConfigDataAsset;
 
 // 타이틀 맵의 첫 화면
 // 게임 시작 시 세이브 파일 선택 메뉴를 열고 종료 시 게임을 종료
@@ -14,8 +15,12 @@ class CONVENIENCESTORE_API UCSTitleScreenWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
+public:
+	UCSTitleScreenWidget(const FObjectInitializer& Initializer);
+
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 	// 게임 시작 버튼 클릭 시 세이브 파일 선택 메뉴를 표시
 	UFUNCTION()
@@ -44,4 +49,12 @@ protected:
 	// 현재 화면에 표시 중인 세이브 파일 선택 메뉴
 	UPROPERTY(Transient)
 	TObjectPtr<UCSTitleSaveMenuWidget> ActiveSaveMenu;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Title|Audio")
+	TObjectPtr<UCSAudioConfigDataAsset> TitleAudioConfig;
+
+private:
+	void FinishQuit();
+	bool bIsQuitting = false;
+	FTimerHandle QuitSoundTimer;
 };

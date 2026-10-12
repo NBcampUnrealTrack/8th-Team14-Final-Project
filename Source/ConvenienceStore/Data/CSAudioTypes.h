@@ -34,5 +34,8 @@ enum class ECSAudioEvent : uint8
 	GachaCapsuleBreak,
 	GachaCapsuleSpawn,
 	EndOfDaySleep,
-	DeliveryOrder
+	DeliveryOrder,
+	MenuButton,
+	GameStart,
+	DeliveryDispatch
 };
