@@ -1,10 +1,14 @@
 ﻿#include "Systems/Tutorial/CSTutorialSubsystem.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Components/InputComponent.h"
 #include "Engine/DataTable.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
+#include "Features/Crafting/CSCraftStationActor.h"
 #include "Features/Facilities/CSBuildableFacility.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Shelves/CSShelfActor.h"
@@ -23,6 +27,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
 #include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
+#include "UI/Journal/CSJournalWidget.h"
 #include "UI/Store/CSDailySummaryWidget.h"
 #include "UI/Tutorial/CSTutorialBannerWidgetBase.h"
 #include "UI/Tutorial/CSTutorialChoiceWidget.h"
@@ -62,6 +67,13 @@ namespace
 	// 진열률이 이 아래로 내려가면 품절 팁을 띄운다. 다 비기 전에 채울 시간을 주려는 값
 	constexpr float RestockTipFillRatio = 0.25f;
 	constexpr float TutorialPollInterval = 0.5f;
+	// 젓기 횟수와 안내 문구가 클릭을 늦게 따라오지 않게 짧게 본다
+	constexpr float CraftStatePollInterval = 0.2f;
+	// 건너뛰기 확인은 제조 선택과 같은 예/아니요 창을 쓴다
+	const TCHAR* SkipConfirmWidgetPath = TEXT("/Game/ConvenienceStore/UI/Tutorial/WBP_TutorialChoice.WBP_TutorialChoice_C");
+	// 입구 트리거 가장자리에서 이만큼 더 안쪽으로 되돌려야 다시 겹치지 않는다
+	constexpr float CraftHousePushBackMargin = 100.0f;
+	constexpr double CraftHouseWarningCooldown = 3.0;
 }
 
 // 콘솔에서 cs.TNext를 입력하면 현재 스텝을 강제로 다음으로 넘김
@@ -185,6 +197,7 @@ void UCSTutorialSubsystem::Deinitialize()
 		World->GetTimerManager().ClearTimer(TitleScreenWaitTimerHandle);
 		World->GetTimerManager().ClearTimer(StoreCrateCheckTimerHandle);
 		World->GetTimerManager().ClearTimer(RestockTipCheckTimerHandle);
+		World->GetTimerManager().ClearTimer(CraftStateCheckTimerHandle);
 	}
 	HideAllActiveMarkers();
 	UnsubscribeFromLevelDisposables();
@@ -196,6 +209,7 @@ void UCSTutorialSubsystem::Deinitialize()
 	UnsubscribeFromCustomerRuntimeSubsystem();
 	UnsubscribeFromCraftingSubsystem();
 	CloseChoiceWidget();
+	CloseSkipConfirmWidget();
 	CloseTutorialWidgets();
 
 	Super::Deinitialize();
@@ -217,6 +231,8 @@ void UCSTutorialSubsystem::StartTutorial(ACSStoreGameMode* GameMode)
 	bTutorialCratesSpawned = false;
 	bCraftTutorialAccepted = false;
 	bSkippingCraftBundle = false;
+	bCraftIngredientsPlaced = false;
+	bCraftBrewSucceeded = false;
 
 	UDataTable* StepDataTable = IsValid(GameMode) ? GameMode->GetTutorialStepDataTable() : nullptr;
 	if (!IsValid(StepDataTable))
@@ -296,13 +312,28 @@ void UCSTutorialSubsystem::AdvanceStep()
 		return;
 	}
 
-	CurrentStepIndex = NextIndex;
+	EnterStep(NextIndex);
+}
+
+void UCSTutorialSubsystem::EnterStep(int32 StepIndex)
+{
+	if (!StepRows.IsValidIndex(StepIndex))
+	{
+		return;
+	}
+
+	CurrentStepIndex = StepIndex;
 	BroadcastCurrentStep();
 	StartAutoAdvanceTimerIfNeeded();
 	UpdateHighlightMarkersForCurrentStep();
 	TrySpawnTutorialShelfDelivery();
 	TrySpawnTutorialCrateDeliveries();
 	HandleStepStarted();
+}
+
+int32 UCSTutorialSubsystem::FindStepIndex(ECSTutorialStepId StepId) const
+{
+	return StepRows.IndexOfByPredicate([StepId](const FCSTutorialStepRow* Row) { return Row->StepId == StepId; });
 }
 
 void UCSTutorialSubsystem::HandlePartFinished(ECSTutorialPart FinishedPart)
@@ -372,6 +403,7 @@ void UCSTutorialSubsystem::CompleteTutorial()
 	UnsubscribeFromCustomerRuntimeSubsystem();
 	CleanUpCraftTutorial();
 	UnsubscribeFromCraftingSubsystem();
+	CloseSkipConfirmWidget();
 	CloseTutorialWidgets();
 }
 
@@ -383,7 +415,7 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 	}
 
 	const FCSTutorialStepRow& CurrentRow = *StepRows[CurrentStepIndex];
-	OnTutorialStepChanged.Broadcast(CurrentRow);
+	BroadcastStepRow(CurrentRow);
 
 	// ObjectiveGoal이 0이어도 방송해야 함
 	OnTutorialObjectiveProgress.Broadcast(0, CurrentRow.ObjectiveGoal);
@@ -391,6 +423,21 @@ void UCSTutorialSubsystem::BroadcastCurrentStep() const
 	// 정산창(C) 등으로 화면이 잠깐 가려졌다가 그대로 되살아날 때 쓸 최신 상태를 기억해둠
 	LastBroadcastRow = &CurrentRow;
 	LastBroadcastObjectiveCurrent = 0;
+}
+
+void UCSTutorialSubsystem::BroadcastStepRow(const FCSTutorialStepRow& Row) const
+{
+	if (!CanPlayerSkipCurrentStep())
+	{
+		OnTutorialStepChanged.Broadcast(Row);
+		return;
+	}
+
+	FCSTutorialStepRow RowWithSkipHint = Row;
+	FCSTutorialHintEntry& SkipHint = RowWithSkipHint.PromptHintList.AddDefaulted_GetRef();
+	SkipHint.HintKey = INVTEXT("N");
+	SkipHint.HintText = NSLOCTEXT("Tutorial", "SkipStepHint", "이 단계 건너뛰기");
+	OnTutorialStepChanged.Broadcast(RowWithSkipHint);
 }
 
 void UCSTutorialSubsystem::StartAutoAdvanceTimerIfNeeded()
@@ -651,11 +698,19 @@ void UCSTutorialSubsystem::ShowOneShotTip(ECSTutorialStepId TipId)
 	}
 
 	ShownTipIds.Add(TipId);
+	const FCSTutorialStepRow& TipRow = **FoundRow;
+
+	// 배너만 있는 팁을 방송하면 떠 있던 대화창 팁과 마커까지 지워져서 배너로만 보낸다
+	if (IsValid(BannerWidgetInstance) && !TipRow.BannerText.IsEmpty() && TipRow.PromptText.IsEmpty() &&
+		TipRow.PromptHintText.IsEmpty() && TipRow.PromptHintList.IsEmpty())
+	{
+		BannerWidgetInstance->ShowTipBanner(TipRow.BannerText);
+		return;
+	}
 
 	// 기존 배너/대화창/목표 위젯 구독을 그대로 재사용. 여기서는 CurrentStepIndex를 건드리지 않고
 	// 방송만 함. 이전에 켜져 있던 마커는 여기서 새로 켜기 전에 정리
 	HideAllActiveMarkers();
-	const FCSTutorialStepRow& TipRow = **FoundRow;
 	OnTutorialStepChanged.Broadcast(TipRow);
 	OnTutorialObjectiveProgress.Broadcast(0, TipRow.ObjectiveGoal);
 	ShowMarkersForTag(TipRow.HighlightMarkerTag, TipRow.MarkerLabelText);
@@ -788,7 +843,7 @@ void UCSTutorialSubsystem::HandleDailySummaryWidgetLockChanged(UUserWidget* Requ
 	// 정산창을 닫으면 스텝을 넘기지 않고 숨기기 전 화면을 그대로 되살림
 	if (LastBroadcastRow != nullptr)
 	{
-		OnTutorialStepChanged.Broadcast(*LastBroadcastRow);
+		BroadcastStepRow(*LastBroadcastRow);
 		OnTutorialObjectiveProgress.Broadcast(LastBroadcastObjectiveCurrent, LastBroadcastRow->ObjectiveGoal);
 		ShowMarkersForTag(LastBroadcastRow->HighlightMarkerTag, LastBroadcastRow->MarkerLabelText);
 	}
@@ -810,6 +865,57 @@ void UCSTutorialSubsystem::NotifyStepCompleted(ECSTutorialStepId CompletedStepId
 	}
 
 	AdvanceStep();
+}
+
+void UCSTutorialSubsystem::NotifyTriggerEntered(ECSTutorialStepId StepId, const AActor* Trigger)
+{
+	UWorld* World = GetWorld();
+	if (StepId != ECSTutorialStepId::CraftMoveToHouse || !bCraftTutorialAccepted || bTutorialCompleted ||
+		World == nullptr || !IsValid(Trigger))
+	{
+		NotifyStepCompleted(StepId);
+		return;
+	}
+
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	APawn* PlayerPawn = PlayerController != nullptr ? PlayerController->GetPawn() : nullptr;
+	const AActor* Station = IsValid(SubscribedCraftingSubsystem) ? SubscribedCraftingSubsystem->GetCraftStationActor() : nullptr;
+	if (!IsValid(PlayerPawn) || !IsValid(Station))
+	{
+		return;
+	}
+
+	// 제조대는 건물 안쪽에 있어서 트리거에서 제조대 쪽으로 밀면 안으로 들어간다
+	FVector TriggerOrigin;
+	FVector TriggerExtent;
+	Trigger->GetActorBounds(false, TriggerOrigin, TriggerExtent);
+	const FVector ToInside = (Station->GetActorLocation() - TriggerOrigin).GetSafeNormal2D();
+	FVector Target = TriggerOrigin + ToInside * (FMath::Max(TriggerExtent.X, TriggerExtent.Y) + CraftHousePushBackMargin);
+	Target.Z = PlayerPawn->GetActorLocation().Z;
+
+	// 겹침 방송 도중에 폰을 옮기면 이동 처리와 꼬여서 다음 틱에 옮긴다
+	TWeakObjectPtr<APawn> WeakPawn(PlayerPawn);
+	World->GetTimerManager().SetTimerForNextTick([WeakPawn, Target]()
+	{
+		APawn* Pawn = WeakPawn.Get();
+		if (!IsValid(Pawn))
+		{
+			return;
+		}
+		Pawn->TeleportTo(Target, Pawn->GetActorRotation());
+		const ACharacter* Character = Cast<ACharacter>(Pawn);
+		if (UCharacterMovementComponent* Movement = Character != nullptr ? Character->GetCharacterMovement() : nullptr)
+		{
+			Movement->StopMovementImmediately();
+		}
+	});
+
+	const double Now = World->GetTimeSeconds();
+	if (Now - LastCraftHouseWarningTime >= CraftHouseWarningCooldown && IsValid(BannerWidgetInstance))
+	{
+		LastCraftHouseWarningTime = Now;
+		BannerWidgetInstance->ShowTipBanner(NSLOCTEXT("Tutorial", "CraftHouseExitBlocked", "제조 튜토리얼을 마쳐야 나갈 수 있어요."));
+	}
 }
 
 void UCSTutorialSubsystem::NotifyObjectiveProgress(ECSTutorialStepId StepId, int32 NewCurrent)
@@ -842,10 +948,16 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 		return;
 	}
 
-	if (StepRows.IsValidIndex(CurrentStepIndex) &&
-		StepRows[CurrentStepIndex]->StepId == ECSTutorialStepId::CleanTrash)
+	// 제조 스텝은 솥 상태를 따라 되돌아가서, 잎 우산을 만든 것으로 치고 도감 스텝부터 넘긴다
+	const int32 RecipeBookIndex = FindStepIndex(ECSTutorialStepId::CraftRecipeBook);
+	if (StepRows.IsValidIndex(CurrentStepIndex) && IsCraftBrewPhaseStep(StepRows[CurrentStepIndex]->StepId) &&
+		RecipeBookIndex != INDEX_NONE)
 	{
-		DebugDestroyRemainingTrash();
+		const int32 TargetIndex = bCraftBrewSucceeded ? RecipeBookIndex + 1 : RecipeBookIndex;
+		bCraftBrewSucceeded = true;
+		HandleStepEnded();
+		EnterStep(TargetIndex);
+		return;
 	}
 
 	if (StepRows.IsValidIndex(CurrentStepIndex) &&
@@ -865,14 +977,14 @@ void UCSTutorialSubsystem::DebugForceAdvanceStep()
 
 void UCSTutorialSubsystem::DebugSkipTutorial()
 {
-	// 설정창 건너뛰기도 여기로 온다. 끝난 뒤에 누르면 플레이 중에 생긴 쓰레기까지 지워진다
+	// 끝난 뒤에 부르면 플레이 중에 생긴 쓰레기까지 지워진다
 	if (bTutorialCompleted)
 	{
 		return;
 	}
 
 	// 어느 스텝에서 부르든 안전하게: 남아있을 수 있는 쓰레기/선반/상자 외곽선을 먼저 정리하고 완전히 종료
-	DebugDestroyRemainingTrash();
+	DestroyRemainingTrash();
 	DebugHideTutorialShelfHighlight();
 	DebugHideTutorialCrateHighlight();
 	CompleteTutorial();
@@ -889,10 +1001,11 @@ bool UCSTutorialSubsystem::CanCloseOrderWidget()
 
 	if (CurrentId == ECSTutorialStepId::PlaceProductOrder && !bOrderWidgetOrderedThisOpen)
 	{
-		if (IsValid(SubscribedPlayerController))
+		// 돈이 없어 못 산 경우면 경고 대신 지원금 안내가 뜬다
+		// 공용 알림은 발주창 아래 층에 떠서 튜토리얼 배너로 띄운다
+		if (!GrantTutorialOrderFundsIfNeeded() && IsValid(BannerWidgetInstance))
 		{
-			SubscribedPlayerController->ShowNoticeBanner(
-				NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+			BannerWidgetInstance->ShowTipBanner(NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
 		}
 		UpdateHighlightMarkersForCurrentStep();
 		return false;
@@ -901,7 +1014,73 @@ bool UCSTutorialSubsystem::CanCloseOrderWidget()
 	return true;
 }
 
-void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
+void UCSTutorialSubsystem::ShowCurrentStepWithoutBanner()
+{
+	if (!StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return;
+	}
+
+	FCSTutorialStepRow Row = *StepRows[CurrentStepIndex];
+	Row.BannerText = FText::GetEmpty();
+	BroadcastStepRow(Row);
+	OnTutorialObjectiveProgress.Broadcast(0, Row.ObjectiveGoal);
+	LastBroadcastRow = StepRows[CurrentStepIndex];
+	LastBroadcastObjectiveCurrent = 0;
+	UpdateHighlightMarkersForCurrentStep();
+}
+
+bool UCSTutorialSubsystem::GrantTutorialOrderFundsIfNeeded()
+{
+	UWorld* World = GetWorld();
+	ACSStoreGameState* State = World != nullptr ? World->GetGameState<ACSStoreGameState>() : nullptr;
+	UDataTable* ProductTable = LoadObject<UDataTable>(nullptr, StoreCrateProductTablePath);
+	if (!IsValid(State) || !IsValid(SubscribedOrderSubsystem) || !IsValid(ProductTable))
+	{
+		return false;
+	}
+
+	// 발주 스텝은 1건 이상 발주해야 끝나서 돈이 없으면 튜토리얼이 멈춘다
+	int32 CheapestCost = MAX_int32;
+	for (const FName& RowName : ProductTable->GetRowNames())
+	{
+		FCSOrderLine Line;
+		Line.ProductRow.DataTable = ProductTable;
+		Line.ProductRow.RowName = RowName;
+		Line.CrateCount = 1;
+		if (!SubscribedOrderSubsystem->IsProductUnlocked(Line.ProductRow))
+		{
+			continue;
+		}
+
+		const FCSOrderResult Result = SubscribedOrderSubsystem->EvaluateOrder({ Line });
+		if (Result.bSuccess)
+		{
+			return false;
+		}
+		if (Result.FailureReason == ECOrderFailureReason::InsufficientFunds)
+		{
+			CheapestCost = FMath::Min(CheapestCost, Result.TotalCost);
+		}
+	}
+
+	const int32 Grant = CheapestCost == MAX_int32 ? 0 : CheapestCost - State->GetCurrentFunds();
+	if (Grant <= 0 || !State->AddFunds(Grant))
+	{
+		return false;
+	}
+
+	// 공용 알림은 발주창 아래 층에 떠서 튜토리얼 배너로 띄운다
+	if (IsValid(BannerWidgetInstance))
+	{
+		BannerWidgetInstance->ShowTipBanner(FText::Format(
+			NSLOCTEXT("Tutorial", "OrderFundsGranted", "튜토리얼 지원금 {0}G를 드렸어요."),
+			FText::AsNumber(Grant)));
+	}
+	return true;
+}
+
+void UCSTutorialSubsystem::DestroyRemainingTrash()
 {
 	UWorld* World = GetWorld();
 	if (World == nullptr)
@@ -909,10 +1088,17 @@ void UCSTutorialSubsystem::DebugDestroyRemainingTrash()
 		return;
 	}
 
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	ACSPlayerCharacter* PlayerCharacter = PlayerController != nullptr ? Cast<ACSPlayerCharacter>(PlayerController->GetPawn()) : nullptr;
 	for (TActorIterator<ACSTrashActor> It(World); It; ++It)
 	{
 		if (IsValid(*It))
 		{
+			// 들고 있던 쓰레기를 손과 퀵바에서 먼저 떼야 지운 뒤 퀵바 아이콘이 남지 않는다
+			if (IsValid(PlayerCharacter))
+			{
+				PlayerCharacter->RemoveProductFromHands(*It);
+			}
 			It->Destroy();
 		}
 	}
@@ -1157,6 +1343,13 @@ void UCSTutorialSubsystem::SubscribeToPlayerController(ACSStorePlayerController*
 		this, &UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished);
 	PlayerController->OnStoreClosedAnnouncementFinished.AddUniqueDynamic(
 		this, &UCSTutorialSubsystem::HandleStoreClosedAnnouncementFinished);
+
+	if (!IsValid(SkipInputComponent))
+	{
+		SkipInputComponent = NewObject<UInputComponent>(PlayerController);
+		SkipInputComponent->BindKey(EKeys::N, IE_Pressed, this, &UCSTutorialSubsystem::HandleSkipKeyPressed);
+		PlayerController->PushInputComponent(SkipInputComponent);
+	}
 }
 
 void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
@@ -1174,8 +1367,13 @@ void UCSTutorialSubsystem::UnsubscribeFromPlayerController()
 			this, &UCSTutorialSubsystem::HandleStoreOpenedAnnouncementFinished);
 		SubscribedPlayerController->OnStoreClosedAnnouncementFinished.RemoveDynamic(
 			this, &UCSTutorialSubsystem::HandleStoreClosedAnnouncementFinished);
+		if (IsValid(SkipInputComponent))
+		{
+			SubscribedPlayerController->PopInputComponent(SkipInputComponent);
+		}
 	}
 
+	SkipInputComponent = nullptr;
 	SubscribedPlayerController = nullptr;
 }
 
@@ -1444,11 +1642,7 @@ void UCSTutorialSubsystem::EnterPart3()
 		return;
 	}
 
-	CurrentStepIndex = Part3Index;
-	BroadcastCurrentStep();
-	StartAutoAdvanceTimerIfNeeded();
-	UpdateHighlightMarkersForCurrentStep();
-	HandleStepStarted();
+	EnterStep(Part3Index);
 }
 
 void UCSTutorialSubsystem::HandleInnerThoughtShown()
@@ -1506,6 +1700,10 @@ void UCSTutorialSubsystem::HandleOrderWidgetLockChanged(UUserWidget* RequestingW
 			bOrderWidgetCurrentlyOpen = true;
 			bOrderWidgetOrderedThisOpen = false;
 			ClearTutorialDisplay();
+			if (CurrentId == ECSTutorialStepId::PlaceProductOrder)
+			{
+				GrantTutorialOrderFundsIfNeeded();
+			}
 		}
 		// [임시] 시설탭 클릭이 이 위젯의 재오픈 신호로 안 와서, FacilityOrderInfo 완료는
 		// 당분간 DT의 AutoAdvanceSeconds(5초) 타이머가 대신 맡음. 감지 방법을 찾으면 닫힘 기반으로 되돌릴 것
@@ -1520,12 +1718,12 @@ void UCSTutorialSubsystem::HandleOrderWidgetLockChanged(UUserWidget* RequestingW
 		if (!bOrderWidgetOrderedThisOpen)
 		{
 			// 발주 없이 닫으려고 함 - 완료 처리하지 않고 경고만 띄움. 스텝은 그대로 PlaceProductOrder에 머무름
-			if (IsValid(SubscribedPlayerController))
+			// 창을 열 때 지운 안내를 다시 띄우지 않으면 튜토리얼이 끝난 것처럼 보인다
+			ShowCurrentStepWithoutBanner();
+			if (!GrantTutorialOrderFundsIfNeeded() && IsValid(BannerWidgetInstance))
 			{
-				SubscribedPlayerController->ShowNoticeBanner(
-					NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
+				BannerWidgetInstance->ShowTipBanner(NSLOCTEXT("Tutorial", "OrderRequireAtLeastOne", "1개 이상 발주해야 합니다."));
 			}
-			UpdateHighlightMarkersForCurrentStep();
 		}
 		else
 		{
@@ -1543,6 +1741,19 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 		return;
 	}
 
+	// 대화창과 목표가 다른 창의 버튼을 가려서 창이 하나라도 열려 있으면 숨긴다.
+	// BP가 내용이 바뀔 때마다 표시 상태를 다시 정해서 표시 상태 대신 투명도로 숨긴다
+	const float PanelOpacity =
+		IsValid(SubscribedPlayerController) && SubscribedPlayerController->IsGameplayUIInputLocked() ? 0.0f : 1.0f;
+	if (IsValid(DialogueWidgetInstance))
+	{
+		DialogueWidgetInstance->SetRenderOpacity(PanelOpacity);
+	}
+	if (IsValid(ObjectiveWidgetInstance))
+	{
+		ObjectiveWidgetInstance->SetRenderOpacity(PanelOpacity);
+	}
+
 	// 2부 팁 체인(다이어리↔게시판)은 StepRows의 관문형 진행과 별개라 여기서 먼저 처리
 	HandleTipWidgetLockChanged(RequestingWidget, bLocked);
 
@@ -1554,6 +1765,29 @@ void UCSTutorialSubsystem::HandleGameplayUIInputLockChanged(UUserWidget* Request
 
 	if (!StepRows.IsValidIndex(CurrentStepIndex))
 	{
+		return;
+	}
+
+	// 도감은 솥 클로즈업에서만 Tab으로 열려서 밖에서 누른 Tab은 다이어리를 연다
+	UWorld* World = GetWorld();
+	if (bLocked && bCraftBrewSucceeded && IsCraftBrewPhaseStep(StepRows[CurrentStepIndex]->StepId) &&
+		Cast<UCSJournalWidget>(RequestingWidget) != nullptr && World != nullptr)
+	{
+		// 다이어리를 여는 도중에 온 방송이라 바로 닫으면 컨트롤러가 비운 위젯에 포커스를 준다
+		TWeakObjectPtr<ACSStorePlayerController> WeakController(SubscribedPlayerController);
+		TWeakObjectPtr<UCSTutorialBannerWidgetBase> WeakBanner(BannerWidgetInstance);
+		World->GetTimerManager().SetTimerForNextTick([WeakController, WeakBanner]()
+		{
+			if (WeakController.IsValid())
+			{
+				WeakController->CloseJournal();
+			}
+			if (WeakBanner.IsValid())
+			{
+				WeakBanner->ShowTipBanner(NSLOCTEXT("Tutorial", "RecipeBookNeedsCloseup",
+					"도감은 솥을 [E]로 살펴보는 중에\n[Tab]으로 열 수 있어요."));
+			}
+		});
 		return;
 	}
 
@@ -1672,17 +1906,188 @@ bool UCSTutorialSubsystem::ShouldBlockStoreOpen(FText& OutMessage) const
 	}
 
 	OutMessage = NSLOCTEXT("Tutorial", "StoreOpenBlocked",
-		"튜토리얼 중에는 영업을 시작할 수 없습니다.\n튜토리얼을 스킵하고 싶다면 설정창에서 튜토리얼을 스킵해 주세요.");
+		"튜토리얼 중에는 영업을 시작할 수 없습니다.\n막힌 단계는 [N]으로 건너뛸 수 있어요.");
 	return true;
 }
 
 bool UCSTutorialSubsystem::IsCraftBundleStep(ECSTutorialStepId StepId)
 {
 	// 선택 창에서 아니요를 고르면 이 스텝들을 시작하지 않고 건너뛴다
-	return StepId == ECSTutorialStepId::CraftAddIngredients ||
-		StepId == ECSTutorialStepId::CraftBrew ||
-		StepId == ECSTutorialStepId::CraftRecipeBook ||
+	return IsCraftBrewPhaseStep(StepId) ||
+		StepId == ECSTutorialStepId::CraftAutoCraft ||
 		StepId == ECSTutorialStepId::CraftWrapUp;
+}
+
+bool UCSTutorialSubsystem::IsCraftBrewPhaseStep(ECSTutorialStepId StepId)
+{
+	return StepId == ECSTutorialStepId::CraftAddIngredients ||
+		StepId == ECSTutorialStepId::CraftCloseup ||
+		StepId == ECSTutorialStepId::CraftHeat ||
+		StepId == ECSTutorialStepId::CraftStir ||
+		StepId == ECSTutorialStepId::CraftBrew ||
+		StepId == ECSTutorialStepId::CraftRecipeBook;
+}
+
+ECSTutorialStepId UCSTutorialSubsystem::ResolveCraftStep(
+	bool bBrewDone, bool bPotReady, bool bCloseup, ECSCraftStep CraftStep, bool bHeatCorrect, bool bStirDone)
+{
+	if (bBrewDone)
+	{
+		return bCloseup ? ECSTutorialStepId::CraftRecipeBook : ECSTutorialStepId::CraftCloseup;
+	}
+	// 제조가 시작되면 재료가 잠겨서 재료 수는 젓기 전까지만 본다
+	if ((CraftStep == ECSCraftStep::Idle || CraftStep == ECSCraftStep::Heat) && !bPotReady)
+	{
+		return ECSTutorialStepId::CraftAddIngredients;
+	}
+	if (!bCloseup)
+	{
+		return ECSTutorialStepId::CraftCloseup;
+	}
+	if (CraftStep == ECSCraftStep::Idle || (CraftStep == ECSCraftStep::Heat && !bHeatCorrect))
+	{
+		return ECSTutorialStepId::CraftHeat;
+	}
+	if (CraftStep == ECSCraftStep::Heat || (CraftStep == ECSCraftStep::Stir && !bStirDone))
+	{
+		return ECSTutorialStepId::CraftStir;
+	}
+	return ECSTutorialStepId::CraftBrew;
+}
+
+void UCSTutorialSubsystem::CheckCraftTutorialState()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex) ||
+		!IsCraftBundleStep(StepRows[CurrentStepIndex]->StepId))
+	{
+		World->GetTimerManager().ClearTimer(CraftStateCheckTimerHandle);
+		return;
+	}
+
+	const ACSCraftStationActor* Station = IsValid(SubscribedCraftingSubsystem)
+		? Cast<ACSCraftStationActor>(SubscribedCraftingSubsystem->GetCraftStationActor())
+		: nullptr;
+	if (!IsValid(Station))
+	{
+		return;
+	}
+
+	// 마무리 안내는 제조 화면에서 나오면 끝난다. 자동 제조 스텝은 창이 닫힐 때 넘어간다
+	const ECSTutorialStepId CurrentId = StepRows[CurrentStepIndex]->StepId;
+	if (CurrentId == ECSTutorialStepId::CraftWrapUp && !Station->IsCloseupActive())
+	{
+		NotifyStepCompleted(ECSTutorialStepId::CraftWrapUp);
+		return;
+	}
+	if (!IsCraftBrewPhaseStep(CurrentId))
+	{
+		return;
+	}
+
+	const FCSCraftRecipeRow* Recipe = SubscribedCraftingSubsystem->FindRecipe(TutorialIngredientIds[0], TutorialIngredientIds[1]);
+	if (Recipe == nullptr)
+	{
+		return;
+	}
+
+	int32 PotCount = 0;
+	for (const FCSCraftIngredientEntry& Entry : Station->GetIngredientEntries())
+	{
+		PotCount += Entry.Count;
+	}
+	const ECSCraftStep CraftStep = Station->GetCraftStep();
+	const int32 StirCount = CraftStep == ECSCraftStep::Stir ? Station->GetStirCount() : 0;
+	const ECSTutorialStepId TargetId = ResolveCraftStep(
+		bCraftBrewSucceeded,
+		PotCount >= TutorialIngredientIds.Num(),
+		Station->IsCloseupActive(),
+		CraftStep,
+		Station->GetCurrentHeat() == Recipe->Heat,
+		StirCount >= Recipe->StirCount);
+
+	if (TargetId != StepRows[CurrentStepIndex]->StepId)
+	{
+		const int32 TargetIndex = FindStepIndex(TargetId);
+		if (TargetIndex != INDEX_NONE)
+		{
+			HandleStepEnded();
+			EnterStep(TargetIndex);
+		}
+		return;
+	}
+
+	// 재료 수와 젓기 횟수는 목표 칸에 바로 보여 준다
+	const int32 Progress = TargetId == ECSTutorialStepId::CraftAddIngredients ? PotCount
+		: TargetId == ECSTutorialStepId::CraftStir ? StirCount
+		: INDEX_NONE;
+	if (Progress != INDEX_NONE && Progress != LastBroadcastObjectiveCurrent)
+	{
+		OnTutorialObjectiveProgress.Broadcast(Progress, StepRows[CurrentStepIndex]->ObjectiveGoal);
+		LastBroadcastObjectiveCurrent = Progress;
+	}
+}
+
+FText UCSTutorialSubsystem::CheckCraftInput(ECSCraftInput Input) const
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex) ||
+		!IsCraftBrewPhaseStep(StepRows[CurrentStepIndex]->StepId) || !IsValid(SubscribedCraftingSubsystem))
+	{
+		return FText::GetEmpty();
+	}
+	const ACSCraftStationActor* Station = Cast<ACSCraftStationActor>(SubscribedCraftingSubsystem->GetCraftStationActor());
+	const FCSCraftRecipeRow* Recipe = SubscribedCraftingSubsystem->FindRecipe(TutorialIngredientIds[0], TutorialIngredientIds[1]);
+	if (!IsValid(Station) || Recipe == nullptr)
+	{
+		return FText::GetEmpty();
+	}
+
+	// 문구의 약불과 세 번은 잎 우산 레시피 값이다. DT 안내 문구와 같이 고친다
+	const ECSCraftStep CraftStep = Station->GetCraftStep();
+	switch (Input)
+	{
+	case ECSCraftInput::Stir:
+		// 완성품이 결과 자리에 있어서 다시 저으면 결과물을 치우라는 안내만 뜬다
+		if (bCraftBrewSucceeded && CraftStep == ECSCraftStep::Heat)
+		{
+			return NSLOCTEXT("Tutorial", "CraftBlockStirAfterBrew", "[Tab]으로 도감을 먼저 열어 보세요.");
+		}
+		if (CraftStep == ECSCraftStep::Heat && Station->GetCurrentHeat() != Recipe->Heat)
+		{
+			return NSLOCTEXT("Tutorial", "CraftBlockHeat", "잎 우산은 약불이에요. 불을 약불로 맞춘 뒤 저어요.");
+		}
+		if (CraftStep == ECSCraftStep::Stir && Station->GetStirCount() >= Recipe->StirCount)
+		{
+			return NSLOCTEXT("Tutorial", "CraftBlockOverStir", "충분히 저었어요. 이제 거품을 터트려요.");
+		}
+		break;
+	case ECSCraftInput::Pop:
+		if (CraftStep == ECSCraftStep::Stir && Station->GetStirCount() < Recipe->StirCount)
+		{
+			return NSLOCTEXT("Tutorial", "CraftBlockEarlyPop", "세 번 다 저은 뒤에 거품을 터트려요.");
+		}
+		break;
+	case ECSCraftInput::FinishWithMissedPops:
+		// 재료를 다시 주고 처음부터 시키면 이미 한 불과 젓기를 또 해야 한다
+		return NSLOCTEXT("Tutorial", "CraftRetryPops", "거품이 가장 커져 금색이 될 때 [Space]로 다시 터트려 보세요.");
+	case ECSCraftInput::RecipeBook:
+		if (!bCraftBrewSucceeded)
+		{
+			return NSLOCTEXT("Tutorial", "CraftBlockBook", "도감은 잎 우산을 만든 뒤에 열어 봐요.");
+		}
+		break;
+	case ECSCraftInput::AutoCraft:
+		return NSLOCTEXT("Tutorial", "CraftBlockAuto", "지금은 직접 만들어 봐요.");
+	case ECSCraftInput::IngredientPanel:
+		return NSLOCTEXT("Tutorial", "CraftBlockIngredientPanel", "지금은 재료를 꺼내지 않아도 돼요.");
+	default:
+		break;
+	}
+	return FText::GetEmpty();
 }
 
 void UCSTutorialSubsystem::HandleStepStarted()
@@ -1731,9 +2136,19 @@ void UCSTutorialSubsystem::HandleStepStarted()
 		BeginStoreCrateStep();
 		break;
 	case ECSTutorialStepId::CraftAddIngredients:
-		for (ACSProductPickupActor* Ingredient : PlaceTutorialIngredients())
+		// 실패하거나 재료를 다시 꺼내 돌아왔을 때는 이미 놓인 재료에 마커만 붙인다
+		if (!bCraftIngredientsPlaced)
 		{
-			AttachCraftMarker(Ingredient, FText::GetEmpty());
+			PlaceTutorialIngredients();
+			bCraftIngredientsPlaced = true;
+		}
+		for (TActorIterator<ACSProductPickupActor> It(GetWorld()); It; ++It)
+		{
+			// 솥에 들어간 재료는 숨겨져 있다
+			if (IsValid(*It) && It->ActorHasTag(TutorialCraftItemTag) && !It->IsHidden())
+			{
+				AttachCraftMarker(*It, FText::GetEmpty());
+			}
 		}
 		if (IsValid(SubscribedCraftingSubsystem))
 		{
@@ -1742,8 +2157,27 @@ void UCSTutorialSubsystem::HandleStepStarted()
 			SubscribedCraftingSubsystem->SetCraftCloseupGuidesHidden(true);
 		}
 		break;
+	case ECSTutorialStepId::CraftCloseup:
+		if (IsValid(SubscribedCraftingSubsystem))
+		{
+			AttachCraftMarker(SubscribedCraftingSubsystem->GetCraftStationActor(), Row.MarkerLabelText);
+		}
+		break;
 	default:
 		break;
+	}
+
+	UWorld* World = GetWorld();
+	if (IsCraftBundleStep(Row.StepId) && World != nullptr &&
+		!World->GetTimerManager().IsTimerActive(CraftStateCheckTimerHandle))
+	{
+		World->GetTimerManager().SetTimer(
+			CraftStateCheckTimerHandle, this, &UCSTutorialSubsystem::CheckCraftTutorialState, CraftStatePollInterval, true);
+	}
+	if (IsCraftBundleStep(Row.StepId) && IsValid(SubscribedCraftingSubsystem) &&
+		!SubscribedCraftingSubsystem->CraftInputGate.IsBound())
+	{
+		SubscribedCraftingSubsystem->CraftInputGate.BindUObject(this, &UCSTutorialSubsystem::CheckCraftInput);
 	}
 }
 
@@ -1756,8 +2190,16 @@ void UCSTutorialSubsystem::HandleStepEnded()
 
 	switch (StepRows[CurrentStepIndex]->StepId)
 	{
+	case ECSTutorialStepId::CleanTrash:
+		// 마지막 쓰레기를 버리는 방송 도중이라 쓰레기통과 플레이어가 그 쓰레기를 다 정리한 다음 틱에 지운다
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimerForNextTick(this, &UCSTutorialSubsystem::DestroyRemainingTrash);
+		}
+		break;
 	case ECSTutorialStepId::CraftMoveToHouse:
 	case ECSTutorialStepId::CraftAddIngredients:
+	case ECSTutorialStepId::CraftCloseup:
 	case ECSTutorialStepId::ApproachClosingBell:
 		RemoveCraftMarkers();
 		break;
@@ -1810,6 +2252,7 @@ void UCSTutorialSubsystem::UnsubscribeFromCraftingSubsystem()
 			this, &UCSTutorialSubsystem::HandleCraftIngredientAdded);
 		SubscribedCraftingSubsystem->OnManualCraftFinished.RemoveDynamic(
 			this, &UCSTutorialSubsystem::HandleManualCraftFinished);
+		SubscribedCraftingSubsystem->CraftInputGate.Unbind();
 	}
 
 	SubscribedCraftingSubsystem = nullptr;
@@ -1876,6 +2319,80 @@ void UCSTutorialSubsystem::HandleTutorialChoiceMade(bool bYes)
 	bCraftTutorialAccepted = bYes;
 	bSkippingCraftBundle = !bYes;
 	NotifyStepCompleted(ECSTutorialStepId::CraftChoice);
+}
+
+bool UCSTutorialSubsystem::CanPlayerSkipCurrentStep() const
+{
+	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex))
+	{
+		return false;
+	}
+
+	// 제조는 선택 창의 아니요로 통째로 건너뛴다. 입간판과 잠자기는 넘겨도 그 행동은 해야 해서 안내만 사라진다.
+	// 2부와 3부 시작 전에는 현재 스텝이 입간판에 머물러 있어서 여기서 같이 걸러진다
+	const ECSTutorialStepId StepId = StepRows[CurrentStepIndex]->StepId;
+	return StepId != ECSTutorialStepId::CraftMoveToHouse &&
+		StepId != ECSTutorialStepId::CraftChoice &&
+		!IsCraftBundleStep(StepId) &&
+		StepId != ECSTutorialStepId::OpenSign &&
+		StepId != ECSTutorialStepId::ApproachClosingBell;
+}
+
+void UCSTutorialSubsystem::HandleSkipKeyPressed()
+{
+	if (!CanPlayerSkipCurrentStep() || IsValid(ChoiceWidgetInstance) || IsValid(SkipConfirmWidgetInstance) ||
+		!IsValid(SubscribedPlayerController))
+	{
+		return;
+	}
+
+	UClass* ChoiceClass = LoadClass<UCSTutorialChoiceWidget>(nullptr, SkipConfirmWidgetPath);
+	SkipConfirmWidgetInstance = ChoiceClass != nullptr
+		? CreateWidget<UCSTutorialChoiceWidget>(SubscribedPlayerController, ChoiceClass)
+		: nullptr;
+	if (!IsValid(SkipConfirmWidgetInstance))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Tutorial] 건너뛰기 확인 창을 만들지 못했습니다. WBP_TutorialChoice 경로를 확인하세요."));
+		return;
+	}
+
+	SkipConfirmStepIndex = CurrentStepIndex;
+	SkipConfirmWidgetInstance->SetTexts(
+		NSLOCTEXT("Tutorial", "SkipStepQuestion", "이 단계를 건너뛸까요?"),
+		NSLOCTEXT("Tutorial", "SkipStepYes", "예"),
+		NSLOCTEXT("Tutorial", "SkipStepNo", "아니요"));
+	SkipConfirmWidgetInstance->OnChoiceMade.AddUniqueDynamic(this, &UCSTutorialSubsystem::HandleSkipConfirmChoice);
+	SkipConfirmWidgetInstance->AddToViewport(TutorialWidgetZOrder + 1);
+	SubscribedPlayerController->SetGameplayUIInputLock(SkipConfirmWidgetInstance, true);
+}
+
+void UCSTutorialSubsystem::CloseSkipConfirmWidget()
+{
+	SkipConfirmStepIndex = INDEX_NONE;
+	if (!IsValid(SkipConfirmWidgetInstance))
+	{
+		SkipConfirmWidgetInstance = nullptr;
+		return;
+	}
+
+	UCSTutorialChoiceWidget* Widget = SkipConfirmWidgetInstance;
+	SkipConfirmWidgetInstance = nullptr;
+	Widget->OnChoiceMade.RemoveDynamic(this, &UCSTutorialSubsystem::HandleSkipConfirmChoice);
+	if (ACSStorePlayerController* PlayerController = Cast<ACSStorePlayerController>(Widget->GetOwningPlayer()))
+	{
+		PlayerController->SetGameplayUIInputLock(Widget, false);
+	}
+	Widget->RemoveFromParent();
+}
+
+void UCSTutorialSubsystem::HandleSkipConfirmChoice(bool bYes)
+{
+	const bool bSameStep = SkipConfirmStepIndex == CurrentStepIndex;
+	CloseSkipConfirmWidget();
+	if (bYes && bSameStep && CanPlayerSkipCurrentStep())
+	{
+		DebugForceAdvanceStep();
+	}
 }
 
 TArray<ACSProductPickupActor*> UCSTutorialSubsystem::PlaceTutorialIngredients()
@@ -2060,8 +2577,9 @@ void UCSTutorialSubsystem::HandleCraftIngredientAdded(int32 IngredientCount)
 
 void UCSTutorialSubsystem::HandleManualCraftFinished(ECSCraftOutcome Outcome)
 {
-	if (bTutorialCompleted || !StepRows.IsValidIndex(CurrentStepIndex) ||
-		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::CraftBrew ||
+	// 안내 문구는 솥 상태를 조금 늦게 따라가서 거품 스텝이 뜨기 전에 끝날 수도 있다
+	if (bTutorialCompleted || bCraftBrewSucceeded || !StepRows.IsValidIndex(CurrentStepIndex) ||
+		!IsCraftBrewPhaseStep(StepRows[CurrentStepIndex]->StepId) ||
 		!IsValid(SubscribedCraftingSubsystem))
 	{
 		return;
@@ -2075,7 +2593,8 @@ void UCSTutorialSubsystem::HandleManualCraftFinished(ECSCraftOutcome Outcome)
 
 	if (bSucceeded)
 	{
-		NotifyStepCompleted(ECSTutorialStepId::CraftBrew);
+		bCraftBrewSucceeded = true;
+		CheckCraftTutorialState();
 		return;
 	}
 
@@ -2098,14 +2617,19 @@ void UCSTutorialSubsystem::CleanUpCraftTutorial()
 {
 	CloseChoiceWidget();
 
+	bCraftIngredientsPlaced = false;
+	bCraftBrewSucceeded = false;
+
 	UWorld* World = GetWorld();
 	if (World == nullptr)
 	{
 		return;
 	}
+	World->GetTimerManager().ClearTimer(CraftStateCheckTimerHandle);
 
 	if (UCSCraftingSubsystem* CraftingSubsystem = World->GetSubsystem<UCSCraftingSubsystem>())
 	{
+		CraftingSubsystem->CraftInputGate.Unbind();
 		CraftingSubsystem->SetCraftCloseupGuidesHidden(false);
 		CraftingSubsystem->CloseCraftStationPanels();
 		// 아니요를 골랐으면 솥에 튜토리얼 물건이 없고, 플레이어가 넣어 둔 재료만 있을 수 있다

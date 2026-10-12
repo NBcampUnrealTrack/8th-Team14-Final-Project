@@ -370,6 +370,8 @@ private:
 	UCSProductVisualRegistry* ResolveVisualRegistry(const ACSProductPickupActor* Product) const;
 	// 클로즈업 중이면 클로즈업 화면의 메시지 칸에, 아니면 공용 배너에 띄운다
 	void ShowMessage(const FText& Message, bool bWarning) const;
+	// 튜토리얼이 막은 조작이면 이유를 띄우고 true
+	bool ShowInputBlockReason(ECSCraftInput Input) const;
 	// 재료가 잠긴 뒤에는 거품 타이머가 돌아서 창이 입력을 가져가면 거품을 놓친다
 	bool IsBeforeCraftStart() const;
 	bool IsAnyCloseupPanelOpen() const;
