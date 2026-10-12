@@ -28,6 +28,7 @@ class UCSUnlockGuideWidget;
 class UDataTable;
 class UCSLevelPresentationWidget;
 class UCSWakeUpWidget;
+class ACSCustomerCharacter;
 enum class ECSStatusAnnouncementType : uint8;
 
 // 발주/계산/장부처럼 게임 조작을 막는 UI가 열리거나 닫힐 때마다 방송
@@ -142,7 +143,8 @@ public:
 	void SetStorageWarning(const FText& Message);
 
 	/** 배달 기한 초과처럼 입력을 막으면 안 되는 결과를 화면 토스트로 표시합니다. */
-	void ShowGameplayToast(const FText& Title, const FText& Message);
+	// bPriority가 true면 대기열 맨 앞에 넣어 표시 중인 알림 다음으로 가장 먼저 표시
+	void ShowGameplayToast(const FText& Title, const FText& Message, bool bPriority = false);
 
 	// 화면 중앙에 잠깐 떴다 사라지는 경고 배너를 표시합니다. 튜토리얼 진행 상태와 무관하게 동작하며
 	// 인스턴스 하나를 재사용하므로 어느 파트에서 호출해도 됩니다 (NoticeBannerWidgetClass는 사람이 지정)
@@ -203,6 +205,13 @@ protected:
 	UFUNCTION() void HandleClosingWarningRequested(int32 RemainingMinutes);
 	UFUNCTION() void HandleClosingWarningFinished();
 	UFUNCTION() void HandleDeliveryToastFinished();
+
+	// 손님의 절도 시작 알림을 받아 게임당 1회 빌런 출몰 알림을 표시
+	UFUNCTION()
+	void HandleShopliftStarted(ACSCustomerCharacter* Customer, int32 AtRiskGold);
+
+	// 표시 중인 토스트를 즉시 화면에서 제거하고 위젯 참조를 정리
+	void DismissActiveDeliveryToast();
 
 	void UpdateClosingInputMode();
 	void ShowDailySummary(bool bReadOnly);

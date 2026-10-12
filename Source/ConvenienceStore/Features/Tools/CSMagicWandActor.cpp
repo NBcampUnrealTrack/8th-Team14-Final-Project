@@ -3,9 +3,11 @@
 #include "Features/Tools/CSMagicProjectileActor.h"
 #include "Features/Tools/CSMagicWandCrosshairWidget.h"
 #include "Features/Player/CSPlayerCharacter.h"
+#include "Features/Facilities/CSSaveIdComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
@@ -180,6 +182,83 @@ AActor* ACSMagicWandActor::GetHomeDockOwner() const
 	return GetHomeDockComponent() != nullptr
 		? HomeDockOwner.Get()
 		: nullptr;
+}
+
+bool ACSMagicWandActor::IsDockedAtHome() const
+{
+	const USceneComponent* WandRoot = GetRootComponent();
+	const USceneComponent* AttachParent = IsValid(WandRoot) ? WandRoot->GetAttachParent() : nullptr;
+	if (!IsValid(AttachParent))
+	{
+		return false;
+	}
+
+	// 기억한 거치대가 있으면 해당 컴포넌트에 부착된 경우만 거치 상태로 판단
+	if (const USceneComponent* HomeDock = GetHomeDockComponent())
+	{
+		return AttachParent == HomeDock;
+	}
+
+	// 처음 집기 전에는 거치대 정보가 없으므로 시설에 부착된 상태를 최초 거치대로 판단
+	// 퀵바 보관 위치와 손 부착은 플레이어 소유 컴포넌트이므로 제외
+	const AActor* ParentOwner = AttachParent->GetOwner();
+	return IsValid(ParentOwner) && !ParentOwner->IsA<APawn>();
+}
+
+bool ACSMagicWandActor::BelongsToHomeDock() const
+{
+	return GetHomeDockComponent() != nullptr || IsDockedAtHome();
+}
+
+FGuid ACSMagicWandActor::GetHomeDockOwnerSaveId() const
+{
+	// 기억한 거치대 시설을 우선 사용하고 없으면 현재 부착된 거치대 시설을 사용
+	const AActor* DockOwner = GetHomeDockOwner();
+	if (DockOwner == nullptr && IsDockedAtHome())
+	{
+		DockOwner = GetRootComponent()->GetAttachParent()->GetOwner();
+	}
+
+	return UCSSaveIdComponent::FindSaveId(DockOwner);
+}
+
+FVector ACSMagicWandActor::GetUnheldScale() const
+{
+	return CachedWorldScale.IsSet() ? CachedWorldScale.GetValue() : GetActorScale3D();
+}
+
+ACSMagicWandActor* ACSMagicWandActor::FindDockedWand(
+	UWorld& InWorld,
+	UClass* WandClass,
+	const FGuid& HomeDockOwnerSaveId)
+{
+	if (WandClass == nullptr)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<ACSMagicWandActor> It(&InWorld); It; ++It)
+	{
+		ACSMagicWandActor* MagicWand = *It;
+		if (!IsValid(MagicWand) ||
+			MagicWand->IsActorBeingDestroyed() ||
+			MagicWand->GetClass() != WandClass ||
+			!MagicWand->IsDockedAtHome())
+		{
+			continue;
+		}
+
+		// 소유 시설 식별자가 있으면 다른 시설의 거치대 지팡이를 가져오지 않도록 제외
+		if (HomeDockOwnerSaveId.IsValid() &&
+			MagicWand->GetHomeDockOwnerSaveId() != HomeDockOwnerSaveId)
+		{
+			continue;
+		}
+
+		return MagicWand;
+	}
+
+	return nullptr;
 }
 
 bool ACSMagicWandActor::UsePrimary_Implementation(AActor* User)

@@ -1200,9 +1200,22 @@ void ACSPlayerCharacter::CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) con
 				SlotRecord.GachaSeal.bWorldDropPhysics = false;
 			}
 		}
+		// 엔딩 아이템도 도구이므로 도구 분기보다 먼저 확인해 아이템 식별자까지 기록
+		else if (const ACSEndingItemActor* EndingItem = Cast<ACSEndingItemActor>(Item))
+		{
+			SlotRecord.bHasEndingItem = true;
+			SlotRecord.EndingItemId = EndingItem->EndingItemId;
+		}
 		else if (const ACSUsableToolActor* Tool = Cast<ACSUsableToolActor>(Item))
 		{
 			SlotRecord.ToolClass = FSoftClassPath(Tool->GetClass());
+
+			// 복원 시 거치대 지팡이 재사용 여부를 구분하도록 구매 여부와 소속 시설을 기록
+			if (const ACSMagicWandActor* MagicWand = Cast<ACSMagicWandActor>(Tool))
+			{
+				SlotRecord.bPurchasedTool = !MagicWand->BelongsToHomeDock();
+				SlotRecord.ToolHomeDockOwnerSaveId = MagicWand->GetHomeDockOwnerSaveId();
+			}
 		}
 		else if (const ACSDeliveryCrateActor* Crate = Cast<ACSDeliveryCrateActor>(Item))
 		{
@@ -1244,6 +1257,20 @@ void ACSPlayerCharacter::RestoreQuickbarRecord(
 				GetActorTransform());
 			bSpawned = true;
 		}
+		// 엔딩 아이템 레코드로 관리자 발급 정보가 설정된 아이템을 생성하고 아래 공통 처리로 퀵바에 다시 보관
+		// 관리자나 아이템 정의를 찾지 못하면 이 칸을 생략
+		else if (SlotRecord.bHasEndingItem)
+		{
+			for (TActorIterator<ACSEndingManager> It(World); It; ++It)
+			{
+				if (ACSEndingManager* EndingManager = *It; IsValid(EndingManager))
+				{
+					RestoredItem = EndingManager->SpawnRestoredItem(SlotRecord.EndingItemId, GetActorTransform());
+					break;
+				}
+			}
+			bSpawned = true;
+		}
 		else if (SlotRecord.ToolClass.IsValid())
 		{
 			UClass* ToolClass = SlotRecord.ToolClass.TryLoadClass<ACSUsableToolActor>();
@@ -1265,7 +1292,16 @@ void ACSPlayerCharacter::RestoreQuickbarRecord(
 				continue;
 			}
 
-			RestoredItem = FindOrSpawnQuickbarTool(ToolClass, bSpawned);
+			// 이전 세이브의 퀵바 엔딩 아이템은 식별자가 없어 제출·전시할 수 없으므로 복원을 생략
+			if (ToolClass->IsChildOf(ACSEndingItemActor::StaticClass()))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[CSSave] 식별자가 없는 퀵바 엔딩 아이템은 복원하지 않습니다: %s"),
+					*SlotRecord.ToolClass.ToString());
+				continue;
+			}
+
+			RestoredItem = FindOrSpawnQuickbarTool(ToolClass, SlotRecord, bSpawned);
 		}
 		else if (SlotRecord.bHasCrate)
 		{
@@ -1312,7 +1348,10 @@ bool ACSPlayerCharacter::IsQuickbarItem(const AActor* ItemActor) const
 	return IsValid(QuickbarInventory) && QuickbarInventory->ContainsItem(ItemActor);
 }
 
-ACSUsableToolActor* ACSPlayerCharacter::FindOrSpawnQuickbarTool(UClass* ToolClass, bool& bOutSpawned)
+ACSUsableToolActor* ACSPlayerCharacter::FindOrSpawnQuickbarTool(
+	UClass* ToolClass,
+	const FCSQuickbarSlotRecord& SlotRecord,
+	bool& bOutSpawned)
 {
 	bOutSpawned = false;
 	UWorld* World = GetWorld();
@@ -1321,19 +1360,16 @@ ACSUsableToolActor* ACSPlayerCharacter::FindOrSpawnQuickbarTool(UClass* ToolClas
 		return nullptr;
 	}
 
-	// 마법봉은 시설 거치대가 레벨 시작 시 생성하므로 퀵바에 없는 기존 액터를 재사용
-	if (ToolClass->IsChildOf(ACSMagicWandActor::StaticClass()))
+	// 레벨 거치대 지팡이는 시설이 레벨 시작 시 생성하므로 소속 거치대의 기존 액터를 재사용
+	// 구매한 지팡이는 거치대 지팡이를 가져오지 않도록 아래에서 새로 생성
+	if (ToolClass->IsChildOf(ACSMagicWandActor::StaticClass()) && !SlotRecord.bPurchasedTool)
 	{
-		for (TActorIterator<ACSMagicWandActor> It(World); It; ++It)
+		if (ACSMagicWandActor* DockedWand = ACSMagicWandActor::FindDockedWand(
+			*World,
+			ToolClass,
+			SlotRecord.ToolHomeDockOwnerSaveId))
 		{
-			ACSMagicWandActor* MagicWand = *It;
-			if (IsValid(MagicWand) &&
-				MagicWand->GetClass() == ToolClass &&
-				!IsQuickbarItem(MagicWand) &&
-				Cast<ACSPlayerCharacter>(MagicWand->GetAttachParentActor()) == nullptr)
-			{
-				return MagicWand;
-			}
+			return DockedWand;
 		}
 	}
 

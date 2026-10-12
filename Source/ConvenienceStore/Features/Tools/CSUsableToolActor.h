@@ -43,6 +43,9 @@ public:
 	// 실제 Q 조작이 끝났을 때만 호출합니다. 퀵바 전환과 최초 배출은 포함하지 않습니다.
 	virtual void OnReleasedToWorld(bool bThrown) {}
 
+	// 도구 메시가 바닥 물리 시뮬레이션 중인지 확인
+	bool IsWorldDropPhysicsActive() const;
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UStaticMeshComponent> ToolMesh;

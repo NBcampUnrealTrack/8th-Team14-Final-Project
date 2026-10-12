@@ -29,6 +29,26 @@ public:
 	USceneComponent* GetHomeDockComponent() const;
 	AActor* GetHomeDockOwner() const;
 
+	// ----- 세이브 / 로드 -----
+
+	// 거치대에 꽂혀 있는지 확인
+	// 기억한 거치대가 없으면 플레이어가 아닌 액터에 부착된 상태를 최초 거치대로 판단
+	bool IsDockedAtHome() const;
+
+	// 레벨 거치대 소속 지팡이인지 확인
+	// 거치대에 꽂혀 있거나 꺼낸 뒤에도 거치대를 기억하는 경우 true를 반환
+	bool BelongsToHomeDock() const;
+
+	// 거치대를 소유한 시설의 세이브 식별자를 조회하고 없으면 유효하지 않은 값을 반환
+	FGuid GetHomeDockOwnerSaveId() const;
+
+	// 장착 배율을 제외한 월드 배율을 반환
+	FVector GetUnheldScale() const;
+
+	// 거치대에 꽂힌 같은 클래스의 지팡이를 조회하고 없으면 nullptr을 반환
+	// 소유 시설 식별자가 유효하면 해당 시설의 거치대만 검색
+	static ACSMagicWandActor* FindDockedWand(UWorld& InWorld, UClass* WandClass, const FGuid& HomeDockOwnerSaveId);
+
 protected:
 	// 기본 지팡이는 0(직원 버프 없음), 고급 지팡이 BP는 30초로 설정합니다.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Magic|Employee", meta=(ClampMin="0"))
