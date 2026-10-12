@@ -7,6 +7,7 @@
 #include "Systems/Employees/CSEmployeeHiringSubsystem.h"
 #include "Systems/Audio/CSAudioSubsystem.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "Engine/World.h"
 
 int32 ACSStoreGameState::GetMagicCircleUpgradeCost() const
@@ -1095,6 +1096,20 @@ void ACSStoreGameState::CaptureSaveData(UCSSaveGame& OutSave) const
 	// 불러온 뒤 빌런 출몰 알림이 다시 표시되지 않도록 표시 여부를 기록
 	Record.bVillainAlertShown = bVillainAlertShown;
 
+	// 1일차 마감 튜토리얼이 남은 상태면 불러온 뒤 3부를 다시 시작하도록 기록
+	// 2일차 이후 세이브는 항상 false로 기록해 튜토리얼 재등장을 방지
+	Record.bTutorialPart3Pending = false;
+	if (CurrentBusinessDay == 1)
+	{
+		if (const UWorld* World = GetWorld())
+		{
+			if (const UCSTutorialSubsystem* TutorialSubsystem = World->GetSubsystem<UCSTutorialSubsystem>())
+			{
+				Record.bTutorialPart3Pending = TutorialSubsystem->IsPart3Pending();
+			}
+		}
+	}
+
 	// 불러온 뒤 자유 시간 복귀 여부를 가르는 기준
 	Record.SavedPhase = CurrentPhase;
 	Record.bHasStoreOpenedToday = bHasStoreOpenedToday;
@@ -1145,6 +1160,7 @@ void ACSStoreGameState::RestoreSaveData(const UCSSaveGame& InSave)
 
 	// 단계는 여기서 적용하지 않고 GameMode가 모든 참가자 복원 후 이어서 적용
 	RestoredSavePhase = Record.SavedPhase;
+	bRestoredTutorialPart3Pending = Record.bTutorialPart3Pending;
 	bHasStoreOpenedToday = Record.bHasStoreOpenedToday;
 
 	DailySalesGold = Record.DailySalesGold;

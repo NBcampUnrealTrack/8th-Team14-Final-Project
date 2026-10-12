@@ -118,6 +118,10 @@ public:
 	// 직접 적용하지 않고 보관만 하며 불러오기 후 GameMode가 이어서 적용
 	ECStorePhase RestoredSavePhase = ECStorePhase::Preparation;
 
+	// 불러온 세이브의 마감 튜토리얼 재개 여부
+	// GameMode가 마감 자유 시간 복귀 마지막에 사용한 뒤 false로 초기화
+	bool bRestoredTutorialPart3Pending = false;
+
 	// 이 게임에서 빌런 출몰 알림을 이미 표시했는지 확인
 	bool IsVillainAlertShown() const { return bVillainAlertShown; }
 
