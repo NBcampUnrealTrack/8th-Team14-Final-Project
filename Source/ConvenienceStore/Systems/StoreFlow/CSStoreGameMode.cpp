@@ -226,7 +226,7 @@ void ACSStoreGameMode::HandleClosingSaveTimeout()
 	ExecuteClosingAutoSave();
 }
 
-void ACSStoreGameMode::ExecuteClosingAutoSave()
+void ACSStoreGameMode::ExecuteClosingAutoSave(bool bNotifyPlayer)
 {
 	ClearClosingSaveTimers();
 
@@ -249,7 +249,19 @@ void ACSStoreGameMode::ExecuteClosingAutoSave()
 	}
 
 	bClosingAutoSaveDone = true;
-	SaveSubsystem->SaveToAutoSlot();
+	if (!SaveSubsystem->SaveToAutoSlot() || !bNotifyPlayer)
+	{
+		return;
+	}
+
+	// 저장이 실제로 성공했을 때만 알림
+	if (ACSStorePlayerController* StoreController =
+		Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController()))
+	{
+		StoreController->ShowGameplayToast(
+			NSLOCTEXT("Save", "AutoSaveToastTitle", "자동 저장"),
+			NSLOCTEXT("Save", "AutoSaveToast", "현재까지 플레이를 저장했습니다."));
+	}
 }
 
 void ACSStoreGameMode::ClearClosingSaveTimers()
@@ -366,9 +378,10 @@ bool ACSStoreGameMode::RequestClosingDailySummary()
 
 	// 자동 저장 대기 중에 잠자기를 확인한 경우
 	// 손님 정리로 상품 낙하·도난 손실이 확정된 지금, 평판 정산 전에 저장을 마침
+	// 곧바로 정산창이 열려 토스트가 다음 날 아침으로 밀리므로 알림은 생략함
 	if (!bSkipClosingAutoSave && !bClosingAutoSaveDone)
 	{
-		ExecuteClosingAutoSave();
+		ExecuteClosingAutoSave(false);
 	}
 
 	StoreGameState->RequestDailySummary();

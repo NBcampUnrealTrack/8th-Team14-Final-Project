@@ -207,6 +207,47 @@ void ACSEndingDisplayActor::PlaceInSlot(ACSPlayerCharacter* Player, const UPrimi
 	HidePlacementPreview();
 }
 
+int32 ACSEndingDisplayActor::FindDisplayedItemSlot(const ACSEndingItemActor* Item) const
+{
+	if (!IsValid(Item))
+	{
+		return INDEX_NONE;
+	}
+
+	for (int32 Index = 0; Index < DisplayedItems.Num(); ++Index)
+	{
+		if (DisplayedItems[Index] == Item)
+		{
+			return Index;
+		}
+	}
+
+	return INDEX_NONE;
+}
+
+bool ACSEndingDisplayActor::RestoreDisplayedItem(ACSEndingItemActor* Item, int32 Index)
+{
+	if (!IsValid(Item) || bSubmittedDisplay || !DisplayedItems.IsValidIndex(Index) ||
+		IsValid(DisplayedItems[Index]) || !IsValid(EndingManager))
+	{
+		return false;
+	}
+
+	// 다른 재료가 엉뚱한 슬롯에 전시되지 않도록 슬롯과 아이템 식별자를 확인
+	const UCSEndingData* Data = EndingManager->GetEndingData();
+	if (!Data->IsConfigurationValid() || Data->Items[Index].ItemId != Item->EndingItemId)
+	{
+		return false;
+	}
+
+	// 꺼낼 때 원래 크기로 되돌리도록 배치 경로와 같이 전시 전 배율을 보관
+	OriginalScales[Index] = Item->GetActorScale3D();
+	OriginalAbsoluteScaleFlags[Index] = Item->GetRootComponent()->IsUsingAbsoluteScale();
+	DisplayedItems[Index] = Item;
+	AttachDisplayItem(Item, Index);
+	return true;
+}
+
 void ACSEndingDisplayActor::HidePlacementPreview()
 {
 	if (IsValid(PlacementPreview)) PlacementPreview->SetActorHiddenInGame(true);

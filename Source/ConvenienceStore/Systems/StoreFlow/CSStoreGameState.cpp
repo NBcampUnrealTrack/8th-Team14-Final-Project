@@ -1092,6 +1092,9 @@ void ACSStoreGameState::CaptureSaveData(UCSSaveGame& OutSave) const
 	Record.LastRentProcessedBusinessDay = LastRentProcessedBusinessDay;
 	Record.LastPayrollProcessedBusinessDay = LastPayrollProcessedBusinessDay;
 
+	// 불러온 뒤 빌런 출몰 알림이 다시 표시되지 않도록 표시 여부를 기록
+	Record.bVillainAlertShown = bVillainAlertShown;
+
 	// 불러온 뒤 자유 시간 복귀 여부를 가르는 기준
 	Record.SavedPhase = CurrentPhase;
 	Record.bHasStoreOpenedToday = bHasStoreOpenedToday;
@@ -1138,6 +1141,7 @@ void ACSStoreGameState::RestoreSaveData(const UCSSaveGame& InSave)
 	DailyStartingReputationScore = Record.DailyStartingReputationScore;
 	LastRentProcessedBusinessDay = Record.LastRentProcessedBusinessDay;
 	LastPayrollProcessedBusinessDay = Record.LastPayrollProcessedBusinessDay;
+	bVillainAlertShown = Record.bVillainAlertShown;
 
 	// 단계는 여기서 적용하지 않고 GameMode가 모든 참가자 복원 후 이어서 적용
 	RestoredSavePhase = Record.SavedPhase;

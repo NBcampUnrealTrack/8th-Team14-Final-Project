@@ -95,6 +95,11 @@ void ACSEndingItemActor::InitializeItem(const FCSEndingItemDefinition& Definitio
 	IssuingManager = Manager;
 }
 
+FTransform ACSEndingItemActor::GetSaveTransform() const
+{
+	return IsValid(ItemSceneRoot) ? ItemSceneRoot->GetComponentTransform() : GetActorTransform();
+}
+
 ACSEndingManager::ACSEndingManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -204,6 +209,37 @@ void ACSEndingManager::RestoreSaveRecord(const FCSEndingSaveRecord& InRecord)
 
 	// 전시대가 제출 현황을 다시 표시하도록 알림
 	OnSubmissionChanged.Broadcast();
+}
+
+ACSEndingItemActor* ACSEndingManager::SpawnRestoredItem(FName ItemId, const FTransform& SpawnTransform)
+{
+	UWorld* World = GetWorld();
+	const UCSEndingData* Data = GetEndingData();
+	if (World == nullptr || ItemId.IsNone() || !Data->IsConfigurationValid())
+	{
+		return nullptr;
+	}
+
+	const FCSEndingItemDefinition* Definition = Data->Items.FindByPredicate(
+		[ItemId](const FCSEndingItemDefinition& Entry) { return Entry.ItemId == ItemId; });
+	if (Definition == nullptr)
+	{
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 엔딩 데이터에 없는 아이템 식별자입니다: %s"),
+			*ItemId.ToString());
+		return nullptr;
+	}
+
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ACSEndingItemActor* Item = World->SpawnActor<ACSEndingItemActor>(Definition->ActorClass, SpawnTransform, Params);
+	if (!IsValid(Item))
+	{
+		return nullptr;
+	}
+
+	Item->InitializeItem(*Definition, this);
+	return Item;
 }
 
 void ACSEndingManager::SubmitOrActivate(ACSPlayerCharacter* Player)

@@ -118,6 +118,13 @@ public:
 	// 직접 적용하지 않고 보관만 하며 불러오기 후 GameMode가 이어서 적용
 	ECStorePhase RestoredSavePhase = ECStorePhase::Preparation;
 
+	// 이 게임에서 빌런 출몰 알림을 이미 표시했는지 확인
+	bool IsVillainAlertShown() const { return bVillainAlertShown; }
+
+	// 빌런 출몰 알림 표시 완료를 기록
+	// 마감 자동 저장 시 세이브에 함께 기록
+	void MarkVillainAlertShown() { bVillainAlertShown = true; }
+
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
 	int32 GetMagicCircleLevel() const { return MagicCircleLevel; }
 	UFUNCTION(BlueprintPure, Category = "Store|MagicCircle")
@@ -526,4 +533,8 @@ private:
 
 	// 같은 영업일의 마감 진입이 반복되어도 임대료를 다시 차감하지 않습니다.
 	int32 LastRentProcessedBusinessDay = INDEX_NONE;
+
+	// 이 게임에서 빌런 출몰 알림을 표시했는지 여부
+	// 새 게임은 false로 시작하고 불러오기 시 세이브 값으로 복원
+	bool bVillainAlertShown = false;
 };

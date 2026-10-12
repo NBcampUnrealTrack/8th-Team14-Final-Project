@@ -29,6 +29,7 @@
 #include "Engine/GameViewportClient.h"
 #include "Slate/SGameLayerManager.h"
 #include "Systems/Tutorial/CSUnlockGuideSubsystem.h"
+#include "Systems/CustomerFlow/CSCustomerRuntimeSubsystem.h"
 
 // 게임 입력 상태에서는 Tab/C/Esc로 각 화면을 열고 열린 화면에서는 위젯이 닫기 입력을 처리합니다.
 void ACSStorePlayerController::SetupInputComponent()
@@ -190,6 +191,15 @@ void ACSStorePlayerController::BeginPlay()
 		StoreGameState->OnClosingWarningRequested.AddUniqueDynamic(
 			this, &ACSStorePlayerController::HandleClosingWarningRequested);
 		UpdateClosingInputMode();
+	}
+
+	// 빌런 출몰 알림을 표시하도록 손님의 절도 시작 이벤트를 구독
+	if (IsLocalPlayerController())
+	{
+		if (UCSCustomerRuntimeSubsystem* CustomerRuntime = GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>())
+		{
+			CustomerRuntime->OnShopliftStarted.AddUniqueDynamic(this, &ThisClass::HandleShopliftStarted);
+		}
 	}
 
 	// 타이틀 없이 에디터에서 실행하셔도 새 게임 전경을 한 번 재생합니다.
@@ -367,6 +377,12 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			this, &ACSStorePlayerController::HandleClosingWarningRequested);
 	}
 
+	if (UCSCustomerRuntimeSubsystem* CustomerRuntime =
+		GetWorld() ? GetWorld()->GetSubsystem<UCSCustomerRuntimeSubsystem>() : nullptr)
+	{
+		CustomerRuntime->OnShopliftStarted.RemoveDynamic(this, &ThisClass::HandleShopliftStarted);
+	}
+
 	if (IsValid(ActiveStatusAnnouncementWidget))
 	{
 		ActiveStatusAnnouncementWidget->OnAnnouncementFinished.RemoveDynamic(
@@ -382,13 +398,7 @@ void ACSStorePlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		ActiveClosingWarningWidget->RemoveFromParent();
 		ActiveClosingWarningWidget = nullptr;
 	}
-	if (IsValid(ActiveDeliveryToastWidget))
-	{
-		ActiveDeliveryToastWidget->OnToastFinished.RemoveDynamic(
-			this, &ThisClass::HandleDeliveryToastFinished);
-		ActiveDeliveryToastWidget->RemoveFromParent();
-		ActiveDeliveryToastWidget = nullptr;
-	}
+	DismissActiveDeliveryToast();
 	if (IsValid(ActiveNoticeBannerWidget))
 	{
 		ActiveNoticeBannerWidget->RemoveFromParent();
@@ -447,13 +457,23 @@ void ACSStorePlayerController::HandleStatusAnnouncementFinished()
 	ActiveStatusAnnouncementWidget = nullptr;
 }
 
-void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText& Message)
+void ACSStorePlayerController::ShowGameplayToast(const FText& Title, const FText& Message, bool bPriority)
 {
 	if (!IsLocalPlayerController() || DeliveryToastWidgetClass == nullptr)
 	{
 		return;
 	}
-	QueuedDeliveryToasts.Add({ Title, Message });
+
+	// 우선 알림은 대기열 맨 앞에 추가
+	// 표시 중인 알림은 끝까지 보여 주고, 대기 중이거나 정산창 등으로 보류된 알림보다 먼저 표시
+	if (bPriority)
+	{
+		QueuedDeliveryToasts.Insert({ Title, Message }, 0);
+	}
+	else
+	{
+		QueuedDeliveryToasts.Add({ Title, Message });
+	}
 	TryShowQueuedDeliveryToast();
 }
 
@@ -517,11 +537,39 @@ void ACSStorePlayerController::HandleDeliveryToastFinished()
 		return;
 	}
 
+	DismissActiveDeliveryToast();
+	TryShowQueuedDeliveryToast();
+}
+
+void ACSStorePlayerController::DismissActiveDeliveryToast()
+{
+	if (!IsValid(ActiveDeliveryToastWidget))
+	{
+		return;
+	}
+
+	// 제거한 위젯의 종료 알림으로 다음 알림이 중복 표시되지 않도록 구독을 먼저 해제
 	ActiveDeliveryToastWidget->OnToastFinished.RemoveDynamic(
 		this, &ThisClass::HandleDeliveryToastFinished);
 	ActiveDeliveryToastWidget->RemoveFromParent();
 	ActiveDeliveryToastWidget = nullptr;
-	TryShowQueuedDeliveryToast();
+}
+
+void ACSStorePlayerController::HandleShopliftStarted(ACSCustomerCharacter* Customer, int32 AtRiskGold)
+{
+	// 이 게임에서 이미 표시한 경우 빌런 출몰 알림을 생략
+	if (!IsValid(StoreGameState) || StoreGameState->IsVillainAlertShown())
+	{
+		return;
+	}
+
+	// 표시 요청 시점에 기록해 같은 게임에서 중복 요청을 방지
+	// 정산창 등으로 보류되어도 대기열에 남아 보류 해제 후 표시
+	StoreGameState->MarkVillainAlertShown();
+	ShowGameplayToast(
+		NSLOCTEXT("Villain", "VillainAppearedTitle", "빌런 출몰!"),
+		NSLOCTEXT("Villain", "VillainAppearedToast", "빨간색 테두리인 빌런을\n마법 지팡이로 제압하세요"),
+		true);
 }
 
 void ACSStorePlayerController::HandleClosingWarningRequested(int32 RemainingMinutes)

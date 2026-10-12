@@ -99,3 +99,8 @@ void ACSUsableToolActor::EnableWorldDropPhysics()
 	ToolMesh->SetGenerateOverlapEvents(true);
 	ToolMesh->SetSimulatePhysics(true);
 }
+
+bool ACSUsableToolActor::IsWorldDropPhysicsActive() const
+{
+	return IsValid(ToolMesh) && ToolMesh->IsSimulatingPhysics();
+}
