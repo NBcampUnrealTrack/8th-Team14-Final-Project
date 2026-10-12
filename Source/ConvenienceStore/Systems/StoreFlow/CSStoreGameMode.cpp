@@ -12,6 +12,7 @@
 #include "Systems/SaveLoad/CSSaveSubsystem.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "TimerManager.h"
 
 ACSStoreGameMode::ACSStoreGameMode()
@@ -161,6 +162,17 @@ void ACSStoreGameMode::RestoreClosingCheckpoint()
 	// 임대료·인건비는 복원된 처리일(Last*ProcessedBusinessDay)이 같아 건너뜀
 	// "영업 종료" 안내는 직전 단계가 Open일 때만 표시되므로 다시 뜨지 않음
 	BeginClosingCheckpoint();
+
+	// 1일차 마감 튜토리얼이 남은 세이브면 3부 첫 스텝부터 다시 시작
+	// ClosingFreeRoam 방송 뒤에 시작해야 튜토리얼이 지난 단계 전환을 다시 처리하지 않음
+	if (StoreGameState->bRestoredTutorialPart3Pending && IsTutorialEnabled())
+	{
+		StoreGameState->bRestoredTutorialPart3Pending = false;
+		if (UCSTutorialSubsystem* TutorialSubsystem = GetWorld()->GetSubsystem<UCSTutorialSubsystem>())
+		{
+			TutorialSubsystem->ResumePart3FromSave(this);
+		}
+	}
 
 	UE_LOG(LogTemp, Log,
 		TEXT("[CSSave] 영업 종료 시점 세이브를 불러와 %d일차 자유 시간으로 복귀했습니다."),
