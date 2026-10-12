@@ -27,7 +27,10 @@ class UCSCraftingSubsystem;
 class UCSTutorialChoiceWidget;
 class ACSProductPickupActor;
 class ACSDeliveryCrateActor;
+class UInputComponent;
+class UCSDeliveryOrderSubsystem;
 struct FCSOrderResult;
+struct FCSDeliveryOrderRuntime;
 
 // 튜토리얼 스텝이 바뀔 때마다 방송
 // 위젯들이 이걸 구독해서 화면 내용을 갱신함
@@ -76,13 +79,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tutorial")
 	void NotifyStepCompleted(ECSTutorialStepId CompletedStepId);
 
+	// 트리거 볼륨이 부른다. 제조 튜토리얼 중의 제조 건물 입구는 완료 대신 플레이어를 안으로 되돌린다
+	void NotifyTriggerEntered(ECSTutorialStepId StepId, const AActor* Trigger);
+
 	// 지금 진행 중인 스텝의 목표 진행도를 갱신
 	// 목표 수치에 도달하면 자동으로 다음 스텝으로 넘어감
 	UFUNCTION(BlueprintCallable, Category = "Tutorial")
 	void NotifyObjectiveProgress(ECSTutorialStepId StepId, int32 NewCurrent);
 
-	// [디버그 전용] 완료 조건과 무관하게 강제로 다음 스텝으로 넘김
-	// 콘솔 명령 cs.TNext가 이 함수를 호출
+	// 완료 조건과 무관하게 강제로 다음 스텝으로 넘김
+	// 콘솔 명령 cs.TNext와 플레이어 건너뛰기(N 키, 확인 창)가 이 함수를 호출
 	UFUNCTION(BlueprintCallable, Category = "Tutorial|Debug")
 	void DebugForceAdvanceStep();
 
@@ -102,6 +108,13 @@ public:
 	// 1부 진행 중이고 아직 입간판 스텝이 아니면 true와 입간판에 띄울 문구
 	bool ShouldBlockStoreOpen(FText& OutMessage) const;
 
+	// 배달 튜토리얼 동안 손님이 이 상품을 한 개도 못 사게 막는다. 진열대 상품이 줄면 안내 외곽선이 사라진다
+	bool IsDeliveryTutorialProduct(FName ProductId) const { return bDeliveryTutorialActive && ProductId == DeliveryProductId; }
+
+	// 제조 튜토리얼 중 솥 상태에 맞는 스텝. 실패하거나 솥에서 나오면 앞 스텝으로 돌아간다
+	static ECSTutorialStepId ResolveCraftStep(
+		bool bBrewDone, bool bPotReady, bool bCloseup, ECSCraftStep CraftStep, bool bHeatCorrect, bool bStirDone);
+
 protected:
 	// 임시 타이틀 화면이 게임을 멈춰둔 동안 튜토리얼이 먼저 시작되는 문제 방지
 	// IsPaused()가 풀릴 때까지 짧은 간격으로 재시도
@@ -112,10 +125,15 @@ protected:
 
 	void StartTutorial(ACSStoreGameMode* GameMode);
 	void AdvanceStep();
+	// 스텝 시작 처리만 한다. 이전 스텝의 끝 처리는 부르는 쪽에서
+	void EnterStep(int32 StepIndex);
+	int32 FindStepIndex(ECSTutorialStepId StepId) const;
 	void HandlePartFinished(ECSTutorialPart FinishedPart);
 	void HandlePart1Finished();
 	void CompleteTutorial();
 	void BroadcastCurrentStep() const;
+	// 진행 스텝 방송은 여기로 모은다. 건너뛸 수 있는 스텝이면 건너뛰기 힌트를 붙인다
+	void BroadcastStepRow(const FCSTutorialStepRow& Row) const;
 	void StartAutoAdvanceTimerIfNeeded();
 	void ClearAutoAdvanceTimer();
 
@@ -134,8 +152,8 @@ protected:
 	// 현재 켜져 있는 마커를 전부 끄고 목록을 비움
 	void HideAllActiveMarkers();
 
-	// [디버그 전용] CleanTrash 스텝을 cs.TNext로 건너뛸 때 레벨에 남은 쓰레기를 전부 정리
-	void DebugDestroyRemainingTrash();
+	// 쓰레기 스텝이 끝날 때 레벨에 남은 쓰레기를 전부 정리. 목표 수보다 많이 깔려 있다
+	void DestroyRemainingTrash();
 
 	// [디버그 전용] PlaceFacility 스텝을 cs.TNext로 건너뛸 때 튜토리얼 선반의 강조 표시를 끔
 	void DebugHideTutorialShelfHighlight();
@@ -193,6 +211,22 @@ protected:
 	// 2부 원포인트 팁(TipRows) 중 TipId에 해당하는 행을 찾아 한 번만 표시
 	// 배너/대화창/목표 위젯은 기존 OnTutorialStepChanged 구독을 그대로 재사용
 	void ShowOneShotTip(ECSTutorialStepId TipId);
+	void DisplayTip(const FCSTutorialStepRow& TipRow);
+	const FCSTutorialStepRow* FindTipRow(ECSTutorialStepId TipId) const;
+
+	// 배달 튜토리얼
+	void SubscribeToDeliverySubsystem();
+	void UnsubscribeFromDeliverySubsystem();
+	void EnterDeliveryStep(ECSTutorialStepId StepId);
+	void FinishDeliveryTutorial(bool bOrderEndedEarly);
+	void CheckDeliveryPickUp();
+	void AttachDeliveryProductMarkers();
+	// N 건너뛰기. 수락 단계는 대신 수락하고, 집기 단계는 배달 장소로, 배달 장소 단계는 튜토리얼을 끝낸다
+	void SkipDeliveryStep();
+	AActor* FindDeliveryPlaceActor() const;
+
+	UFUNCTION()
+	void HandleDeliveryOrderChanged(const FCSDeliveryOrderRuntime& Order);
 
 	// TipId 행의 ExpectedWidgetClass와 Widget의 클래스가 일치하는지 확인
 	bool DoesTipExpectWidget(ECSTutorialStepId TipId, const UUserWidget* Widget) const;
@@ -271,8 +305,18 @@ protected:
 	UFUNCTION()
 	void HandleHeadIconShown(ACSCustomerCharacter* Customer);
 
+	// 살 수 있는 상품이 하나도 없으면 가장 싼 상품 한 상자 값까지 채워 준다. 채웠으면 true
+	bool GrantTutorialOrderFundsIfNeeded();
+	// 창을 열 때 지운 안내를 다시 띄운다. 처음 본 스텝 배너는 빼고
+	void ShowCurrentStepWithoutBanner();
+
 	// 제조 튜토리얼
 	static bool IsCraftBundleStep(ECSTutorialStepId StepId);
+	// 솥 상태를 따라 앞뒤로 옮겨 다니는 스텝
+	static bool IsCraftBrewPhaseStep(ECSTutorialStepId StepId);
+	void CheckCraftTutorialState();
+	// 제조대 조작을 막을 이유. 빈 문구면 허용
+	FText CheckCraftInput(ECSCraftInput Input) const;
 	void HandleStepStarted();
 	void HandleStepEnded();
 	void SubscribeToCraftingSubsystem();
@@ -293,6 +337,14 @@ protected:
 
 	UFUNCTION()
 	void HandleTutorialChoiceMade(bool bYes);
+
+	// 플레이어가 N으로 지금 스텝을 건너뛴다. 확인 창에서 예를 골라야 넘어간다
+	bool CanPlayerSkipCurrentStep() const;
+	void HandleSkipKeyPressed();
+	void CloseSkipConfirmWidget();
+
+	UFUNCTION()
+	void HandleSkipConfirmChoice(bool bYes);
 
 	UFUNCTION()
 	void HandleCraftIngredientAdded(int32 IngredientCount);
@@ -432,4 +484,48 @@ private:
 
 	// 아니요를 고르면 다음 진행에서 제조 묶음 스텝을 시작 처리 없이 건너뛴다
 	bool bSkippingCraftBundle = false;
+
+	// 재료 넣기 스텝으로 돌아올 때 재료를 또 놓지 않게 한다
+	bool bCraftIngredientsPlaced = false;
+	bool bCraftBrewSucceeded = false;
+	FTimerHandle CraftStateCheckTimerHandle;
+
+	// 컨트롤러 코드를 고치지 않으려고 입력 컴포넌트를 컨트롤러 입력 스택에 얹는다
+	UPROPERTY()
+	TObjectPtr<UInputComponent> SkipInputComponent;
+
+	UPROPERTY()
+	TObjectPtr<UCSTutorialChoiceWidget> SkipConfirmWidgetInstance;
+
+	// 확인 창을 띄운 스텝. 창이 떠 있는 동안 스텝이 바뀌면 예를 골라도 넘기지 않는다
+	int32 SkipConfirmStepIndex = INDEX_NONE;
+	// 배달 단계는 일반 스텝 번호가 안 바뀌어서 단계 이름으로 따로 확인한다
+	bool bSkipConfirmForDelivery = false;
+	ECSTutorialStepId SkipConfirmDeliveryStepId = ECSTutorialStepId::DeliveryAccept;
+
+	// 입구에서 되돌릴 때마다 배너가 쌓이지 않게 마지막으로 띄운 시각을 기억한다
+	double LastCraftHouseWarningTime = -1.0e9;
+
+	UPROPERTY()
+	TObjectPtr<UCSDeliveryOrderSubsystem> SubscribedDeliverySubsystem;
+
+	bool bDeliveryTutorialActive = false;
+	bool bDeliveryTutorialDone = false;
+	ECSTutorialStepId DeliveryStepId = ECSTutorialStepId::DeliveryAccept;
+	int32 DeliveryTutorialOrderId = INDEX_NONE;
+	FName DeliveryProductId;
+	FText DeliveryProductName;
+	FTimerHandle DeliveryCheckTimerHandle;
+	// 다 팔렸다는 배너를 한 번만 띄우고, 재고가 다시 생기면 마커를 새로 붙인다
+	bool bDeliveryProductSoldOut = false;
+
+	// 상품 이름을 채운 배달 안내 행. 정산창을 닫을 때 되살릴 수 있게 멤버로 둔다
+	FCSTutorialStepRow DeliveryShownRow;
+
+	// 다이어리·게시판·정산창 팁 중 지금 해야 하는 것. 배달 중에는 화면에 안 띄우고 기억만 했다가 끝나면 띄운다
+	bool bHasPendingChainTip = false;
+	ECSTutorialStepId PendingChainTipId = ECSTutorialStepId::TipDiary;
+
+	// 배달 중에 차례가 된 배너 팁. 끝나면 이어서 띄운다
+	TArray<ECSTutorialStepId> DeferredBannerTipIds;
 };

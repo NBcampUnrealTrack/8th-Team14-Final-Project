@@ -9,6 +9,7 @@
 #include "Components/SizeBox.h"
 #include "Components/ScrollBox.h"
 #include "Systems/Journal/CSJournalSubsystem.h"
+#include "Systems/Delivery/CSDeliveryOrderSubsystem.h"
 #include "Systems/Artifact/CSArtifactSubsystem.h"
 #include "Systems/Weather/CSWeatherSubsystem.h"
 #include "Data/CSProductTypes.h"
@@ -307,9 +308,12 @@ void UCSJournalDesignedWidget::RefreshDeliveries()
 				FString::FromInt(Line.Quantity));
 		}
 
+		// 튜토리얼 연습 주문은 기한으로 끝나지 않는다
+		const UCSDeliveryOrderSubsystem* Deliveries = GetWorld() ? GetWorld()->GetSubsystem<UCSDeliveryOrderSubsystem>() : nullptr;
 		const int32 DeadlineMinutes = FMath::Max(0, FMath::FloorToInt(Order.DeliveryDeadlineMinutes));
-		SetLabel(TEXT("DeliveryDeadlineText"),
-			FString::Printf(TEXT("%02d : %02d"), (DeadlineMinutes / 60) % 24, DeadlineMinutes % 60));
+		SetLabel(TEXT("DeliveryDeadlineText"), IsValid(Deliveries) && Deliveries->IsGuidedOrder(Order.OrderId)
+			? FString(TEXT("기한 없음"))
+			: FString::Printf(TEXT("%02d : %02d"), (DeadlineMinutes / 60) % 24, DeadlineMinutes % 60));
 	}
 	else
 	{

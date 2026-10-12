@@ -555,6 +555,10 @@ public:
 	float CalculateShelfFillRatio(int32& OutShelfCount, int32& OutFilledSlots, int32& OutTotalSlots) const;
 
 private:
+	// 배달 주문에 잡아 둔 재고라 손님이 가져가면 안 되는지.
+	// 수락한 주문의 예약 수량 아래로 줄이는 구매와 배달 튜토리얼 상품 구매를 막는다
+	bool IsProductHeldFromCustomers(FName ProductId) const;
+
 	UPROPERTY()
 	TArray<TObjectPtr<AActor>> Shelves; // 레벨에 있는 모든 진열대 목록
 

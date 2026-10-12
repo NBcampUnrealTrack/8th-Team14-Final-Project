@@ -54,6 +54,18 @@ enum class ECSCraftStep : uint8
 	Pop UMETA(DisplayName = "거품 터트리기")
 };
 
+// 튜토리얼이 막을 수 있는 제조대 조작
+enum class ECSCraftInput : uint8
+{
+	Stir,
+	Pop,
+	// 거품을 다 썼는데 맞힌 수가 모자라 실패로 끝나려 할 때. 막으면 거품만 다시 터트린다
+	FinishWithMissedPops,
+	RecipeBook,
+	AutoCraft,
+	IngredientPanel
+};
+
 // 레시피에 붙지 않는 소문 분류. 게시판 소문 탭에서 쓴다
 UENUM(BlueprintType)
 enum class ECSCraftRumorKind : uint8

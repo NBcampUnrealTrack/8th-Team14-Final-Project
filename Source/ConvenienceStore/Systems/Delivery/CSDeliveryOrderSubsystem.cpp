@@ -140,17 +140,23 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 	for (int32 Index = DeliveryOrders.Num() - 1; Index >= 0; --Index)
 	{
 		const FCSDeliveryOrderRuntime& Order = DeliveryOrders[Index];
-		if (Order.Status == ECSDeliveryOrderStatus::PendingAcceptance && CurrentMinutes >= Order.AcceptanceDeadlineMinutes)
+		// 연습 주문은 기한으로 끝나지 않는다. 수락 전이면 영업 단계가 끝날 때, 수락 뒤면 기존처럼 영업이 멈출 때 끝난다
+		const bool bGuided = Order.OrderId == GuidedOrderId;
+		const bool bAcceptanceExpired = bGuided
+			? StoreGameState->CurrentPhase != ECStorePhase::Open
+			: CurrentMinutes >= Order.AcceptanceDeadlineMinutes;
+		const bool bDeliveryDeadlineExpired = !bGuided && CurrentMinutes >= Order.DeliveryDeadlineMinutes;
+		if (Order.Status == ECSDeliveryOrderStatus::PendingAcceptance && bAcceptanceExpired)
 		{
 			const FCSDeliveryOrderRuntime ExpiredOrder = Order;
 			RemoveOrderAt(Index, ECSDeliveryOrderStatus::Expired);
 			ShowAcceptanceExpiredToast(ExpiredOrder);
 		}
 		else if (Order.Status == ECSDeliveryOrderStatus::Accepted &&
-			(CurrentMinutes >= Order.DeliveryDeadlineMinutes || !IsStoreOperating()))
+			(bDeliveryDeadlineExpired || !IsStoreOperating()))
 		{
 			const FCSDeliveryOrderRuntime FailedOrder = Order;
-			const bool bDeadlineExpired = CurrentMinutes >= Order.DeliveryDeadlineMinutes;
+			const bool bDeadlineExpired = bDeliveryDeadlineExpired;
 			StoreGameState->AddReputation(-2, bDeadlineExpired
 				? TEXT("배달 주문 기한 초과")
 				: TEXT("영업 종료로 배달 주문 실패"));
@@ -178,7 +184,8 @@ void UCSDeliveryOrderSubsystem::Tick(float DeltaTime)
 	if (CurrentMinutes >= NextOrderGenerationMinutes)
 	{
 		FText IgnoredMessage;
-		if (!TryGenerateRandomOrder(IgnoredMessage)) ScheduleNextOrder(CurrentMinutes);
+		// 생성 쪽에서 이미 다시 시도할 시각을 잡았으면 덮어쓰지 않는다
+		if (!TryGenerateRandomOrder(IgnoredMessage) && NextOrderGenerationMinutes <= CurrentMinutes) ScheduleNextOrder(CurrentMinutes);
 	}
 }
 
@@ -297,6 +304,16 @@ bool UCSDeliveryOrderSubsystem::DeclineOrder(const int32 OrderId, FText& OutMess
 		OutMessage = NSLOCTEXT("Delivery", "NoOrderToDecline", "거절할 주문이 없습니다.");
 		return false;
 	}
+	if (OrderId == GuidedOrderId)
+	{
+		// 게시판 안 메시지 칸만으로는 눈에 잘 안 띄어서 경고 배너도 띄운다
+		OutMessage = NSLOCTEXT("Delivery", "GuidedOrderDecline", "튜토리얼 중에는 거절할 수 없어요.");
+		if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController()))
+		{
+			StorePlayerController->ShowNoticeBanner(OutMessage);
+		}
+		return false;
+	}
 	RemoveOrderAt(Index, ECSDeliveryOrderStatus::Declined);
 	OutMessage = NSLOCTEXT("Delivery", "OrderDeclined", "배달 주문을 거절했습니다.");
 	return true;
@@ -314,6 +331,15 @@ bool UCSDeliveryOrderSubsystem::CancelOrder(const int32 OrderId, FText& OutMessa
 	if (!DeliveryOrders.IsValidIndex(Index) || DeliveryOrders[Index].Status != ECSDeliveryOrderStatus::Accepted)
 	{
 		OutMessage = NSLOCTEXT("Delivery", "NoAcceptedOrder", "취소할 진행 중 배달 주문이 없습니다.");
+		return false;
+	}
+	if (OrderId == GuidedOrderId)
+	{
+		OutMessage = NSLOCTEXT("Delivery", "GuidedOrderCancel", "튜토리얼 중에는 취소할 수 없어요.");
+		if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetWorld()->GetFirstPlayerController()))
+		{
+			StorePlayerController->ShowNoticeBanner(OutMessage);
+		}
 		return false;
 	}
 	if (ACSStoreGameState* StoreGameState = GetWorld()->GetGameState<ACSStoreGameState>(); IsValid(StoreGameState)) StoreGameState->AddReputation(-1, TEXT("배달 주문 직접 취소"));
@@ -433,6 +459,30 @@ int32 UCSDeliveryOrderSubsystem::GetAvailableQuantityForOrder(const FDataTableRo
 	return FMath::Max(0, StockSubsystem->GetProductStock(ProductRow.RowName).TotalQuantity - GetReservedQuantity(ProductRow.RowName));
 }
 
+void UCSDeliveryOrderSubsystem::ReleaseGuidedOrder()
+{
+	FCSDeliveryOrderRuntime* Order = FindOrderMutable(GuidedOrderId);
+	GuidedOrderId = INDEX_NONE;
+	const ACSStoreGameState* StoreGameState = GetWorld() == nullptr ? nullptr : GetWorld()->GetGameState<ACSStoreGameState>();
+	if (Order == nullptr || !IsValid(StoreGameState))
+	{
+		return;
+	}
+
+	// 원래 기한이 이미 지났으면 되돌리자마자 실패하고 평판이 깎인다
+	const float CurrentMinutes = StoreGameState->CurrentGameMinutes;
+	if (Order->Status == ECSDeliveryOrderStatus::PendingAcceptance)
+	{
+		Order->AcceptanceDeadlineMinutes = FMath::Min(StoreGameState->AutomaticClosingTimeMinutes, CurrentMinutes + AcceptanceWindowMinutes);
+	}
+	else if (Order->Status == ECSDeliveryOrderStatus::Accepted)
+	{
+		Order->DeliveryDeadlineMinutes = FMath::Min(StoreGameState->AutomaticClosingTimeMinutes, CurrentMinutes + DeliveryWindowMinutes);
+	}
+	// 상태가 그대로라 수첩 기록은 다시 하지 않고 게시판 표시만 새로 고친다
+	OnDeliveryOrdersChanged.Broadcast();
+}
+
 bool UCSDeliveryOrderSubsystem::GenerateOrderNow(FText& OutMessage)
 {
 	RefreshBusinessDayState();
@@ -517,30 +567,61 @@ bool UCSDeliveryOrderSubsystem::TryGenerateRandomOrder(FText& OutMessage)
 		return false;
 	}
 
+	// 요청받은 주문은 바로 채울 수 있게 매장 재고에서만 고른다. 진열대에 있으면 집기 쉬워서 먼저 본다
+	TArray<FName> StockedRows;
+	if (bStockedNextOrderRequested)
+	{
+		const UCSStoreStockSubsystem* StockSubsystem = GetWorld()->GetSubsystem<UCSStoreStockSubsystem>();
+		for (const FName RowName : InStockRowNames)
+		{
+			if (IsValid(StockSubsystem) && StockSubsystem->GetProductStock(RowName).ShelfQuantity > GetReservedQuantity(RowName))
+			{
+				StockedRows.Add(RowName);
+			}
+		}
+		if (StockedRows.IsEmpty())
+		{
+			StockedRows = InStockRowNames;
+		}
+		if (StockedRows.IsEmpty())
+		{
+			// 기본 간격(45분 이상)을 기다리면 재고를 채워도 한참 뒤에 와서 짧게 다시 잡는다
+			NextOrderGenerationMinutes = StoreGameState->CurrentGameMinutes + StockedOrderRetryMinutes;
+			OutMessage = NSLOCTEXT("Delivery", "NoStockForRequestedOrder", "주문에 쓸 매장 재고가 없어 잠시 뒤 다시 시도합니다.");
+			return false;
+		}
+	}
+	const bool bMakeStockedOrder = bStockedNextOrderRequested;
+	bStockedNextOrderRequested = false;
+
 	FCSDeliveryOrderRuntime NewOrder;
 	NewOrder.OrderId = NextOrderId++;
+	if (bMakeStockedOrder)
+	{
+		GuidedOrderId = NewOrder.OrderId;
+	}
 	NewOrder.Status = ECSDeliveryOrderStatus::PendingAcceptance;
 	const FCSDeliveryRecipientInfo& Recipient = OrderSettings->Recipients[FMath::RandRange(0, OrderSettings->Recipients.Num() - 1)];
 	NewOrder.RecipientId = Recipient.RecipientId;
 	NewOrder.RecipientDisplayName = Recipient.DisplayName;
 	NewOrder.RecipientRegionName = Recipient.RegionName;
 	TArray<FName> CandidateRows = EligibleRowNames;
-	const int32 LineCount = FMath::Min(FMath::RandRange(1, GetMaximumLineCount()), CandidateRows.Num());
+	const int32 LineCount = bMakeStockedOrder ? 1 : FMath::Min(FMath::RandRange(1, GetMaximumLineCount()), CandidateRows.Num());
 	for (int32 LineIndex = 0; LineIndex < LineCount; ++LineIndex)
 	{
-		const bool bPreferStock = !InStockRowNames.IsEmpty() && FMath::FRand() < InStockProductPreference;
+		const bool bPreferStock = !bMakeStockedOrder && !InStockRowNames.IsEmpty() && FMath::FRand() < InStockProductPreference;
 		TArray<FName> PreferredRows;
 		if (bPreferStock)
 		{
 			for (const FName RowName : CandidateRows) if (InStockRowNames.Contains(RowName)) PreferredRows.Add(RowName);
 		}
-		const TArray<FName>& SourceRows = PreferredRows.IsEmpty() ? CandidateRows : PreferredRows;
+		const TArray<FName>& SourceRows = bMakeStockedOrder ? StockedRows : (PreferredRows.IsEmpty() ? CandidateRows : PreferredRows);
 		const FName SelectedRow = SourceRows[FMath::RandRange(0, SourceRows.Num() - 1)];
 		CandidateRows.Remove(SelectedRow);
 		FCSDeliveryOrderLine& NewLine = NewOrder.RequiredProducts.AddDefaulted_GetRef();
 		NewLine.ProductRow.DataTable = OrderSettings->ProductDataTable;
 		NewLine.ProductRow.RowName = SelectedRow;
-		NewLine.Quantity = FMath::RandRange(MinimumProductQuantity, MaximumProductQuantity);
+		NewLine.Quantity = bMakeStockedOrder ? 1 : FMath::RandRange(MinimumProductQuantity, MaximumProductQuantity);
 		if (const FCSProductDataRow* ProductData = NewLine.ProductRow.GetRow<FCSProductDataRow>(TEXT("UCSDeliveryOrderSubsystem::TryGenerateRandomOrder"))) NewOrder.RewardGold += ProductData->RecommendedSalePrice * NewLine.Quantity;
 	}
 	NewOrder.RewardGold = FMath::Max(100, FMath::RoundToInt(NewOrder.RewardGold * 1.3f));
@@ -571,6 +652,8 @@ void UCSDeliveryOrderSubsystem::RefreshBusinessDayState()
 	const ACSStoreGameState* StoreGameState = GetWorld() == nullptr ? nullptr : GetWorld()->GetGameState<ACSStoreGameState>();
 	if (!IsValid(StoreGameState) || LastObservedBusinessDay == StoreGameState->CurrentBusinessDay) return;
 	LastObservedBusinessDay = StoreGameState->CurrentBusinessDay;
+	bStockedNextOrderRequested = false;
+	GuidedOrderId = INDEX_NONE;
 	GeneratedOrderCountToday = 0;
 	NextOrderGenerationMinutes = -1.0f;
 	LastScheduledDailyOrderLimit = INDEX_NONE;
@@ -703,6 +786,7 @@ void UCSDeliveryOrderSubsystem::RemoveOrderAt(const int32 OrderIndex, const ECSD
 	FinishedOrder.Status = FinalStatus;
 	if (PreviousOrder.Status == ECSDeliveryOrderStatus::Accepted) ReleaseOrderReservation(PreviousOrder);
 	if (PreviousOrder.OrderId == ActiveDispatchOrderId) ActiveDispatchOrderId = INDEX_NONE;
+	if (PreviousOrder.OrderId == GuidedOrderId) GuidedOrderId = INDEX_NONE;
 	if (FinalStatus == ECSDeliveryOrderStatus::Completed ||
 		FinalStatus == ECSDeliveryOrderStatus::Failed ||
 		FinalStatus == ECSDeliveryOrderStatus::Expired)
