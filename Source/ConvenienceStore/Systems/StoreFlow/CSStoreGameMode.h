@@ -232,7 +232,8 @@ private:
 	void HandleClosingSaveTimeout();
 
 	// 대기 타이머를 정리하고 자동 저장을 실행
-	void ExecuteClosingAutoSave();
+	// bNotifyPlayer가 false면 저장만 하고 토스트를 띄우지 않음 (마감종 경로)
+	void ExecuteClosingAutoSave(bool bNotifyPlayer = true);
 
 	// 대기 타이머 정리
 	void ClearClosingSaveTimers();

@@ -9,6 +9,7 @@
 #include "Features/Cart/CSCartActor.h"
 #include "Features/Delivery/CSDeliveryCrateActor.h"
 #include "Features/Ending/CSEndingActors.h"
+#include "Features/Ending/CSEndingDisplayActor.h"
 #include "Features/Facilities/CSBuildableFacility.h"
 #include "Features/Facilities/CSSaveIdComponent.h"
 #include "Features/Gacha/CSGachaArtifactPickup.h"
@@ -19,6 +20,7 @@
 #include "Features/Player/CSPlayerCharacter.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Features/Storage/CSFreshnessSafeZoneActor.h"
+#include "Features/Tools/CSMagicWandActor.h"
 #include "Features/Trash/CSTrashActor.h"
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
@@ -41,12 +43,13 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 	CaptureArtifactPickups(Record);
 	// 아티팩트로 소환한 수레를 기록
 	CaptureSummonedCarts(Record);
+	CaptureMagicWands(Record);
 	CaptureQuickbar(Record);
 	CaptureEnding(OutSave);
 
-	// 요약 로그에 소환 수레 수를 추가
+	// 요약 로그에 지팡이와 엔딩 아이템 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 캡처: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 지팡이 %d, 엔딩 바닥 %d, 엔딩 전시 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
@@ -55,6 +58,9 @@ void UCSWorldStateSaveHandler::CaptureSaveData(UCSSaveGame& OutSave) const
 		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
 		Record.SummonedCarts.Num(),
+		Record.MagicWands.Num(),
+		OutSave.Ending.WorldItems.Num(),
+		OutSave.Ending.DisplayedItems.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -433,6 +439,58 @@ void UCSWorldStateSaveHandler::CaptureSummonedCarts(FCSWorldSaveRecord& OutRecor
 	}
 }
 
+void UCSWorldStateSaveHandler::CaptureMagicWands(FCSWorldSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 퀵바 지팡이 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
+	for (TActorIterator<ACSMagicWandActor> It(World); It; ++It)
+	{
+		const ACSMagicWandActor* MagicWand = *It;
+		if (!IsValid(MagicWand) || MagicWand->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 지팡이는 퀵바 레코드가 담당하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(MagicWand))
+		{
+			continue;
+		}
+
+		// 거치대에 꽂힌 레벨 지팡이는 레벨이 다시 생성하므로 제외
+		if (MagicWand->IsDockedAtHome())
+		{
+			continue;
+		}
+
+		FCSMagicWandRecord WandRecord;
+		WandRecord.ToolClass = FSoftClassPath(MagicWand->GetClass());
+		WandRecord.Transform = MagicWand->GetActorTransform();
+		WandRecord.bWorldDropPhysics = MagicWand->IsWorldDropPhysicsActive();
+		WandRecord.bPurchased = !MagicWand->BelongsToHomeDock();
+		WandRecord.HomeDockOwnerSaveId = MagicWand->GetHomeDockOwnerSaveId();
+
+		// 퀵바에 등록되지 않은 채 운반 중인 지팡이는 운반자 위치의 바닥 지팡이로 기록
+		// 손에 든 동안 적용된 장착 배율 대신 원래 월드 배율을 기록
+		if (const APawn* CarrierPawn = Cast<APawn>(MagicWand->GetAttachParentActor()))
+		{
+			WandRecord.Transform = FTransform(
+				MagicWand->GetActorRotation(),
+				CarrierPawn->GetActorLocation(),
+				MagicWand->GetUnheldScale());
+			WandRecord.bWorldDropPhysics = true;
+		}
+
+		OutRecord.MagicWands.Add(WandRecord);
+	}
+}
+
 void UCSWorldStateSaveHandler::CaptureQuickbar(FCSWorldSaveRecord& OutRecord) const
 {
 	if (const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter())
@@ -455,8 +513,74 @@ void UCSWorldStateSaveHandler::CaptureEnding(UCSSaveGame& OutSave) const
 		if (const ACSEndingManager* EndingManager = *It; IsValid(EndingManager))
 		{
 			EndingManager->CaptureSaveRecord(OutSave.Ending);
+			CaptureEndingItems(*EndingManager, OutSave.Ending);
 			return;
 		}
+	}
+}
+
+void UCSWorldStateSaveHandler::CaptureEndingItems(
+	const ACSEndingManager& EndingManager,
+	FCSEndingSaveRecord& OutRecord) const
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 퀵바 아이템 판별에 사용할 플레이어를 조회
+	const ACSPlayerCharacter* PlayerCharacter = FindPlayerCharacter();
+	for (TActorIterator<ACSEndingItemActor> It(World); It; ++It)
+	{
+		const ACSEndingItemActor* Item = *It;
+		if (!IsValid(Item) || Item->IsActorBeingDestroyed() ||
+			Item->IssuingManager.Get() != &EndingManager || Item->EndingItemId.IsNone())
+		{
+			continue;
+		}
+
+		// 퀵바에 보관하거나 손에 든 아이템은 퀵바 레코드가 담당하므로 중복 기록을 방지
+		if (IsValid(PlayerCharacter) && PlayerCharacter->IsQuickbarItem(Item))
+		{
+			continue;
+		}
+
+		// 전시대에 놓인 아이템은 전시대 이름과 슬롯 번호로 기록
+		// 제출 기록 전시대의 복제본은 제출 목록으로 다시 생성하므로 제외
+		if (const ACSEndingDisplayActor* Display = Cast<ACSEndingDisplayActor>(Item->GetAttachParentActor()))
+		{
+			if (Display->bSubmittedDisplay)
+			{
+				continue;
+			}
+
+			const int32 SlotIndex = Display->FindDisplayedItemSlot(Item);
+			if (SlotIndex != INDEX_NONE)
+			{
+				FCSEndingDisplayItemRecord DisplayRecord;
+				DisplayRecord.DisplayActorName = Display->GetFName();
+				DisplayRecord.SlotIndex = SlotIndex;
+				DisplayRecord.ItemId = Item->EndingItemId;
+				OutRecord.DisplayedItems.Add(DisplayRecord);
+				continue;
+			}
+		}
+
+		FCSEndingWorldItemRecord WorldRecord;
+		WorldRecord.ItemId = Item->EndingItemId;
+		WorldRecord.Transform = Item->GetSaveTransform();
+		WorldRecord.bWorldDropPhysics = Item->IsWorldDropPhysicsActive();
+		WorldRecord.bPendingPickup = EndingManager.IsPendingPickup(Item);
+
+		// 퀵바에 등록되지 않은 채 운반 중인 아이템은 운반자 위치의 바닥 아이템으로 기록
+		if (const APawn* CarrierPawn = Cast<APawn>(Item->GetAttachParentActor()))
+		{
+			WorldRecord.Transform.SetLocation(CarrierPawn->GetActorLocation());
+			WorldRecord.bWorldDropPhysics = true;
+		}
+
+		OutRecord.WorldItems.Add(WorldRecord);
 	}
 }
 
@@ -491,12 +615,15 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 	RestoreTrash(Record);
 	RestoreGachaSeals(Record);
 	RestoreArtifactPickups(Record);
-	RestoreQuickbar(Record, FallbackProductTable);
+	// 퀵바 복원이 바닥에 둔 레벨 지팡이를 거치대 지팡이로 가져가지 않도록 먼저 복원
+	RestoreMagicWands(Record);
+	// 퀵바 엔딩 아이템이 관리자 발급 정보를 받도록 퀵바 복원보다 먼저 엔딩을 복원
 	RestoreEnding(InSave);
+	RestoreQuickbar(Record, FallbackProductTable);
 
-	// 요약 로그에 소환 수레 수를 추가
+	// 요약 로그에 지팡이와 엔딩 아이템 수를 추가
 	UE_LOG(LogTemp, Log,
-		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 퀵바 %d칸"),
+		TEXT("[CSSave] 월드 복원: 진열대 %d, 낱개 상품 %d, 상자 %d, 시설 %d, 쓰레기 %d, 봉인석 %d, 아티팩트 픽업 %d, 소환 수레 %d, 지팡이 %d, 엔딩 바닥 %d, 엔딩 전시 %d, 퀵바 %d칸"),
 		Record.Shelves.Num(),
 		Record.LooseProducts.Num(),
 		Record.Crates.Num(),
@@ -505,6 +632,9 @@ void UCSWorldStateSaveHandler::RestoreSaveData(const UCSSaveGame& InSave)
 		Record.GachaSeals.Num(),
 		Record.ArtifactPickups.Num(),
 		Record.SummonedCarts.Num(),
+		Record.MagicWands.Num(),
+		InSave.Ending.WorldItems.Num(),
+		InSave.Ending.DisplayedItems.Num(),
 		Record.Quickbar.Slots.Num());
 }
 
@@ -1270,7 +1400,147 @@ void UCSWorldStateSaveHandler::RestoreEnding(const UCSSaveGame& InSave)
 		if (ACSEndingManager* EndingManager = *It; IsValid(EndingManager))
 		{
 			EndingManager->RestoreSaveRecord(InSave.Ending);
+			RestoreEndingItems(*EndingManager, InSave.Ending);
 			return;
+		}
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreEndingItems(
+	ACSEndingManager& EndingManager,
+	const FCSEndingSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	// 바닥 아이템을 저장 위치에 생성하고 물리·줍기 대기 상태를 복원
+	for (const FCSEndingWorldItemRecord& WorldRecord : InRecord.WorldItems)
+	{
+		ACSEndingItemActor* Item = EndingManager.SpawnRestoredItem(WorldRecord.ItemId, WorldRecord.Transform);
+		if (!IsValid(Item))
+		{
+			continue;
+		}
+
+		// 클래스 루트 배율이 곱해지지 않도록 저장 트랜스폼을 다시 적용
+		Item->SetActorTransform(WorldRecord.Transform);
+		Item->SetActorEnableCollision(true);
+		if (WorldRecord.bWorldDropPhysics)
+		{
+			Item->EnableWorldDropPhysics();
+		}
+
+		// 판매기가 바닥 아이템을 줍기 전에 다음 아이템을 배출하지 않도록 유지
+		if (WorldRecord.bPendingPickup)
+		{
+			EndingManager.SetPendingPickup(Item);
+		}
+	}
+
+	// 레벨 배치 가게 전시대를 이름 기준으로 수집
+	TMap<FName, ACSEndingDisplayActor*> DisplaysByName;
+	for (TActorIterator<ACSEndingDisplayActor> It(World); It; ++It)
+	{
+		if (ACSEndingDisplayActor* Display = *It; IsValid(Display) && !Display->bSubmittedDisplay)
+		{
+			DisplaysByName.Add(Display->GetFName(), Display);
+		}
+	}
+
+	// 전시 아이템을 같은 전시대의 같은 슬롯에 다시 전시
+	for (const FCSEndingDisplayItemRecord& DisplayRecord : InRecord.DisplayedItems)
+	{
+		ACSEndingDisplayActor* const* FoundDisplay = DisplaysByName.Find(DisplayRecord.DisplayActorName);
+		ACSEndingDisplayActor* Display = FoundDisplay != nullptr ? *FoundDisplay : nullptr;
+
+		// 전시대를 찾으면 전시대 위치, 찾지 못하면 관리자 위치를 생성 기준으로 사용
+		const FTransform SpawnTransform = IsValid(Display)
+			? FTransform(Display->GetActorRotation(), Display->GetActorLocation())
+			: FTransform(EndingManager.GetActorRotation(), EndingManager.GetActorLocation());
+
+		ACSEndingItemActor* Item = EndingManager.SpawnRestoredItem(DisplayRecord.ItemId, SpawnTransform);
+		if (!IsValid(Item))
+		{
+			continue;
+		}
+
+		if (IsValid(Display) && Display->RestoreDisplayedItem(Item, DisplayRecord.SlotIndex))
+		{
+			continue;
+		}
+
+		// 전시에 실패하면 아이템 유실을 막기 위해 생성 위치 바닥에 내려놓음
+		UE_LOG(LogTemp, Warning,
+			TEXT("[CSSave] 엔딩 아이템 %s을(를) 전시대 %s 슬롯 %d에 놓지 못해 바닥에 복원합니다."),
+			*DisplayRecord.ItemId.ToString(),
+			*DisplayRecord.DisplayActorName.ToString(),
+			DisplayRecord.SlotIndex);
+		Item->SetActorEnableCollision(true);
+		Item->EnableWorldDropPhysics();
+	}
+}
+
+void UCSWorldStateSaveHandler::RestoreMagicWands(const FCSWorldSaveRecord& InRecord)
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr)
+	{
+		return;
+	}
+
+	for (const FCSMagicWandRecord& WandRecord : InRecord.MagicWands)
+	{
+		UClass* WandClass = WandRecord.ToolClass.TryLoadClass<ACSMagicWandActor>();
+		if (WandClass == nullptr)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[CSSave] 지팡이 클래스를 불러오지 못했습니다: %s"),
+				*WandRecord.ToolClass.ToString());
+			continue;
+		}
+
+		ACSMagicWandActor* MagicWand = nullptr;
+		if (WandRecord.bPurchased)
+		{
+			// 구매 지팡이는 레벨에 없으므로 저장 위치에 새로 생성
+			FActorSpawnParameters SpawnParameters;
+			SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			MagicWand = World->SpawnActor<ACSMagicWandActor>(WandClass, WandRecord.Transform, SpawnParameters);
+			if (!IsValid(MagicWand))
+			{
+				continue;
+			}
+		}
+		else
+		{
+			// 레벨 지팡이는 시설이 다시 생성한 소속 거치대의 지팡이를 사용
+			MagicWand = ACSMagicWandActor::FindDockedWand(*World, WandClass, WandRecord.HomeDockOwnerSaveId);
+			if (!IsValid(MagicWand))
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[CSSave] 바닥 위치로 옮길 거치대 지팡이를 찾지 못했습니다: %s"),
+					*WandRecord.ToolClass.ToString());
+				continue;
+			}
+
+			// 거치대에서 분리하기 전에 원래 거치대를 기억해 다시 꽂을 수 있도록 유지
+			MagicWand->RememberHomeDockFromCurrentAttachment();
+			MagicWand->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+		}
+
+		// 클래스 루트 배율이 곱해지지 않도록 저장 트랜스폼을 다시 적용
+		// 거치대 결합으로 남은 물리 바디도 저장 위치로 이동하도록 텔레포트 적용
+		MagicWand->SetActorTransform(WandRecord.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+		MagicWand->SetActorEnableCollision(true);
+		if (WandRecord.bWorldDropPhysics)
+		{
+			MagicWand->EnableWorldDropPhysics();
+
+			// 물리 시작 시 이전 바디 위치로 되돌아가지 않도록 저장 위치를 다시 적용
+			MagicWand->SetActorTransform(WandRecord.Transform, false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	}
 }

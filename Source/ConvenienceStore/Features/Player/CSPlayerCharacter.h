@@ -31,6 +31,7 @@ class ACSEndingDisplayActor;
 struct FInputActionValue;
 struct FCSProductRuntimeState;
 struct FCSQuickbarRecord;
+struct FCSQuickbarSlotRecord;
 class UDataTable;
 
 UENUM(BlueprintType)
@@ -98,8 +99,8 @@ public:
 
 	// ----- 세이브 / 로드 -----
 
-	// 퀵바 슬롯 순서대로 도구 클래스와 상자 상태를 레코드에 기록
-	// 쓰레기는 저장 대상이 아니므로 빈 칸으로 기록
+	// 퀵바 슬롯 순서대로 도구·상자·쓰레기·봉인석·엔딩 아이템 상태를 레코드에 기록
+	// 마법 지팡이는 구매 여부와 소속 거치대 시설 식별자를 함께 기록
 	void CaptureQuickbarRecord(FCSQuickbarRecord& OutRecord) const;
 
 	// 기록된 도구와 상자를 다시 생성해 퀵바에 넣고 선택 슬롯을 복원
@@ -514,8 +515,9 @@ private:
 	void StoreEquippedQuickbarTool();
 	void StoreHeldQuickbarItem();
 	// 퀵바 복원용 도구를 조회하고 없으면 새로 생성
-	// 마법봉은 거치대에 있는 기존 액터를 재사용해 중복 생성을 방지
-	ACSUsableToolActor* FindOrSpawnQuickbarTool(UClass* ToolClass, bool& bOutSpawned);
+	// 레벨 거치대 지팡이는 소속 거치대의 기존 액터를 재사용해 중복 생성을 방지
+	// 구매한 지팡이는 거치대 지팡이를 가져오지 않도록 항상 새로 생성
+	ACSUsableToolActor* FindOrSpawnQuickbarTool(UClass* ToolClass, const FCSQuickbarSlotRecord& SlotRecord, bool& bOutSpawned);
 	void RemoveHeldItemFromQuickbar();
 	void UpdateQuickbarHUD();
 

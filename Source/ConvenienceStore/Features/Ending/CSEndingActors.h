@@ -29,6 +29,10 @@ public:
 	void InitializeItem(const FCSEndingItemDefinition& Definition, ACSEndingManager* Manager);
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") FName EndingItemId;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") TObjectPtr<ACSEndingManager> IssuingManager;
+
+	// 아이템 씬 루트의 월드 트랜스폼을 반환
+	// 바닥 물리 중 메시가 루트로 바뀐 상태에서도 생성 기준 위치를 저장하는 데 사용
+	FTransform GetSaveTransform() const;
 protected:
 	// 메시의 상대 위치·회전·크기를 BP에서 독립적으로 편집할 수 있게 합니다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components") TObjectPtr<USceneComponent> ItemSceneRoot;
@@ -60,6 +64,17 @@ public:
 
 	// 레코드로 진행 상태를 복원하고 전시대에 제출 현황 변경을 알림
 	void RestoreSaveRecord(const FCSEndingSaveRecord& InRecord);
+
+	// 식별자에 해당하는 엔딩 아이템을 생성하고 이 관리자의 발급 정보를 설정해 반환
+	// 결제와 구매 순번 증가는 처리하지 않으며 정의가 없으면 nullptr을 반환
+	// 생성 배율은 구매 배출과 같이 클래스 루트 배율을 곱해 적용
+	ACSEndingItemActor* SpawnRestoredItem(FName ItemId, const FTransform& SpawnTransform);
+
+	// 구매 후 아직 줍지 않은 아이템인지 확인
+	bool IsPendingPickup(const ACSEndingItemActor* Item) const { return IsValid(Item) && PendingPickup == Item; }
+
+	// 복원한 아이템을 줍기 대기 아이템으로 설정
+	void SetPendingPickup(ACSEndingItemActor* Item) { PendingPickup = Item; }
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ending") TObjectPtr<UCSEndingData> EndingData;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Ending") int32 NextPurchaseIndex = 0;
