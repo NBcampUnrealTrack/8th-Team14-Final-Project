@@ -720,7 +720,7 @@ void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWi
 	}
 
 	CachedInnerThoughtWidget->SetThoughtText(InText);
-	CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Visible);
+	CachedInnerThoughtWidget->ShowAnimated();
 	OnInnerThoughtShown.Broadcast();
 
 	World->GetTimerManager().SetTimer(
@@ -733,11 +733,10 @@ void UCSCustomerRuntimeSubsystem::ShowInnerThought(TSubclassOf<UCSInnerThoughtWi
 
 void UCSCustomerRuntimeSubsystem::HideInnerThought()
 {
-	// 뷰포트에서 완전히 제거하지 않고 숨기기만 함 - 다음 ShowInnerThought() 호출 때
-	// 같은 인스턴스를 그대로 재사용하기 위함(CreateWidget/AddToViewport 재호출 비용 절약)
+	// 애니메이션이 끝난 뒤 Collapsed 처리하며 다음 호출 때 같은 인스턴스를 재사용합니다.
 	if (IsValid(CachedInnerThoughtWidget))
 	{
-		CachedInnerThoughtWidget->SetVisibility(ESlateVisibility::Collapsed);
+		CachedInnerThoughtWidget->HideAnimated();
 	}
 }
 

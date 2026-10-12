@@ -88,6 +88,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Level Presentation|Unlock",
 		meta = (ClampMin = "0.0"))
 	float UnlockPanelFallbackSlideDistance = 650.0f;
+	// 최종 목표 패널이 아래에서 올라오며 나타나는 시간과 거리입니다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Level Presentation|Goal",
+		meta = (ClampMin = "0.05", Units = "s"))
+	float GoalPanelEnterDuration = 0.45f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Level Presentation|Goal",
+		meta = (ClampMin = "0.0"))
+	float GoalPanelEnterOffset = 48.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Level Presentation|Goal",
+		meta = (ClampMin = "0.5", ClampMax = "1.0"))
+	float GoalPanelEnterScale = 0.94f;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> LevelUpHeadingText;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> LevelUpBodyText;
 	// 이미지와 같은 전환형 레벨업 UI를 만들 때 아래 이름 그대로 TextBlock을 배치해 주세요.
@@ -136,5 +146,7 @@ private:
 	float UnlockShotElapsed = 0.0f;
 	float UnlockShotDuration = 0.0f;
 	bool bUnlockShotPlaying = false;
+	float GoalPanelEnterElapsed = 0.0f;
+	bool bGoalPanelEnterPlaying = false;
 	UPROPERTY(Transient) TObjectPtr<UTexture2D> ActiveSpeakerPortrait;
 };

@@ -9,6 +9,18 @@ void UCSNoticeBoardWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+	SetRenderTransformPivot(FVector2D(0.5f, 0.5f));
+	AnimationState = ENoticeBoardAnimationState::Opening;
+	AnimationElapsedTime = 0.0f;
+	ApplyWindowAnimation(0.0f);
+
+	if (IsValid(Button_Close))
+	{
+		// WBP에 남아 있는 RemoveFromParent 호출이 퇴장 애니메이션을 건너뛰지 않도록
+		// 닫기 버튼은 네이티브 애니메이션 경로가 단독으로 처리합니다.
+		Button_Close->OnClicked.Clear();
+		Button_Close->OnClicked.AddUniqueDynamic(this, &ThisClass::CloseNoticeBoardWindow);
+	}
 	if (IsValid(Button_Weather))
 	{
 		Button_Weather->OnClicked.AddUniqueDynamic(this, &ThisClass::HandleWeatherClicked);
@@ -51,9 +63,80 @@ void UCSNoticeBoardWidget::InitializeNoticeBoard(ACSNoticeBoardActor* InNoticeBo
 
 void UCSNoticeBoardWidget::CloseNoticeBoardWindow()
 {
+	if (AnimationState == ENoticeBoardAnimationState::Closing)
+	{
+		return;
+	}
+
+	AnimationState = ENoticeBoardAnimationState::Closing;
+	AnimationElapsedTime = 0.0f;
+	ClosingStartAlpha = CurrentAnimationAlpha;
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+
+	if (CloseAnimationDuration <= 0.0f)
+	{
+		FinishClosing();
+	}
+}
+
+void UCSNoticeBoardWidget::NativeTick(const FGeometry& MyGeometry, const float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	if (AnimationState == ENoticeBoardAnimationState::Idle)
+	{
+		return;
+	}
+
+	AnimationElapsedTime += InDeltaTime;
+	const float Duration = AnimationState == ENoticeBoardAnimationState::Opening
+		? OpenAnimationDuration
+		: CloseAnimationDuration;
+	const float LinearAlpha = Duration > 0.0f
+		? FMath::Clamp(AnimationElapsedTime / Duration, 0.0f, 1.0f)
+		: 1.0f;
+	const float EasedAlpha = FMath::InterpEaseOut(0.0f, 1.0f, LinearAlpha, 3.0f);
+	ApplyWindowAnimation(
+		AnimationState == ENoticeBoardAnimationState::Opening
+			? EasedAlpha
+			: ClosingStartAlpha * (1.0f - EasedAlpha));
+
+	if (LinearAlpha < 1.0f)
+	{
+		return;
+	}
+
+	if (AnimationState == ENoticeBoardAnimationState::Opening)
+	{
+		AnimationState = ENoticeBoardAnimationState::Idle;
+		ApplyWindowAnimation(1.0f);
+	}
+	else
+	{
+		FinishClosing();
+	}
+}
+
+void UCSNoticeBoardWidget::ApplyWindowAnimation(const float Alpha)
+{
+	const float ClampedAlpha = FMath::Clamp(Alpha, 0.0f, 1.0f);
+	CurrentAnimationAlpha = ClampedAlpha;
+	SetRenderOpacity(ClampedAlpha);
+	SetRenderTranslation(FVector2D(0.0f, AnimationVerticalOffset * (1.0f - ClampedAlpha)));
+	const float Scale = FMath::Lerp(AnimationStartScale, 1.0f, ClampedAlpha);
+	SetRenderScale(FVector2D(Scale, Scale));
+}
+
+void UCSNoticeBoardWidget::FinishClosing()
+{
+	ApplyWindowAnimation(0.0f);
 	if (IsValid(NoticeBoardActor))
 	{
-		NoticeBoardActor->CloseNoticeBoardUI(this);
+		NoticeBoardActor->CompleteCloseNoticeBoardUI(this);
+	}
+	else
+	{
+		RemoveFromParent();
 	}
 }
 
@@ -131,6 +214,10 @@ void UCSNoticeBoardWidget::HandleDeliveryClicked() { SelectTab(TEXT("Delivery"))
 
 void UCSNoticeBoardWidget::NativeDestruct()
 {
+	if (IsValid(Button_Close))
+	{
+		Button_Close->OnClicked.RemoveDynamic(this, &ThisClass::CloseNoticeBoardWindow);
+	}
 	if (IsValid(Button_Weather))
 	{
 		Button_Weather->OnClicked.RemoveDynamic(this, &ThisClass::HandleWeatherClicked);
@@ -160,7 +247,7 @@ void UCSNoticeBoardWidget::NativeDestruct()
 	// 외부에서 RemoveFromParent를 호출한 경우에도 액터가 오래된 위젯을 보관하지 않게 합니다.
 	if (IsValid(NoticeBoardActor))
 	{
-		NoticeBoardActor->CloseNoticeBoardUI(this);
+		NoticeBoardActor->CompleteCloseNoticeBoardUI(this);
 	}
 	Super::NativeDestruct();
 }
