@@ -110,11 +110,15 @@ void UCSNoticeBoardDeliveryTabWidget::RefreshSingleOrderPresentation(
 
 	SetNamedText(TEXT("Text_RecipientName"), Order.RecipientDisplayName);
 	SetNamedText(TEXT("Text_RecipientRegion"), Order.RecipientRegionName);
-	const FText AcceptanceDeadlineText = FormatGameClock(Order.AcceptanceDeadlineMinutes);
+	// 튜토리얼 연습 주문은 기한으로 끝나지 않는다
+	const bool bGuidedOrder = IsValid(DeliveryOrderSubsystem) && DeliveryOrderSubsystem->IsGuidedOrder(Order.OrderId);
+	const FText NoDeadlineText = NSLOCTEXT("NoticeBoard", "NoDeliveryDeadline", "기한 없음");
+	const FText AcceptanceDeadlineText = bGuidedOrder ? NoDeadlineText : FormatGameClock(Order.AcceptanceDeadlineMinutes);
 	SetNamedText(TEXT("Text_AcceptanceDeadline"), AcceptanceDeadlineText);
 	SetNamedText(TEXT("Text_AcceptanceDeadlineDetail"), AcceptanceDeadlineText);
 	SetNamedText(TEXT("Text_DeliveryDeadline"),
-		Order.Status == ECSDeliveryOrderStatus::Accepted
+		bGuidedOrder ? NoDeadlineText
+		: Order.Status == ECSDeliveryOrderStatus::Accepted
 			? FormatGameClock(Order.DeliveryDeadlineMinutes)
 			: NSLOCTEXT("NoticeBoard", "DeliveryAfterAccept", "수락 후 3시간"));
 	SetNamedText(TEXT("Text_RewardGold"), FText::AsNumber(Order.RewardGold));

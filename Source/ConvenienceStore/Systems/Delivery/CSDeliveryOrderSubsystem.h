@@ -125,6 +125,9 @@ public:
 	// 연습 주문을 일반 주문으로 되돌린다. 연습 중에는 기한을 안 봐서 기한은 지금부터 다시 센다
 	void ReleaseGuidedOrder();
 
+	// 연습 주문은 기한 값이 있어도 쓰지 않아서 화면에는 기한 없음으로 보여야 한다
+	bool IsGuidedOrder(int32 OrderId) const { return OrderId != INDEX_NONE && OrderId == GuidedOrderId; }
+
 	UPROPERTY(BlueprintAssignable, Category = "Delivery Order")
 	FCSOnDeliveryOrderChanged OnDeliveryOrderChanged;
 
