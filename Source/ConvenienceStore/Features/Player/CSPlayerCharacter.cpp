@@ -26,6 +26,7 @@
 #include "Systems/StoreFlow/CSStoreGameState.h"
 #include "Features/Shelves/CSShelfActor.h"
 #include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "Data/CSProductTypes.h"
 #include "Data/CSProductVisualRegistry.h"
 #include "Data/CSSaveTypes.h"
@@ -65,6 +66,13 @@ const FName BuildPlacementAccessZoneTag(TEXT("BuildPlacementAccessZone"));
 const FName MagicWandAttachBoneName(TEXT("RightHand"));
 // 건축 모드에서 들기를 막을 시설에 지정하는 액터 태그
 const FName BuildLockedTag(TEXT("CS.BuildLocked"));
+
+// 튜토리얼 창고 스텝의 상자는 진열대에 올리지 않고 냉장 창고에 넣게 한다
+bool ShouldBlockTutorialCrateShelving(const UWorld* World, const ACSDeliveryCrateActor* Crate, FText& OutMessage)
+{
+	const UCSTutorialSubsystem* Tutorial = World ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr;
+	return IsValid(Tutorial) && Tutorial->ShouldBlockCrateShelving(Crate, OutMessage);
+}
 
 bool TryCalculateProspectiveBox(
 	const UBoxComponent* BoxComponent,
@@ -1451,6 +1459,18 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		}
 	}
 
+	// 건축 모드에서 들 수 있는 시설이면 B 안내를 다른 안내 아래에 붙인다. B는 빈손일 때만 먹는다
+	const bool bShowBuildModePrompt = !IsValid(HeldActor) &&
+		TargetActor->Implements<UCSBuildableFacility>() && !TargetActor->ActorHasTag(BuildLockedTag);
+	const auto SetPromptsWithBuildMode = [&](TArray<FCSInteractionPrompt> Prompts)
+	{
+		if (bShowBuildModePrompt)
+		{
+			Prompts.Add({NSLOCTEXT("Interaction", "BuildModeSwitchPrompt", "[B] 건축 모드 전환"), false});
+		}
+		StorePlayerController->SetInteractionPrompts(Prompts);
+	};
+
 	if (const ACSFreshnessSafeZoneActor* StoragePoint = Cast<ACSFreshnessSafeZoneActor>(TargetActor))
 	{
 		int32 UnusedSlotIndex = INDEX_NONE;
@@ -1472,9 +1492,7 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 						NSLOCTEXT("Interaction", "TakeStoredCrate", "[E] {0} 상자 꺼내기"),
 						StoredCrate->GetProductDisplayName())
 					: FText::FromString(TEXT("[E] 상자 꺼내기"));
-			StorePlayerController->SetInteractionPrompt(
-				Prompt,
-				IsValid(HeldActor) && !bCanStore ? FLinearColor(1.0f, 0.25f, 0.25f, 1.0f) : FLinearColor::White);
+			SetPromptsWithBuildMode({{Prompt, IsValid(HeldActor) && !bCanStore}});
 			if (!IsValid(HeldActor) && IsValid(StoredCrate))
 			{
 				// 슬롯 상자를 조준할 때는 실제 상자를 꺼내지 않고도 이름·가격·유통기한·신선도를 모두 확인할 수 있습니다.
@@ -1498,9 +1516,7 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 					? FText::FromString(TEXT("[Q] 낱개 상품 보관"))
 					: FText::FromString(TEXT("이 상품은 이 창고에 보관할 수 없습니다.")))
 				: FText::FromString(TEXT("낱개 상품을 든 상태에서 보관할 수 있습니다."));
-			StorePlayerController->SetInteractionPrompt(
-				Prompt,
-				HeldProduct != nullptr && !bCanStore ? FLinearColor(1.0f, 0.25f, 0.25f, 1.0f) : FLinearColor::White);
+			SetPromptsWithBuildMode({{Prompt, HeldProduct != nullptr && !bCanStore}});
 			return;
 		}
 	}
@@ -1518,7 +1534,7 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 
 	if (const ACSShelfActor* Shelf = Cast<ACSShelfActor>(TargetActor))
 	{
-		StorePlayerController->SetInteractionPrompts(
+		SetPromptsWithBuildMode(
 			GetShelfInteractionPrompts(Shelf, HitResult.ImpactPoint, Cast<ACSProductPickupActor>(HitResult.GetActor())));
 		return;
 	}
@@ -1545,6 +1561,10 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 
 	if (!TargetActor->Implements<UCSInteractable>())
 	{
+		if (bShowBuildModePrompt)
+		{
+			SetPromptsWithBuildMode({});
+		}
 		return;
 	}
 
@@ -1569,14 +1589,18 @@ void ACSPlayerCharacter::UpdateInteractionHUD()
 		: ICSInteractable::Execute_GetInteractionText(TargetActor);
 	if (InteractionText.IsEmpty())
 	{
+		if (bShowBuildModePrompt)
+		{
+			SetPromptsWithBuildMode({});
+		}
 		return;
 	}
 
-	StorePlayerController->SetInteractionPrompt(
+	SetPromptsWithBuildMode({{
 		Cast<ACSProductPickupActor>(TargetActor) ? GetProductCollectionPrompt(Cast<ACSProductPickupActor>(TargetActor)) : FText::Format(
 			NSLOCTEXT("Interaction", "UsePrompt", "[E] {0}"),
 			InteractionText),
-		FLinearColor::White);
+		false}});
 
 	FDataTableRowHandle ProductRow;
 	if (TryGetProductRowFromActor(TargetActor, ProductRow))
@@ -4120,9 +4144,12 @@ void ACSPlayerCharacter::CreatePlacementPreviewFromCrate(
 {
 	DestroyPlacementPreview();
 
+	// 진열을 막은 상자는 미리보기가 없어야 진열대 외곽선도 켜지지 않는다
+	FText BlockedMessage;
 	if (!IsValid(DeliveryCrate) ||
 		PlacementPreviewActorClass == nullptr ||
-		DeliveryCrate->GetRemainingQuantity() < 1)
+		DeliveryCrate->GetRemainingQuantity() < 1 ||
+		ShouldBlockTutorialCrateShelving(GetWorld(), DeliveryCrate, BlockedMessage))
 	{
 		return;
 	}
@@ -4155,11 +4182,13 @@ bool ACSPlayerCharacter::TryPlaceProductFromCrate(
 	AActor* ShelfActor,
 	FVector PlacementHint)
 {
+	FText BlockedMessage;
 	if (!IsValid(DeliveryCrate) ||
 		DeliveryCrate != HeldActor ||
 		DeliveryCrate->GetRemainingQuantity() < 1 ||
 		!IsValid(ShelfActor) ||
-		!ShelfActor->Implements<UCSShelfPlaceable>())
+		!ShelfActor->Implements<UCSShelfPlaceable>() ||
+		ShouldBlockTutorialCrateShelving(GetWorld(), DeliveryCrate, BlockedMessage))
 	{
 		return false;
 	}
@@ -4740,11 +4769,13 @@ TArray<FCSInteractionPrompt> ACSPlayerCharacter::GetShelfInteractionPrompts(cons
 		}
 		else if (Crate)
 		{
-			Prompts.Add({FText::FromString(Crate->GetRemainingQuantity() == 0
-				? TEXT("상자에 진열할 상품이 없습니다.") : TEXT("진열 미리보기를 표시할 수 없습니다.")), true});
+			FText BlockedMessage;
+			Prompts.Add({ShouldBlockTutorialCrateShelving(GetWorld(), Crate, BlockedMessage) ? BlockedMessage
+				: FText::FromString(Crate->GetRemainingQuantity() == 0
+					? TEXT("상자에 진열할 상품이 없습니다.") : TEXT("진열 미리보기를 표시할 수 없습니다.")), true});
 		}
 	}
-	if (!IsValid(HeldActor)) Prompts.Add({Manage, false});
+	if (!IsValid(HeldActor) && Shelf->CanOpenShelfConfiguration()) Prompts.Add({Manage, false});
 	return Prompts;
 }
 

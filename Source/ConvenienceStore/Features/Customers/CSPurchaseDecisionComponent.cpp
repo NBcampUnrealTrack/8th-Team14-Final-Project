@@ -739,9 +739,24 @@ void UCSPurchaseDecisionComponent::EnsureBudgetInitialized(UCSCustomerStateCompo
 
 	// 하드 지갑 한도는 Archetype이 이미 갖고 있는 계산 함수(GetHardWalletLimitGold)로 구함
 	// Archetype이 없으면 폴백 배율로 직접 계산
-	const int32 HardWallet = Archetype
+	int32 HardWallet = Archetype
 		? Archetype->GetHardWalletLimitGold(SoftBudget)
 		: FMath::RoundToInt(SoftBudget * FallbackHardWalletRatio);
+
+	// 뉴스 상품을 사러 온 손님은 돈을 더 챙겨 온다. 없으면 지갑 컷이 수요 보너스보다 먼저라 비싼 뉴스 상품이 안 팔린다
+	// 스포너가 계획 상품을 첫 예산 계산(RollPlannedBasketTarget)보다 먼저 정해 둬서 여기서 볼 수 있다
+	float PlannedDemand = 0.0f;
+	for (const FName PlannedId : State.PlannedProductIds)
+	{
+		PlannedDemand = FMath::Max(PlannedDemand, GetPlannedDemandModifier(PlannedId));
+	}
+	if (PlannedDemand > 0.0f)
+	{
+		const int32 BaseHardWallet = HardWallet;
+		HardWallet = FMath::RoundToInt(BaseHardWallet * (1.0f + W_PlannedWalletBoost * PlannedDemand));
+		UE_LOG(LogTemp, Log, TEXT("[계획지갑] 시드=%d 수요=%+.2f 하드지갑=%d→%d"),
+			GetCustomerSeed(), PlannedDemand, BaseHardWallet, HardWallet);
+	}
 
 	State.SoftBudgetGold = SoftBudget;
 	State.HardWalletLimitGold = HardWallet;

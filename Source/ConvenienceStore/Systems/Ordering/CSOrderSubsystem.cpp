@@ -10,6 +10,16 @@
 #include "Systems/SaveLoad/CSSaveGame.h"
 #include "Systems/StoreFlow/CSStoreGameState.h"
 
+namespace
+{
+	// 첫 구매는 반값이고 하나 살 때마다 기본가의 25%씩 오릅니다. 5개째까지의 합이 기본가 × 5와 같습니다.
+	// 초반에 진열대를 늘리기 어렵다는 피드백으로 넣은 값이라 플레이 확인 전입니다.
+	constexpr float ShelfFirstPriceRatio = 0.5f;
+	constexpr float ShelfPriceStepRatio = 0.25f;
+	constexpr float ShelfMaxPriceRatio = 1.75f;
+	constexpr int64 ShelfPriceRounding = 50;
+}
+
 void UCSOrderSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
 {
 	FCSOrderSaveRecord& Record = OutSave.Order;
@@ -54,6 +64,7 @@ void UCSOrderSubsystem::CaptureSaveData(UCSSaveGame& OutSave) const
 	Record.DeliverySpawnIndexBusinessDay = DeliverySpawnIndexBusinessDay;
 	Record.NextProductDeliverySpawnIndex = NextProductDeliverySpawnIndex;
 	Record.NextFacilityDeliverySpawnIndex = NextFacilityDeliverySpawnIndex;
+	Record.PurchasedShelfCounts = PurchasedShelfCounts;
 }
 
 void UCSOrderSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
@@ -104,6 +115,7 @@ void UCSOrderSubsystem::RestoreSaveData(const UCSSaveGame& InSave)
 	DeliverySpawnIndexBusinessDay = Record.DeliverySpawnIndexBusinessDay;
 	NextProductDeliverySpawnIndex = Record.NextProductDeliverySpawnIndex;
 	NextFacilityDeliverySpawnIndex = Record.NextFacilityDeliverySpawnIndex;
+	PurchasedShelfCounts = Record.PurchasedShelfCounts;
 }
 
 namespace
@@ -158,6 +170,7 @@ void UCSOrderSubsystem::Deinitialize()
 	UnsubscribeFromStoreGameState();
 	PendingProductOrders.Reset();
 	PendingFacilityOrders.Reset();
+	PurchasedShelfCounts.Reset();
 	RegisteredDeliveryPortal.Reset();
 	RegisteredFacilityDeliveryPortal.Reset();
 	DeliverySpawnIndexBusinessDay = INDEX_NONE;
@@ -332,6 +345,10 @@ FCSCombinedOrderResult UCSOrderSubsystem::PlaceCombinedOrder(
 		DestroySpawnedActors(SpawnedActors);
 		return Fail(ECSCombinedOrderFailure::InsufficientFunds,
 			NSLOCTEXT("Order", "Funds", "보유 자금이 부족합니다."));
+	}
+	if (HasFacilities)
+	{
+		RecordShelfPurchases(Facilities);
 	}
 	if (DeliveryType == ECSOrderDeliveryType::Immediate)
 	{
@@ -693,8 +710,7 @@ FCSFacilityOrderResult UCSOrderSubsystem::EvaluateFacilityOrderWithDelivery(
 		}
 
 		const int64 BaseLineCost =
-			static_cast<int64>(FacilityData->PurchasePriceGold) *
-			OrderLine.Quantity;
+			CalculateFacilityPurchaseCost(OrderLine.FacilityRow, OrderLine.Quantity);
 		int64 FinalLineCost = 0;
 		if (!TryCalculateDeliveryAdjustedCost(
 				BaseLineCost,
@@ -833,6 +849,7 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 			return Result;
 		}
 
+		RecordShelfPurchases(OrderLines);
 		const int32 SpawnedFacilityCount = SpawnedFacilities.Num();
 		NextFacilityDeliverySpawnIndex += SpawnedFacilityCount;
 		DeliveryPortal->OnFacilityOrderDelivered(SpawnedFacilityCount);
@@ -848,6 +865,7 @@ FCSFacilityOrderResult UCSOrderSubsystem::PlaceFacilityOrderWithDelivery(
 		return Result;
 	}
 
+	RecordShelfPurchases(OrderLines);
 	FCSPendingFacilityOrder& PendingOrder =
 		PendingFacilityOrders.AddDefaulted_GetRef();
 	PendingOrder.OrderLines = OrderLines;
@@ -921,14 +939,60 @@ int32 UCSOrderSubsystem::CalculateFacilityOrderLineCost(
 	}
 
 	int64 FinalLineCost = 0;
-	const int64 BaseLineCost =
-		static_cast<int64>(FacilityData->PurchasePriceGold) * Quantity;
+	const int64 BaseLineCost = CalculateFacilityPurchaseCost(FacilityRow, Quantity);
 	return TryCalculateDeliveryAdjustedCost(
 		BaseLineCost,
 		DeliveryType,
 		FinalLineCost)
 		? static_cast<int32>(FinalLineCost)
 		: 0;
+}
+
+int32 UCSOrderSubsystem::GetNextFacilityUnitPrice(const FDataTableRowHandle& FacilityRow) const
+{
+	return static_cast<int32>(FMath::Min<int64>(CalculateFacilityPurchaseCost(FacilityRow, 1), MAX_int32));
+}
+
+int64 UCSOrderSubsystem::CalculateFacilityPurchaseCost(
+	const FDataTableRowHandle& FacilityRow,
+	int32 Quantity) const
+{
+	const FCSFacilityDataRow* FacilityData = FacilityRow.GetRow<FCSFacilityDataRow>(
+		TEXT("UCSOrderSubsystem::CalculateFacilityPurchaseCost"));
+	if (FacilityData == nullptr || Quantity <= 0)
+	{
+		return 0;
+	}
+
+	const int64 BasePrice = FacilityData->PurchasePriceGold;
+	if (FacilityData->FacilityType != ECSFacilityType::Shelf)
+	{
+		return BasePrice * Quantity;
+	}
+
+	const int32 BoughtCount = PurchasedShelfCounts.FindRef(FacilityRow.RowName);
+	int64 TotalCost = 0;
+	for (int32 Offset = 0; Offset < Quantity; ++Offset)
+	{
+		const float Ratio = FMath::Min(
+			ShelfFirstPriceRatio + ShelfPriceStepRatio * static_cast<float>(BoughtCount + Offset),
+			ShelfMaxPriceRatio);
+		TotalCost += FMath::RoundToInt64(BasePrice * Ratio / ShelfPriceRounding) * ShelfPriceRounding;
+	}
+	return TotalCost;
+}
+
+void UCSOrderSubsystem::RecordShelfPurchases(const TArray<FCSFacilityOrderLine>& OrderLines)
+{
+	for (const FCSFacilityOrderLine& Line : OrderLines)
+	{
+		const FCSFacilityDataRow* FacilityData = Line.FacilityRow.GetRow<FCSFacilityDataRow>(
+			TEXT("UCSOrderSubsystem::RecordShelfPurchases"));
+		if (FacilityData != nullptr && FacilityData->FacilityType == ECSFacilityType::Shelf && Line.Quantity > 0)
+		{
+			PurchasedShelfCounts.FindOrAdd(Line.FacilityRow.RowName) += Line.Quantity;
+		}
+	}
 }
 
 int32 UCSOrderSubsystem::GetImmediateDeliveryFeePercent() const

@@ -108,6 +108,12 @@ public:
 	// 1부 진행 중이고 아직 입간판 스텝이 아니면 true와 입간판에 띄울 문구
 	bool ShouldBlockStoreOpen(FText& OutMessage) const;
 
+	// 시작했고 아직 끝나지 않았으면 true. 시작 전이거나 완료·건너뛰기 뒤면 false
+	bool IsTutorialInProgress() const;
+
+	// 창고 스텝에서 보낸 상자면 true와 진열대에 띄울 문구
+	bool ShouldBlockCrateShelving(const ACSDeliveryCrateActor* Crate, FText& OutMessage) const;
+
 	// 마감 튜토리얼이 진입 대기 중이거나 진행 중인지 확인
 	// 튜토리얼을 완료했거나 건너뛰었으면 false를 반환
 	bool IsPart3Pending() const;
@@ -336,7 +342,7 @@ protected:
 	void UnsubscribeFromCraftingSubsystem();
 	void OpenChoiceWidget(const FCSTutorialStepRow& Row);
 	void CloseChoiceWidget();
-	TArray<ACSProductPickupActor*> PlaceTutorialIngredients();
+	TArray<ACSProductPickupActor*> PlaceTutorialIngredients(const TArray<FName>& ProductIds);
 	void AttachCraftMarker(AActor* Target, const FText& Label);
 	void RemoveCraftMarkers();
 	// 여러 번 불러도 안전하다. 튜토리얼 물건과 마커를 지우고 선택 창을 닫는다
