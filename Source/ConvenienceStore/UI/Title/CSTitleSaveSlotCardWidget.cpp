@@ -9,18 +9,20 @@ void UCSTitleSaveSlotCardWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// 카드 본문과 하단 버튼에 같은 요청 처리를 연결
-	Btn_Card->OnClicked.AddUniqueDynamic(this, &UCSTitleSaveSlotCardWidget::HandlePrimaryClicked);
+	//윤서희 수정 카드 본문 클릭에는 실행을 연결하지 않고 하단 버튼만 게임 시작을 요청
 	Btn_PrimaryAction->OnClicked.AddUniqueDynamic(this, &UCSTitleSaveSlotCardWidget::HandlePrimaryClicked);
 	Btn_Delete->OnClicked.AddUniqueDynamic(this, &UCSTitleSaveSlotCardWidget::HandleDeleteClicked);
 
-	SetSelectedVisible(false);
+	SetHoverActive(false);
 }
 
 void UCSTitleSaveSlotCardWidget::SetupCard(FName InSlotName, const FCSSaveHeader* InHeader)
 {
 	SlotName = InSlotName;
 	bIsEmptySlot = InHeader == nullptr || !InHeader->IsValidHeader();
+
+	//윤서희 수정 슬롯 정보가 갱신되면 다시 호버하기 전까지 시작 버튼을 비활성화
+	SetHoverActive(false);
 
 	// 빈 슬롯은 빈 슬롯 화면으로 전환하고 지울 기록이 없으므로 삭제 버튼을 숨김
 	if (bIsEmptySlot)
@@ -84,8 +86,39 @@ void UCSTitleSaveSlotCardWidget::SetupCard(FName InSlotName, const FCSSaveHeader
 	}
 }
 
+void UCSTitleSaveSlotCardWidget::SetHoverActive(bool bActive)
+{
+	//윤서희 수정 호버 중인 카드만 하단 시작 버튼을 누를 수 있도록 동기화
+	bIsHoverActive = bActive;
+	Btn_PrimaryAction->SetIsEnabled(bIsHoverActive);
+	//윤서희 수정 비활성 버튼 영역도 뒤의 카드 버튼이 클릭되도록 히트 테스트를 통과시킴
+	Btn_PrimaryAction->SetVisibility(bIsHoverActive ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+	//윤서희 수정 기존 카드 호버 효과도 시작 버튼 활성 상태와 함께 표시
+	SetSelectedVisible(bIsHoverActive);
+}
+
+void UCSTitleSaveSlotCardWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
+	//윤서희 수정 카드에 마우스를 올리면 호버 효과와 시작 버튼을 활성화
+	SetHoverActive(true);
+}
+
+void UCSTitleSaveSlotCardWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
+{
+	Super::NativeOnMouseLeave(InMouseEvent);
+	//윤서희 수정 카드에서 마우스가 벗어나면 호버 효과와 시작 버튼을 비활성화
+	SetHoverActive(false);
+}
+
 void UCSTitleSaveSlotCardWidget::HandlePrimaryClicked()
 {
+	//윤서희 수정 호버로 활성화되지 않은 카드에서는 실행 요청을 보내지 않음
+	if (!bIsHoverActive)
+	{
+		return;
+	}
+
 	OnPrimaryRequested.Broadcast(SlotName, bIsEmptySlot);
 }
 
@@ -98,18 +131,6 @@ void UCSTitleSaveSlotCardWidget::HandleDeleteClicked()
 	}
 
 	OnDeleteRequested.Broadcast(SlotName);
-}
-
-void UCSTitleSaveSlotCardWidget::NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
-{
-	Super::NativeOnMouseEnter(InGeometry, InMouseEvent);
-	SetSelectedVisible(true);
-}
-
-void UCSTitleSaveSlotCardWidget::NativeOnMouseLeave(const FPointerEvent& InMouseEvent)
-{
-	Super::NativeOnMouseLeave(InMouseEvent);
-	SetSelectedVisible(false);
 }
 
 void UCSTitleSaveSlotCardWidget::SetSelectedVisible(bool bVisible)
