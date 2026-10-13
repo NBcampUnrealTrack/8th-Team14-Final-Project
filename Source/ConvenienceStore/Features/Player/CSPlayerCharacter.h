@@ -260,6 +260,11 @@ protected:
 	UPROPERTY(Transient)
 	bool bHasHeldBuildableUnusableQueueSlots = false;
 
+	// 들고 있는 시설의 진열대 손님 지점 중 NavMesh 위에 없는 지점이 있는지 여부
+	// 미리보기에서 갱신하고 Q 배치 차단과 HUD 사유 표시에 사용
+	UPROPERTY(Transient)
+	bool bHasHeldBuildableUnreachableShoppingPoint = false;
+
 
     // 현재 선택한 진열대 몸통이 어느 진열대의 손님 쇼핑 영역에 침범 했는지 찾기 위한 배열
     // AccessZoneQueryRange 범위내에 있는 진열대를 Tick마다 주기적으로 배열에 추가/삭제해서 어느 진열대 손님 쇼핑영역에 침범했는지 찾아냄
@@ -587,6 +592,12 @@ private:
 	// 규칙 D. 배치 예정 위치에서 계산대 대기줄 슬롯이 하나라도 설 수 없는 자리면 배치를 거부합니다.
 	// 규칙 A·B가 시설만 검사해서 벽으로 뻗는 대기줄을 잡지 못하는 구멍을 메웁니다.
 	bool HasUnusableQueueSlotPlacement(
+		AActor* FacilityActor,
+		const FVector& FacilityLocation,
+		const FRotator& FacilityRotation) const;
+	// 규칙 E. 배치 예정 위치에서 손님 지점이 NavMesh 밖인 진열대가 있는지 확인
+	// 하나라도 있으면 true를 반환하고 시설이 유효하지 않으면 false를 반환
+	bool HasUnreachableShoppingPointPlacement(
 		AActor* FacilityActor,
 		const FVector& FacilityLocation,
 		const FRotator& FacilityRotation) const;
