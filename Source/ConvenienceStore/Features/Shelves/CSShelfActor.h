@@ -201,6 +201,8 @@ public:
 
 	// E 상품 상호작용과 분리해, 플레이어가 F 입력으로만 진열 구성 UI를 열 수 있도록 제공합니다.
 	bool OpenShelfConfiguration(AActor* Interactor);
+	// 튜토리얼 중에는 구성 창을 열지 않고 F 안내도 띄우지 않습니다.
+	bool CanOpenShelfConfiguration() const;
 
 	UFUNCTION(BlueprintPure, Category = "Shelf|Configuration")
 	TArray<FCSShelfLevelConfiguration> GetLevelConfigurations() const { return LevelConfigurations; }

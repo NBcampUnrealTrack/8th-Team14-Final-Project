@@ -132,6 +132,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Store|Order")
 	int32 GetImmediateDeliveryFeePercent() const;
 
+	// 발주창 표시용. 이 시설을 지금 하나 더 살 때의 값입니다. 배송비는 빠져 있습니다.
+	int32 GetNextFacilityUnitPrice(const FDataTableRowHandle& FacilityRow) const;
+
 	bool RegisterDeliveryPortal(ACSDeliveryPortalActor* Portal);
 	void UnregisterDeliveryPortal(ACSDeliveryPortalActor* Portal);
 	bool RegisterFacilityDeliveryPortal(ACSFacilityDeliveryPortalActor* Portal);
@@ -149,6 +152,9 @@ private:
 	void TrySubscribeToStoreGameState();
 	void UnsubscribeFromStoreGameState();
 	void EnsureDeliverySpawnIndicesForBusinessDay(int32 BusinessDay);
+	// 진열대는 같은 종류를 살수록 비싸집니다.
+	int64 CalculateFacilityPurchaseCost(const FDataTableRowHandle& FacilityRow, int32 Quantity) const;
+	void RecordShelfPurchases(const TArray<FCSFacilityOrderLine>& OrderLines);
 
 	UFUNCTION()
 	void HandleBusinessDayStarted(int32 NewBusinessDay);
@@ -162,6 +168,10 @@ private:
 
 	UPROPERTY()
 	TArray<FCSPendingFacilityOrder> PendingFacilityOrders;
+
+	// 진열대 종류별로 직접 산 개수. 보유 수로 세면 튜토리얼이 준 진열대를 못 받은 경우 첫 구매가 값을 안 올린다
+	UPROPERTY()
+	TMap<FName, int32> PurchasedShelfCounts;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ACSStoreGameState> SubscribedStoreGameState;

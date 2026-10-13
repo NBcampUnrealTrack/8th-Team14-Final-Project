@@ -452,6 +452,10 @@ struct CONVENIENCESTORE_API FCSOrderSaveRecord
 	// 다음 시설 배송에 배정할 스폰 위치 순번
 	UPROPERTY()
 	int32 NextFacilityDeliverySpawnIndex = 0;
+
+	// 진열대 종류별로 직접 산 개수. 누진 가격의 기준이라 불러온 뒤에도 이어져야 한다
+	UPROPERTY()
+	TMap<FName, int32> PurchasedShelfCounts;
 };
 
 // 배달 주문 상품 한 줄의 레코드
