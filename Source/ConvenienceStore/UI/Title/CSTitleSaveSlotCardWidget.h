@@ -10,7 +10,7 @@ class UImage;
 class UTextBlock;
 class UWidgetSwitcher;
 
-// 카드 본문이나 하단 버튼 클릭 시 슬롯 이름과 빈 슬롯 여부를 방송
+// 하단 버튼 클릭 시 슬롯 이름과 빈 슬롯 여부를 방송
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCSOnTitleSlotPrimaryRequested, FName, SlotName, bool, bIsEmptySlot);
 
 // 삭제 버튼 클릭 시 슬롯 이름을 방송
@@ -39,13 +39,13 @@ public:
 protected:
 	virtual void NativeConstruct() override;
 
-	// 마우스 진입 시 선택 테두리를 표시
+	//윤서희 수정 카드 호버가 시작되면 선택 효과와 시작 버튼을 활성화
 	virtual void NativeOnMouseEnter(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
-	// 마우스 이탈 시 선택 테두리를 숨김
+	//윤서희 수정 카드 호버가 끝나면 선택 효과와 시작 버튼을 비활성화
 	virtual void NativeOnMouseLeave(const FPointerEvent& InMouseEvent) override;
 
-	// 카드 본문과 하단 버튼 클릭을 처리
+	// 하단 버튼 클릭을 처리
 	UFUNCTION()
 	void HandlePrimaryClicked();
 
@@ -55,6 +55,9 @@ protected:
 
 	// 선택 테두리 이미지의 표시 여부를 설정
 	void SetSelectedVisible(bool bVisible);
+
+	//윤서희 수정 카드 호버에 맞춰 선택 효과와 시작 버튼 상태를 함께 변경
+	void SetHoverActive(bool bActive);
 
 	// 저장 슬롯 표시에 사용하는 위젯 스위처 자식 인덱스
 	static constexpr int32 FilledIndex = 0;
@@ -113,4 +116,8 @@ protected:
 	// 저장 기록이 없는 슬롯인지 여부
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Save|TitleSlot")
 	bool bIsEmptySlot = true;
+
+	//윤서희 수정 하단 시작 버튼이 현재 호버로 활성화된 상태인지 여부
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Save|TitleSlot")
+	bool bIsHoverActive = false;
 };
