@@ -512,6 +512,35 @@ bool ACSShelfActor::TryGetCustomerShoppingPoint(FVector& OutLocation) const
 	return true;
 }
 
+bool ACSShelfActor::IsCustomerShoppingPointOnNavMeshAt(const FTransform& ShelfTransform) const
+{
+	// 월드나 마커가 없으면 판정하지 않고 배치를 허용
+	UWorld* World = GetWorld();
+	if (World == nullptr || !IsValid(CustomerShoppingPoint))
+	{
+		return true;
+	}
+
+	// 내비게이션 시스템이 없는 맵에서는 판정하지 않고 배치를 허용
+	const UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(World);
+	if (NavSys == nullptr)
+	{
+		return true;
+	}
+
+	// 마커를 진열대 기준 상대 트랜스폼으로 변환한 뒤 배치 예정 트랜스폼에 적용
+	// 들고 있는 동안의 손 위치가 아닌 배치 예정 위치를 검사하기 위해 사용
+	const FTransform RelativeMarkerTransform =
+		CustomerShoppingPoint->GetComponentTransform().GetRelativeTransform(GetActorTransform());
+	const FVector MarkerLocation = (RelativeMarkerTransform * ShelfTransform).GetLocation();
+
+	// 마커의 XY는 고정하고 위아래 300cm 범위에서 NavMesh 투영을 확인
+	// 런타임 결과와 어긋나지 않도록 TryGetCustomerShoppingPoint와 같은 범위를 사용
+	const FVector QueryExtent(0.0f, 0.0f, 300.0f);
+	FNavLocation Projected;
+	return NavSys->ProjectPointToNavigation(MarkerLocation, Projected, QueryExtent);
+}
+
 bool ACSShelfActor::TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const
 {
 	OutCenter = FVector::ZeroVector;
