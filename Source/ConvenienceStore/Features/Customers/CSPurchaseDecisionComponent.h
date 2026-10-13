@@ -225,6 +225,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0"))
 	float W_PlannedDemand = 2.0f;
 
+	// 이벤트 상품을 사러 온 손님이 지갑을 얼마나 더 챙겨 오는지. 하드 지갑 × (1 + 이 값 × 계획 상품 수요 보정)
+	// 소프트 예산은 그대로라 비싸다는 감점은 남는다. 뉴스와 같은 이유로 종족 차등을 두지 않는다
+	UPROPERTY(EditDefaultsOnly, Category = "Purchase|Weights", meta = (ClampMin = "0.0"))
+	float W_PlannedWalletBoost = 0.5f;
+
 	// 한 손님이 이번 방문에 한 개까지만 담는 상품 (우산처럼 하나 있으면 더 살 이유가 없는 내구재)
 	// 가루·음료 같은 소모품은 여러 개 사는 게 자연스러워서 대상이 아니다
 	// 반복구매 감쇠(RepeatCategoryPenalty)는 카테고리 단위라 이걸 막지 못한다 -

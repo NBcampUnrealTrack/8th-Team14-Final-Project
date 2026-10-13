@@ -201,6 +201,14 @@ void UCSWorldOrderWidget::RefreshNativeOrderScreen()
 			NativeVisibleHandles.Add(Handle);
 			// Data is assigned before AddChild triggers the row's Construct event.
 			Grid->AddChildToUniformGrid(Row, Index / 2, Index % 2);
+			// 목록 칸 BP는 Construct에서 표의 기본가를 넣는다. 진열대는 산 개수에 따라 값이 달라서 덮어쓴다
+			if (bNativeFacilityTab)
+			{
+				if (UTextBlock* PriceText = Cast<UTextBlock>(Row->GetWidgetFromName(TEXT("Text_RowPrice"))))
+				{
+					PriceText->SetText(FText::AsNumber(Orders->GetNextFacilityUnitPrice(Handle)));
+				}
+			}
 		}
 	}
 	FDataTableRowHandle& Selected = bNativeFacilityTab ? NativeSelectedFacility : NativeSelectedProduct;
@@ -247,7 +255,9 @@ void UCSWorldOrderWidget::RefreshNativeDetails()
 		const auto* Data = Selected.GetRow<FCSFacilityDataRow>(TEXT("Order detail"));
 		if (!Data) return;
 		SetNativeText(TEXT("Text_SelectedProductName"), Data->FacilityName);
-		SetNativeText(TEXT("Text_SelectedBoxPrice"), FText::AsNumber(Data->PurchasePriceGold));
+		const UCSOrderSubsystem* Orders = GetWorld()->GetSubsystem<UCSOrderSubsystem>();
+		SetNativeText(TEXT("Text_SelectedBoxPrice"),
+			FText::AsNumber(Orders ? Orders->GetNextFacilityUnitPrice(Selected) : Data->PurchasePriceGold));
 		const auto* Inventory = GetWorld()->GetSubsystem<UCSFacilityInventorySubsystem>();
 		SetNativeText(TEXT("Text_SelectedProductMeta"), Data->DeliveredToolClass
 			? Data->Description
@@ -303,8 +313,19 @@ void UCSWorldOrderWidget::ChangeNativeSelectedQuantity(int32 Delta)
 {
 	const auto& Row = bNativeFacilityTab ? NativeSelectedFacility : NativeSelectedProduct;
 	if (Row.IsNull() || bSubmittingNativeOrder || bOpening || bClosing) return;
-	SetNativeOrderQuantity(Row, bNativeFacilityTab, int32(FMath::Clamp<int64>(int64(GetNativeOrderQuantity(Row, bNativeFacilityTab)) + Delta, 0, FMath::Max(1, NativeMaxQuantity))));
+	const int32 OldQuantity = GetNativeOrderQuantity(Row, bNativeFacilityTab);
+	const int32 NewQuantity = int32(FMath::Clamp<int64>(int64(OldQuantity) + Delta, 0, FMath::Max(1, NativeMaxQuantity)));
+	SetNativeOrderQuantity(Row, bNativeFacilityTab, NewQuantity);
 	RefreshNativeDetails(); RefreshNativeRowStates(); RefreshNativeTotals();
+
+	// 진열대는 하나 살 때마다 값이 올라서 두 개째를 담는 순간 알려 준다
+	const FCSFacilityDataRow* FacilityData = bNativeFacilityTab ? Row.GetRow<FCSFacilityDataRow>(TEXT("Order quantity")) : nullptr;
+	if (OldQuantity < 2 && NewQuantity >= 2 && FacilityData && FacilityData->FacilityType == ECSFacilityType::Shelf)
+	{
+		FCSCombinedOrderResult Notice;
+		Notice.Message = NSLOCTEXT("Order", "ShelfPriceRises", "진열대는 같은 종류를 살수록 가격이 올라갑니다.");
+		ShowNativeNotice(Notice);
+	}
 }
 void UCSWorldOrderWidget::NativePlusClicked() { ChangeNativeSelectedQuantity(1); }
 void UCSWorldOrderWidget::NativeMinusClicked() { ChangeNativeSelectedQuantity(-1); }
