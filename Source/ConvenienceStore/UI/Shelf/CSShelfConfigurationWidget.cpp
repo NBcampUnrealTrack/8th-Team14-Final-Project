@@ -1,6 +1,8 @@
 #include "UI/Shelf/CSShelfConfigurationWidget.h"
 
 #include "Features/Shelves/CSShelfActor.h"
+#include "Systems/Employees/CSEmployeeHiringSubsystem.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
 
 void UCShelfConfigurationWidget::SetShelfTarget(ACSShelfActor* InShelf)
 {
@@ -13,6 +15,21 @@ bool UCShelfConfigurationWidget::ConfigureLevelProduct(
 	ECSShelfSlotLevel SlotLevel,
 	FDataTableRowHandle ProductRow)
 {
+	// 지정 상품은 진열 직원만 채워 줘서 직원이 없으면 지정해도 진열대가 그대로 빈다
+	const UWorld* World = GetWorld();
+	const UCSEmployeeHiringSubsystem* Hiring = World ? World->GetSubsystem<UCSEmployeeHiringSubsystem>() : nullptr;
+	if (IsValid(Hiring) &&
+		!Hiring->IsSlotHired(ECSEmployeeHireSlot::FirstRestock) &&
+		!Hiring->IsSlotHired(ECSEmployeeHireSlot::SecondRestock))
+	{
+		if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(GetOwningPlayer()))
+		{
+			StorePlayerController->ShowNoticeBanner(NSLOCTEXT("ShelfConfiguration", "RestockEmployeeRequired",
+				"진열 직원을 고용해야 선택할 수 있습니다."));
+		}
+		return false;
+	}
+
 	ACSShelfActor* Shelf = ShelfTarget.Get();
 	if (!IsValid(Shelf) || !Shelf->SetLevelProductConfiguration(SlotLevel, ProductRow))
 	{

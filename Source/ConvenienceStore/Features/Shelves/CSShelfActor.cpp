@@ -11,6 +11,8 @@
 #include "Features/Facilities/CSSaveIdComponent.h"
 #include "Features/Items/CSProductPickupActor.h"
 #include "Systems/SaveLoad/CSSaveRecordUtils.h"
+#include "Systems/StoreFlow/CSStorePlayerController.h"
+#include "Systems/Tutorial/CSTutorialSubsystem.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -852,7 +854,15 @@ bool ACSShelfActor::CanEmployeeRestockProduct(
 
 bool ACSShelfActor::OpenShelfConfiguration(AActor* Interactor)
 {
-	return OpenShelfConfigurationWidget(Interactor);
+	return CanOpenShelfConfiguration() && OpenShelfConfigurationWidget(Interactor);
+}
+
+bool ACSShelfActor::CanOpenShelfConfiguration() const
+{
+	// 튜토리얼은 B로 건축 모드에 들어가 진열하는 흐름이라 구성 창을 열면 흐름이 끊긴다
+	const UWorld* World = GetWorld();
+	const UCSTutorialSubsystem* Tutorial = World ? World->GetSubsystem<UCSTutorialSubsystem>() : nullptr;
+	return !IsValid(Tutorial) || !Tutorial->IsTutorialInProgress();
 }
 
 bool ACSShelfActor::GetNextEmployeeRestockSlotLocation(
@@ -1012,22 +1022,35 @@ bool ACSShelfActor::OpenShelfConfigurationWidget(AActor* Interactor)
 	ActiveShelfConfigurationWidget->AddToViewport();
 	ShelfConfigurationPlayerController = PlayerController;
 
-	FInputModeUIOnly InputMode;
-	InputMode.SetWidgetToFocus(ActiveShelfConfigurationWidget->TakeWidget());
-	PlayerController->SetInputMode(InputMode);
-	// UI를 열기 직전에 누르고 있던 이동 키로 캐릭터가 계속 움직이지 않도록 입력과 현재 속도를 함께 멈춥니다.
-	PlayerController->SetIgnoreMoveInput(true);
+	// UI를 열기 직전에 누르고 있던 이동 키로 캐릭터가 계속 움직이지 않도록 현재 속도를 멈춥니다.
 	if (ACharacter* InteractingCharacter = Cast<ACharacter>(InteractingPawn))
 	{
 		InteractingCharacter->GetCharacterMovement()->StopMovementImmediately();
 	}
+
+	// 컨트롤러 잠금을 거쳐야 튜토리얼 안내가 숨겨져 이 창의 닫기 버튼을 가리지 않습니다.
+	if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(PlayerController))
+	{
+		StorePlayerController->SetGameplayUIInputLock(ActiveShelfConfigurationWidget, true);
+		return true;
+	}
+
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(ActiveShelfConfigurationWidget->TakeWidget());
+	PlayerController->SetInputMode(InputMode);
+	PlayerController->SetIgnoreMoveInput(true);
 	PlayerController->SetShowMouseCursor(true);
 	return true;
 }
 
 void ACSShelfActor::HandleShelfConfigurationClosed()
 {
-	if (APlayerController* PlayerController = ShelfConfigurationPlayerController.Get())
+	APlayerController* PlayerController = ShelfConfigurationPlayerController.Get();
+	if (ACSStorePlayerController* StorePlayerController = Cast<ACSStorePlayerController>(PlayerController))
+	{
+		StorePlayerController->SetGameplayUIInputLock(ActiveShelfConfigurationWidget, false);
+	}
+	else if (IsValid(PlayerController))
 	{
 		FInputModeGameOnly InputMode;
 		PlayerController->SetInputMode(InputMode);

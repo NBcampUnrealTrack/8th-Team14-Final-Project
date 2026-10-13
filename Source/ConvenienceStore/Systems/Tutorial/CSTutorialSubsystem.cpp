@@ -2061,6 +2061,24 @@ bool UCSTutorialSubsystem::ShouldBlockStoreOpen(FText& OutMessage) const
 	return true;
 }
 
+bool UCSTutorialSubsystem::IsTutorialInProgress() const
+{
+	return !bTutorialCompleted && StepRows.IsValidIndex(CurrentStepIndex);
+}
+
+bool UCSTutorialSubsystem::ShouldBlockCrateShelving(const ACSDeliveryCrateActor* Crate, FText& OutMessage) const
+{
+	// 진열해 버리면 상자가 비어서 냉장 창고에 넣는 법을 못 보고 스텝이 넘어간다
+	if (!IsValid(Crate) || Crate != StoreCrateTarget.Get() || !IsTutorialInProgress() ||
+		StepRows[CurrentStepIndex]->StepId != ECSTutorialStepId::StoreCrate)
+	{
+		return false;
+	}
+
+	OutMessage = NSLOCTEXT("Tutorial", "StoreCrateShelvingBlocked", "이 상자는 냉장 창고에 넣어 주세요.");
+	return true;
+}
+
 bool UCSTutorialSubsystem::IsCraftBundleStep(ECSTutorialStepId StepId)
 {
 	// 선택 창에서 아니요를 고르면 이 스텝들을 시작하지 않고 건너뛴다
@@ -2170,6 +2188,27 @@ void UCSTutorialSubsystem::CheckCraftTutorialState()
 			EnterStep(TargetIndex);
 		}
 		return;
+	}
+
+	// 재료 패널과 N이 막혀 있어서 재료를 버리면 다시 놓아 주지 않는 한 넘어갈 방법이 없다
+	if (TargetId == ECSTutorialStepId::CraftAddIngredients)
+	{
+		TArray<FName> MissingIds = TutorialIngredientIds;
+		for (TActorIterator<ACSProductPickupActor> It(World); It; ++It)
+		{
+			// 솥에 넣은 재료도 숨겨진 채 남아 있어서 같이 센다
+			if (IsValid(*It) && It->ActorHasTag(TutorialCraftItemTag))
+			{
+				MissingIds.RemoveSingle(It->GetProductRow().RowName);
+			}
+		}
+		if (!MissingIds.IsEmpty())
+		{
+			for (ACSProductPickupActor* Ingredient : PlaceTutorialIngredients(MissingIds))
+			{
+				AttachCraftMarker(Ingredient, FText::GetEmpty());
+			}
+		}
 	}
 
 	// 재료 수와 젓기 횟수는 목표 칸에 바로 보여 준다
@@ -2290,7 +2329,7 @@ void UCSTutorialSubsystem::HandleStepStarted()
 		// 실패하거나 재료를 다시 꺼내 돌아왔을 때는 이미 놓인 재료에 마커만 붙인다
 		if (!bCraftIngredientsPlaced)
 		{
-			PlaceTutorialIngredients();
+			PlaceTutorialIngredients(TutorialIngredientIds);
 			bCraftIngredientsPlaced = true;
 		}
 		for (TActorIterator<ACSProductPickupActor> It(GetWorld()); It; ++It)
@@ -2569,14 +2608,14 @@ void UCSTutorialSubsystem::HandleSkipConfirmChoice(bool bYes)
 	}
 }
 
-TArray<ACSProductPickupActor*> UCSTutorialSubsystem::PlaceTutorialIngredients()
+TArray<ACSProductPickupActor*> UCSTutorialSubsystem::PlaceTutorialIngredients(const TArray<FName>& ProductIds)
 {
 	if (!IsValid(SubscribedCraftingSubsystem))
 	{
 		return {};
 	}
 
-	TArray<ACSProductPickupActor*> Ingredients = SubscribedCraftingSubsystem->PlaceProductsOnCraftCircle(TutorialIngredientIds);
+	TArray<ACSProductPickupActor*> Ingredients = SubscribedCraftingSubsystem->PlaceProductsOnCraftCircle(ProductIds);
 	for (ACSProductPickupActor* Ingredient : Ingredients)
 	{
 		Ingredient->Tags.AddUnique(TutorialCraftItemTag);
@@ -2772,7 +2811,7 @@ void UCSTutorialSubsystem::HandleManualCraftFinished(ECSCraftOutcome Outcome)
 		return;
 	}
 
-	PlaceTutorialIngredients();
+	PlaceTutorialIngredients(TutorialIngredientIds);
 	// 지금 띄우면 제조대가 바로 뒤에 띄우는 결과 문구에 덮인다
 	if (UWorld* World = GetWorld())
 	{
