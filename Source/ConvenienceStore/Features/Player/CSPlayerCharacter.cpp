@@ -1671,6 +1671,13 @@ void ACSPlayerCharacter::UpdateBuildModeHUD()
 					"손님이 설 자리가 매장 밖으로 나갑니다");
 				PromptColor = FLinearColor::Red;
 			}
+			else if (bHasHeldBuildableUnreachableShoppingPoint)
+			{
+				// 손님 지점이 NavMesh 밖이라 배치할 수 없는 사유를 표시
+				Prompt = NSLOCTEXT("Interaction", "BuildShoppingPointUnreachable",
+					"손님이 설 자리까지 갈 수 없습니다");
+				PromptColor = FLinearColor::Red;
+			}
 
 			StorePlayerController->SetInteractionPrompt(Prompt, PromptColor);
 		}
@@ -1874,6 +1881,7 @@ void ACSPlayerCharacter::ClearBuildPlacementPreview()
 	bHasHeldBuildablePlacementOverlap = false;
 	bHasHeldBuildableAccessZoneConflict = false;//상태 플래그 초기화
 	bIsHeldBuildableAccessZoneInsideArea = true;//상태 플래그 초기화
+	bHasHeldBuildableUnreachableShoppingPoint = false;//상태 플래그 초기화
 	CachedBlockedAccessZoneBoxes.Reset(); //저장된 값 비우기
 	ClearInstalledAccessZoneDisplays(); //영역 렌더링 끄기
 	CachedBuildPlacementLocation = FVector::ZeroVector;
@@ -2345,6 +2353,54 @@ bool ACSPlayerCharacter::HasUnusableQueueSlotPlacement(
 			Counter->GetActorTransform().GetRelativeTransform(FacilityActor->GetActorTransform());
 		if (!Counter->AreQueueSlotsUsableAt(
 			RelativeCounterTransform * ProspectiveFacilityTransform))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool ACSPlayerCharacter::HasUnreachableShoppingPointPlacement(
+	AActor* FacilityActor,
+	const FVector& FacilityLocation,
+	const FRotator& FacilityRotation) const
+{
+	// 시설이나 배치 트랜스폼이 유효하지 않으면 판정하지 않고 통과
+	if (!IsValid(FacilityActor) ||
+		FacilityLocation.ContainsNaN() ||
+		FacilityRotation.ContainsNaN())
+	{
+		return false;
+	}
+
+	// 들고 있는 시설과 붙어 있는 자식 액터를 검사 대상으로 수집
+	// 규칙 A~C는 박스끼리만 비교해 벽 테두리나 끊긴 바닥의 NavMesh 누락을 확인하지 않음
+	TArray<AActor*> SearchActors;
+	SearchActors.Add(FacilityActor);
+	FacilityActor->GetAttachedActors(SearchActors, false, true);
+
+	// 배치 예정 위치와 회전으로 시설 트랜스폼을 구성
+	const FTransform ProspectiveFacilityTransform(
+		FacilityRotation,
+		FacilityLocation,
+		FacilityActor->GetActorScale3D());
+
+	for (const AActor* SearchActor : SearchActors)
+	{
+		// 진열대가 아닌 액터는 검사에서 제외
+		const ACSShelfActor* Shelf = Cast<ACSShelfActor>(SearchActor);
+		if (!IsValid(Shelf))
+		{
+			continue;
+		}
+
+		// 시설 기준 진열대 상대 트랜스폼을 배치 예정 시설 트랜스폼에 적용해 손님 지점을 확인
+		// 손님 지점이 NavMesh 밖인 진열대를 찾으면 즉시 true를 반환
+		const FTransform RelativeShelfTransform =
+			Shelf->GetActorTransform().GetRelativeTransform(FacilityActor->GetActorTransform());
+		if (!Shelf->IsCustomerShoppingPointOnNavMeshAt(
+			RelativeShelfTransform * ProspectiveFacilityTransform))
 		{
 			return true;
 		}
@@ -2853,6 +2909,7 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 	bHasHeldBuildablePlacementOverlap = false;
 	bHasHeldBuildableAccessZoneConflict = false;
 	bIsHeldBuildableAccessZoneInsideArea = true;
+	bHasHeldBuildableUnreachableShoppingPoint = false;
 	CachedBlockedAccessZoneBoxes.Reset();
 	if (!IsBuildMode() ||
 		!IsValid(HeldActor) ||
@@ -2971,15 +3028,26 @@ void ACSPlayerCharacter::UpdateBuildPlacementPreview()
 			HeldActor,
 			CachedBuildPlacementLocation,
 			CachedBuildPlacementRotation);
+	// 규칙 E. 진열대 손님 지점이 NavMesh 밖에 놓이는 배치를 확인
+	const bool bHasUnreachableShoppingPoint =
+		HasUnreachableShoppingPointPlacement(
+			HeldActor,
+			CachedBuildPlacementLocation,
+			CachedBuildPlacementRotation);
 	bIsHeldBuildableInsidePlacementArea = bIsInsideBuildPlacementArea;
 	bHasHeldBuildablePlacementOverlap = bHasFacilityOverlap;
 	bHasHeldBuildableAccessZoneConflict = bHasZoneConflict;
 	bIsHeldBuildableAccessZoneInsideArea = bIsZoneInsideArea;
 	bHasHeldBuildableUnusableQueueSlots = bHasUnusableQueueSlots;
-	// 신규 세 조건만 롤아웃 스위치로 묶습니다. 기존 조건은 검증된 동작이라 넣지 않습니다.
+	bHasHeldBuildableUnreachableShoppingPoint = bHasUnreachableShoppingPoint;
+	// 접근 영역 관련 신규 조건만 롤아웃 스위치로 적용
+	// 기존 조건은 검증된 동작이라 스위치와 관계없이 유지
 	const bool bPassesAccessZoneRules =
 		!bBlockPlacementOnAccessZoneRules ||
-		(!bHasZoneConflict && bIsZoneInsideArea && !bHasUnusableQueueSlots);
+		(!bHasZoneConflict &&
+			bIsZoneInsideArea &&
+			!bHasUnusableQueueSlots &&
+			!bHasUnreachableShoppingPoint);
 	bCanPlaceHeldBuildableFacility =
 		bIsSurfaceValid &&
 		bIsInsideBuildPlacementArea &&
@@ -3990,6 +4058,12 @@ void ACSPlayerCharacter::TryPlaceHeldBuildableFacility()
 	// 몸통은 매장 안인데 접근 영역만 밖으로 나간 경우입니다.
 	// 손님이 못 오는 시설이 매장 한복판에 남으므로 마찬가지로 차단합니다.
 	if (bBlockPlacementOnAccessZoneRules && !bIsHeldBuildableAccessZoneInsideArea)
+	{
+		return;
+	}
+	// 손님 지점이 NavMesh 밖이면 배치를 차단
+	// 손님과 직원 모두 같은 지점을 사용하므로 진열대에 접근할 수 없는 상황을 방지
+	if (bBlockPlacementOnAccessZoneRules && bHasHeldBuildableUnreachableShoppingPoint)
 	{
 		return;
 	}

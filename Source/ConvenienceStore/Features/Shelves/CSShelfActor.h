@@ -143,6 +143,10 @@ public:
 	// 손님과 진열 직원이 동일한 위치를 사용하므로, 건축 모드의 BrowseZoneBox 검증 범위를 벗어나지 않습니다.
 	bool TryGetCustomerShoppingPoint(FVector& OutLocation) const;
 
+	// ShelfTransform 배치 기준으로 CustomerShoppingPoint 아래의 NavMesh 존재 여부를 확인
+	// 월드나 마커, 내비게이션 시스템이 없으면 판정하지 않고 true를 반환
+	bool IsCustomerShoppingPointOnNavMeshAt(const FTransform& ShelfTransform) const;
+
 	// 손님 접근 마커를 기준으로 만든 도착 판정 영역을 반환
 	bool TryGetBrowseZone(FVector& OutCenter, FRotator& OutFacing, float& OutRadius) const;
 
