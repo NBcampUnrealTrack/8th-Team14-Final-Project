@@ -4,8 +4,6 @@
 
 ![이세계 편의점 타이틀 화면](title.png)
 
-[게임 다운로드 · Google Drive](https://drive.google.com/file/d/1MQyqRUjp-3QYnw8F1JxVDKSGe02fCJQQ/view) · [시연 영상 · YouTube](https://www.youtube.com/watch?v=PJtU79ISrDg)
-
 고블린, 오크, 드워프, 모험가, 마법사, 엘프 등 다양한 손님을 맞이하고 상품을 판매하며 상점을 성장시키는 Unreal Engine 팀 프로젝트입니다.
 
 상품 발주와 진열, 계산, 제조, 배달을 관리하고, 날씨와 뉴스에 따라 달라지는 수요에 대응합니다. 영업으로 얻은 자금과 경험치를 활용해 새로운 상품과 시설을 해금하고 직원을 고용할 수 있습니다.
